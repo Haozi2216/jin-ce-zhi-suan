@@ -2,6 +2,8 @@
 import asyncio
 import json
 import os
+import importlib
+import sys
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, BackgroundTasks, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,7 +12,7 @@ from typing import Optional
 from src.core.live_cabinet import LiveCabinet
 from src.core.backtest_cabinet import BacktestCabinet
 from src.utils.config_loader import ConfigLoader
-from src.strategies.strategy_factory import create_strategies
+import src.strategies.strategy_factory as strategy_factory_module
 from src.utils.stock_manager import stock_manager
 
 app = FastAPI(title="三省六部 AI 交易决策控制台")
@@ -120,6 +122,29 @@ async def api_switch_strategy(req: StrategySwitchRequest):
         return {"status": "success", "msg": f"Strategy switched to {req.strategy_id}"}
     return {"status": "error", "msg": "No active cabinet running"}
 
+@app.post("/api/control/reload_strategies")
+async def api_reload_strategies():
+    """Hot reload strategies without restarting the server"""
+    try:
+        # Reload the implemented_strategies module first
+        if 'src.strategies.implemented_strategies' in sys.modules:
+            importlib.reload(sys.modules['src.strategies.implemented_strategies'])
+        
+        # Then reload the strategy_factory module
+        importlib.reload(strategy_factory_module)
+        
+        # Test if we can create strategies
+        strategies = strategy_factory_module.create_strategies()
+        strategy_count = len(strategies)
+        
+        return {
+            "status": "success", 
+            "msg": f"Successfully reloaded {strategy_count} strategies.",
+            "strategies": [s.name for s in strategies]
+        }
+    except Exception as e:
+        return {"status": "error", "msg": f"Failed to reload strategies: {str(e)}"}
+
 @app.get("/api/status")
 async def api_get_status():
     """Get current system status"""
@@ -164,7 +189,18 @@ async def websocket_endpoint(websocket: WebSocket):
                 cmd = json.loads(data)
                 print(f"Received command: {cmd}")
                 
-                if cmd.get("type") == "start_simulation":
+                if cmd.get("type") == "reload_strategies":
+                    # Reload the modules dynamically via websocket command
+                    try:
+                        if 'src.strategies.implemented_strategies' in sys.modules:
+                            importlib.reload(sys.modules['src.strategies.implemented_strategies'])
+                        importlib.reload(strategy_factory_module)
+                        strategies = strategy_factory_module.create_strategies()
+                        await manager.broadcast({"type": "system", "data": {"msg": f"策略热更新成功，当前共 {len(strategies)} 个策略"}})
+                    except Exception as e:
+                        await manager.broadcast({"type": "system", "data": {"msg": f"策略热更新失败: {str(e)}"}})
+
+                elif cmd.get("type") == "start_simulation":
                     stock_code = cmd.get("stock", "600036.SH")
                     # Start async task
                     # Check if already running?

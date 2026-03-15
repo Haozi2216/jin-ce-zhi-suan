@@ -13,8 +13,9 @@ from src.ministries.li_bu_rites import LiBuRites
 from src.ministries.bing_bu_war import BingBuWar
 from src.ministries.xing_bu_justice import XingBuJustice
 from src.ministries.gong_bu_works import GongBuWorks
-from src.strategies.strategy_factory import create_strategies
+import src.strategies.strategy_factory as strategy_factory_module
 from src.utils.data_provider import DataProvider
+import asyncio
 from src.utils.tushare_provider import TushareProvider
 from src.utils.akshare_provider import AkshareProvider
 
@@ -47,7 +48,8 @@ class LiveCabinet:
         self.state_affairs = ShangshuSheng(self.revenue, self.war, self.justice)
 
         # Initialize Strategies
-        self.strategies = create_strategies()
+        self.strategies = strategy_factory_module.create_strategies()
+        self.all_strategies = self.strategies
         self.secretariat = ZhongshuSheng(self.strategies)
         self.active_strategy_ids = [s.id for s in self.strategies] # Default all active
         

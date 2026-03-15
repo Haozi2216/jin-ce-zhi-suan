@@ -12,7 +12,7 @@ from src.ministries.li_bu_rites import LiBuRites
 from src.ministries.bing_bu_war import BingBuWar
 from src.ministries.xing_bu_justice import XingBuJustice
 from src.ministries.gong_bu_works import GongBuWorks
-from src.strategies.strategy_factory import create_strategies
+import src.strategies.strategy_factory as strategy_factory_module
 from src.utils.data_provider import DataProvider
 from src.utils.tushare_provider import TushareProvider
 from src.utils.akshare_provider import AkshareProvider
@@ -41,7 +41,8 @@ class BacktestCabinet:
         self.state_affairs = ShangshuSheng(self.revenue, self.war, self.justice)
 
         # Initialize Strategies
-        all_strategies = create_strategies()
+        # Get the latest strategies every time we start a backtest
+        all_strategies = strategy_factory_module.create_strategies()
         if strategy_id == 'all':
             self.strategies = all_strategies
         else:

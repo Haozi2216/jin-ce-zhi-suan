@@ -256,12 +256,23 @@
         <div class="flex items-center gap-4">
             <div class="relative group">
                 <select id="strategy-selector" onchange="switchStrategy(this.value)" class="appearance-none bg-slate-800 border border-slate-600 text-white py-1.5 pl-4 pr-10 rounded hover:border-trading-blue focus:outline-none focus:ring-1 focus:ring-trading-blue transition-colors cursor-pointer text-xs font-medium">
-                    <option value="waiting">⚠️ 请先启动内阁以加载策略...</option>
+                    <option value="all">所有策略联合投票</option>
+                    <option value="01">策略 01: 三周期共振波段</option>
+                    <option value="02">策略 02: 短线弱转强</option>
+                    <option value="03">策略 03: ETF行业轮动</option>
+                    <option value="04">策略 04: 龙头首阴</option>
+                    <option value="05">策略 05: 3N法则</option>
+                    <option value="06">策略 06: 海豚交易法</option>
+                    <option value="07">策略 07: 跳空交易系统</option>
+                    <option value="08">策略 08: 神奇九转</option>
                 </select>
                 <div class="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
                     <i class="fa-solid fa-chevron-down text-xs"></i>
                 </div>
             </div>
+            <button onclick="reloadStrategies()" class="bg-trading-blue hover:bg-blue-600 text-white px-3 py-1.5 rounded text-xs transition-all border border-blue-500">
+                <i class="fa-solid fa-rotate"></i> 热更新策略
+            </button>
             <div class="w-2 h-2 rounded-full bg-trading-green animate-pulse-fast shadow-[0_0_10px_rgba(16,185,129,0.5)]" title="System Online"></div>
         </div>
     </header>
@@ -670,6 +681,30 @@
                     stock: code
                 }));
             }, 1000);
+        }
+
+        function stopSimulation() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'stop_simulation' }));
+                logMessage('SYSTEM', '发送停止指令');
+            }
+        }
+
+        function reloadStrategies() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'reload_strategies' }));
+                logMessage('SYSTEM', '发送策略热更新指令...');
+            } else {
+                fetch('/api/control/reload_strategies', { method: 'POST' })
+                    .then(res => res.json())
+                    .then(data => {
+                        logMessage('SYSTEM', data.msg);
+                        if(data.status === 'success') {
+                             alert("策略热更新成功，请重新启动回测/实盘");
+                        }
+                    })
+                    .catch(err => logMessage('SYSTEM', '策略热更新请求失败', 'danger'));
+            }
         }
 
         // Close dropdown when clicking outside
