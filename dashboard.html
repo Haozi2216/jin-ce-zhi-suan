@@ -1,0 +1,846 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>金策智算 AI 交易决策控制台</title>
+    
+    <!-- Tailwind CSS v3 -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'trading-bg': '#0f172a', // Slate 900
+                        'trading-card': '#1e293b', // Slate 800
+                        'trading-green': '#10b981', // Emerald 500
+                        'trading-red': '#f43f5e', // Rose 500
+                        'trading-yellow': '#f59e0b', // Amber 500
+                        'trading-blue': '#3b82f6', // Blue 500
+                        'trading-dim': '#64748b', // Slate 500
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
+                    },
+                    animation: {
+                        'pulse-fast': 'pulse 1.5s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+                        'glow': 'glow 2s ease-in-out infinite alternate',
+                    },
+                    keyframes: {
+                        glow: {
+                            '0%': { boxShadow: '0 0 5px rgba(59, 130, 246, 0.2)' },
+                            '100%': { boxShadow: '0 0 15px rgba(59, 130, 246, 0.6)' },
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body {
+            background-color: #0b1120;
+            color: #e2e8f0;
+            overflow: hidden; /* App-like feel */
+        }
+        
+        /* Strategy Switch Overlay */
+        #strategy-overlay, #backtest-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(11, 17, 32, 0.85);
+            backdrop-filter: blur(8px);
+            z-index: 100;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+        
+        #strategy-overlay.active, #backtest-overlay.active {
+            opacity: 1;
+            pointer-events: all;
+        }
+
+        #backtest-results {
+            background: rgba(30, 41, 59, 0.95);
+            border: 1px solid #3b82f6;
+            box-shadow: 0 0 20px rgba(59, 130, 246, 0.3);
+            max-width: 900px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .cyber-loader {
+            width: 64px;
+            height: 64px;
+            border: 4px solid #1e293b;
+            border-top: 4px solid #3b82f6;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #1e293b; 
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #475569; 
+            border-radius: 3px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #64748b; 
+        }
+
+        .glass-panel {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
+
+        .status-dot {
+            height: 8px;
+            width: 8px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+
+        .scan-line {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: rgba(16, 185, 129, 0.3);
+            animation: scan 3s linear infinite;
+            opacity: 0.5;
+            pointer-events: none;
+            z-index: 50;
+        }
+
+        @keyframes scan {
+            0% { top: 0%; }
+            100% { top: 100%; }
+        }
+        
+        .code-font {
+            font-family: 'JetBrains Mono', monospace;
+        }
+    </style>
+</head>
+<body class="h-screen flex flex-col text-sm antialiased selection:bg-trading-blue selection:text-white">
+
+    <!-- Strategy Switch Overlay -->
+    <div id="strategy-overlay">
+        <div class="cyber-loader mb-4"></div>
+        <div class="text-xl font-bold text-white tracking-widest animate-pulse">STRATEGY SWITCHING...</div>
+        <div class="text-xs text-trading-blue font-mono mt-2" id="overlay-text">Reconfiguring Neural Networks</div>
+    </div>
+
+    <!-- Backtest Overlay -->
+    <div id="backtest-overlay">
+        <div id="backtest-progress-container" class="flex flex-col items-center">
+            <div class="cyber-loader mb-4"></div>
+            <div class="text-xl font-bold text-white tracking-widest animate-pulse">SYSTEM BACKTESTING...</div>
+            <div class="text-xs text-trading-blue font-mono mt-2" id="backtest-status-text">Initializing historical data...</div>
+            <div class="w-64 h-2 bg-slate-800 rounded-full mt-4 overflow-hidden">
+                <div class="h-full bg-trading-blue transition-all duration-300" id="backtest-progress-bar" style="width: 0%"></div>
+            </div>
+            <div class="text-xs text-slate-400 mt-1 font-mono" id="backtest-date-display">--</div>
+        </div>
+
+        <div id="backtest-results" class="hidden p-6 rounded-lg relative">
+            <button onclick="closeBacktest()" class="absolute top-4 right-4 text-slate-400 hover:text-white"><i class="fa-solid fa-times text-xl"></i></button>
+            <h2 class="text-2xl font-bold text-white mb-1 border-b border-slate-700 pb-2"><i class="fa-solid fa-chart-line text-trading-blue mr-2"></i>回测报告 (Backtest Report)</h2>
+            <div class="text-xs text-slate-400 mb-4 font-mono">CODE: <span id="bt-code" class="text-white">--</span> | PERIOD: <span id="bt-period" class="text-white">--</span></div>
+            
+            <div class="grid grid-cols-4 gap-4 mb-6">
+                <div class="bg-slate-800/50 p-3 rounded border border-slate-700">
+                    <div class="text-xs text-slate-400">最佳策略 (Best)</div>
+                    <div class="text-lg font-bold text-trading-green font-mono" id="bt-best-strat">--</div>
+                </div>
+                <div class="bg-slate-800/50 p-3 rounded border border-slate-700">
+                    <div class="text-xs text-slate-400">总交易数 (Trades)</div>
+                    <div class="text-lg font-bold text-white font-mono" id="bt-trades">--</div>
+                </div>
+                <div class="bg-slate-800/50 p-3 rounded border border-slate-700">
+                    <div class="text-xs text-slate-400">卡玛比率 (Calmar)</div>
+                    <div class="text-lg font-bold text-trading-blue font-mono" id="bt-calmar">--</div>
+                </div>
+                <div class="bg-slate-800/50 p-3 rounded border border-slate-700">
+                    <div class="text-xs text-slate-400">年化收益 (Annual)</div>
+                    <div class="text-lg font-bold text-trading-yellow font-mono" id="bt-roi">--</div>
+                </div>
+            </div>
+            
+            <div class="overflow-x-auto">
+                <table class="w-full text-left text-xs font-mono">
+                    <thead class="text-slate-400 bg-slate-800 uppercase">
+                        <tr>
+                            <th class="px-3 py-2">Rank</th>
+                            <th class="px-3 py-2">Strategy</th>
+                            <th class="px-3 py-2">Rating</th>
+                            <th class="px-3 py-2">ROI (Ann)</th>
+                            <th class="px-3 py-2">Max DD</th>
+                            <th class="px-3 py-2">Win Rate</th>
+                            <th class="px-3 py-2">Calmar</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-700 text-slate-300" id="bt-ranking-body">
+                        <!-- Rows -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Top Navigation Bar -->
+    <header class="h-16 border-b border-slate-700 bg-trading-bg flex items-center justify-between px-6 z-20 shadow-lg">
+        <div class="flex items-center gap-4">
+            <div class="text-2xl text-trading-blue animate-pulse"><i class="fa-solid fa-dragon"></i></div>
+            <div>
+                <h1 class="font-bold text-lg tracking-wide text-white">金策智算 <span class="text-trading-blue text-xs font-mono bg-blue-900/30 px-2 py-0.5 rounded">AI SYSTEM</span></h1>
+                <div class="text-[10px] text-trading-dim font-mono tracking-wider">JINCE INTELLIGENT TRADING SYSTEM</div>
+            </div>
+        </div>
+
+        <!-- Account Status -->
+        <div class="flex items-center gap-8 bg-slate-800/50 px-6 py-2 rounded-lg border border-slate-700/50">
+            <div class="text-center">
+                <div class="text-[10px] text-trading-dim uppercase">总资产 (Assets)</div>
+                <div class="font-mono font-bold text-lg text-white" id="total-assets">¥ 1,000,000</div>
+            </div>
+            <div class="h-8 w-px bg-slate-700"></div>
+            <div class="text-center">
+                <div class="text-[10px] text-trading-dim uppercase">日盈亏 (P&L)</div>
+                <div class="font-mono font-bold text-lg text-trading-green" id="daily-pnl">+0.00%</div>
+            </div>
+            <div class="h-8 w-px bg-slate-700"></div>
+            <div class="text-center">
+                <div class="text-[10px] text-trading-dim uppercase">仓位 (Pos)</div>
+                <div class="font-mono font-bold text-lg text-trading-blue" id="position-ratio">0%</div>
+            </div>
+            <div class="h-8 w-px bg-slate-700"></div>
+            <div class="text-center">
+                <div class="text-[10px] text-trading-dim uppercase">风控 (Risk)</div>
+                <div class="font-mono font-bold text-lg text-trading-green" id="risk-level">SAFE</div>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-4">
+            <div class="relative group">
+                <select id="strategy-selector" onchange="switchStrategy(this.value)" class="appearance-none bg-slate-800 border border-slate-600 text-white py-1.5 pl-4 pr-10 rounded hover:border-trading-blue focus:outline-none focus:ring-1 focus:ring-trading-blue transition-colors cursor-pointer text-xs font-medium">
+                    <option value="waiting">⚠️ 请先启动内阁以加载策略...</option>
+                </select>
+                <div class="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+                    <i class="fa-solid fa-chevron-down text-xs"></i>
+                </div>
+            </div>
+            <div class="w-2 h-2 rounded-full bg-trading-green animate-pulse-fast shadow-[0_0_10px_rgba(16,185,129,0.5)]" title="System Online"></div>
+        </div>
+    </header>
+
+    <!-- Main Layout -->
+    <main class="flex-1 flex overflow-hidden p-4 gap-4 relative">
+        <!-- Scanline Effect -->
+        <div class="scan-line"></div>
+
+        <!-- LEFT: Three Departments (Decision Hub) -->
+        <section class="w-1/4 flex flex-col gap-4">
+            <!-- Header -->
+            <div class="flex items-center gap-2 text-trading-dim text-xs font-bold uppercase tracking-widest border-b border-slate-700 pb-2">
+                <i class="fa-solid fa-landmark"></i> 智能决策中枢 (Central Hub)
+            </div>
+
+            <!-- Zhongshu Sheng -->
+            <div class="glass-panel p-4 rounded-lg flex-1 flex flex-col relative overflow-hidden group hover:border-trading-blue/30 transition-colors">
+                <div class="absolute top-0 right-0 p-2 opacity-10 group-hover:opacity-20 transition-opacity"><i class="fa-solid fa-scroll text-6xl"></i></div>
+                <div class="flex justify-between items-start mb-2">
+                    <h3 class="font-bold text-trading-blue text-sm">策略研究中心 (Strategy Center)</h3>
+                    <span class="status-dot bg-trading-green animate-pulse" id="status-zhongshu"></span>
+                </div>
+                <div class="text-[10px] text-slate-400 mb-1">职责: 策略生成与草拟 (Strategy Gen)</div>
+                <div class="flex-1 bg-slate-900/50 rounded border border-slate-700/50 p-3 font-mono text-xs overflow-y-auto" id="log-zhongshu">
+                    <span class="text-slate-500">> 等待指令...</span>
+                </div>
+            </div>
+
+            <!-- Menxia Sheng -->
+            <div class="glass-panel p-4 rounded-lg flex-1 flex flex-col relative overflow-hidden group hover:border-trading-yellow/30 transition-colors">
+                <div class="absolute top-0 right-0 p-2 opacity-10 group-hover:opacity-20 transition-opacity"><i class="fa-solid fa-scale-balanced text-6xl"></i></div>
+                <div class="flex justify-between items-start mb-2">
+                    <h3 class="font-bold text-trading-yellow text-sm">风控审核中心 (Risk Control Center)</h3>
+                    <span class="status-dot bg-trading-yellow" id="status-menxia"></span>
+                </div>
+                <div class="text-[10px] text-slate-400 mb-1">职责: 风控审核与驳回 (Risk Audit)</div>
+                <div class="flex-1 bg-slate-900/50 rounded border border-slate-700/50 p-3 font-mono text-xs overflow-y-auto" id="log-menxia">
+                    <span class="text-slate-500">> 监控中...</span>
+                </div>
+            </div>
+
+            <!-- Shangshu Sheng -->
+            <div class="glass-panel p-4 rounded-lg flex-1 flex flex-col relative overflow-hidden group hover:border-trading-red/30 transition-colors">
+                <div class="absolute top-0 right-0 p-2 opacity-10 group-hover:opacity-20 transition-opacity"><i class="fa-solid fa-gavel text-6xl"></i></div>
+                <div class="flex justify-between items-start mb-2">
+                    <h3 class="font-bold text-trading-red text-sm">指令执行中心 (Execution Center)</h3>
+                    <span class="status-dot bg-slate-500" id="status-shangshu"></span>
+                </div>
+                <div class="text-[10px] text-slate-400 mb-1">职责: 指令调度与执行 (Execution)</div>
+                <div class="flex-1 bg-slate-900/50 rounded border border-slate-700/50 p-3 font-mono text-xs overflow-y-auto" id="log-shangshu">
+                    <span class="text-slate-500">> 就绪...</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- CENTER: Six Ministries (Execution Modules) -->
+        <section class="w-1/2 flex flex-col gap-4">
+            <div class="flex items-center gap-2 text-trading-dim text-xs font-bold uppercase tracking-widest border-b border-slate-700 pb-2">
+                <i class="fa-solid fa-chess-board"></i> 核心执行模块 (Core Execution)
+            </div>
+            
+            <div class="grid grid-cols-2 grid-rows-3 gap-4 flex-1">
+                <!-- Li Bu (Personnel) -->
+                <div class="glass-panel p-4 rounded-lg flex-1 flex flex-col justify-between hover:bg-slate-800/50 transition-colors border-l-2 border-l-purple-500">
+                    <div class="flex justify-between items-center">
+                        <div class="flex items-center gap-2 text-purple-400 font-bold"><i class="fa-solid fa-users-gear"></i> 资金部 (Capital)</div>
+                        <div class="text-[10px] bg-slate-700 px-1 rounded text-slate-300">Active</div>
+                    </div>
+                    <div class="text-[10px] text-slate-500 mt-1">仓位管理 & 策略分配</div>
+                    <div class="mt-2 grid grid-cols-2 gap-2">
+                        <div class="bg-slate-900/80 p-2 rounded">
+                            <div class="text-[10px] text-slate-400">主力策略</div>
+                            <div class="font-mono text-white">Strategy-05</div>
+                        </div>
+                        <div class="bg-slate-900/80 p-2 rounded">
+                            <div class="text-[10px] text-slate-400">可用仓位</div>
+                            <div class="font-mono text-purple-400">45%</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Hu Bu (Revenue) -->
+                <div class="glass-panel p-4 rounded-lg flex-1 flex flex-col justify-between hover:bg-slate-800/50 transition-colors border-l-2 border-l-yellow-500">
+                    <div class="flex justify-between items-center">
+                        <div class="flex items-center gap-2 text-trading-yellow font-bold"><i class="fa-solid fa-coins"></i> 交易部 (Trading)</div>
+                        <div class="text-[10px] bg-slate-700 px-1 rounded text-slate-300">Audit</div>
+                    </div>
+                    <div class="text-[10px] text-slate-500 mt-1">资金核算 & 盈亏统计</div>
+                    <div class="mt-2 flex items-baseline gap-2">
+                        <span class="text-2xl font-mono font-bold text-white" id="revenue-cash">452,000</span>
+                        <span class="text-xs text-slate-400">可用现金 (Cash)</span>
+                    </div>
+                    <div class="w-full bg-slate-700 h-1 rounded-full mt-2 overflow-hidden">
+                        <div class="bg-trading-yellow h-full" style="width: 60%"></div>
+                    </div>
+                </div>
+
+                <!-- Li Bu (Rites) -->
+                <div class="glass-panel p-4 rounded-lg flex-1 flex flex-col justify-between hover:bg-slate-800/50 transition-colors border-l-2 border-l-blue-400">
+                    <div class="flex justify-between items-center">
+                        <div class="flex items-center gap-2 text-blue-400 font-bold"><i class="fa-solid fa-book-journal-whills"></i> 合规部 (Compliance)</div>
+                        <div class="text-[10px] bg-slate-700 px-1 rounded text-slate-300">Monitor</div>
+                    </div>
+                    <div class="text-[10px] text-slate-500 mt-1">市场情绪 & 交易合规</div>
+                    <div class="mt-2 font-mono text-sm">
+                        <div>市场温度: <span class="text-trading-red">🔥 78 (Hot)</span></div>
+                        <div>合规检查: <span class="text-trading-green">PASS</span></div>
+                    </div>
+                </div>
+
+                <!-- Bing Bu (War) -->
+                <div class="glass-panel p-4 rounded-lg flex-1 flex flex-col justify-between hover:bg-slate-800/50 transition-colors border-l-2 border-l-red-600 relative overflow-hidden">
+                    <div class="absolute -right-4 -bottom-4 text-red-900/20 text-8xl"><i class="fa-solid fa-crosshairs"></i></div>
+                    <div class="flex justify-between items-center relative z-10">
+                        <div class="flex items-center gap-2 text-red-500 font-bold"><i class="fa-solid fa-person-rifle"></i> 操盘部 (Operation)</div>
+                        <div class="text-[10px] bg-red-900/50 text-red-300 px-1 rounded animate-pulse">SIGNAL</div>
+                    </div>
+                    <div class="text-[10px] text-slate-500 mt-1 relative z-10">买卖信号执行</div>
+                    <div class="mt-2 relative z-10 bg-slate-900/80 p-2 rounded border border-red-900/30">
+                        <div class="flex justify-between text-xs">
+                            <span class="text-slate-400">Action</span>
+                            <span class="font-bold text-trading-green" id="war-action">BUY</span>
+                        </div>
+                        <div class="flex justify-between text-xs mt-1">
+                            <span class="text-slate-400">Price</span>
+                            <span class="font-mono text-white" id="war-price">--</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Xing Bu (Justice) -->
+                <div class="glass-panel p-4 rounded-lg flex-1 flex flex-col justify-between hover:bg-slate-800/50 transition-colors border-l-2 border-l-orange-600">
+                    <div class="flex justify-between items-center">
+                        <div class="flex items-center gap-2 text-orange-500 font-bold"><i class="fa-solid fa-gavel"></i> 风控部 (Risk)</div>
+                        <div class="text-[10px] bg-slate-700 px-1 rounded text-slate-300">Guard</div>
+                    </div>
+                    <div class="text-[10px] text-slate-500 mt-1">风控强平 & 违规惩戒</div>
+                    <div class="mt-2 space-y-1">
+                        <div class="flex justify-between text-xs">
+                            <span>回撤限制</span>
+                            <span class="font-mono text-white">2.0%</span>
+                        </div>
+                        <div class="flex justify-between text-xs">
+                            <span>当前回撤</span>
+                            <span class="font-mono text-trading-green">0.45%</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Gong Bu (Works) -->
+                <div class="glass-panel p-4 rounded-lg flex-1 flex flex-col justify-between hover:bg-slate-800/50 transition-colors border-l-2 border-l-cyan-500">
+                    <div class="flex justify-between items-center">
+                        <div class="flex items-center gap-2 text-cyan-400 font-bold"><i class="fa-solid fa-industry"></i> 数据运维部 (Data Ops)</div>
+                        <div class="text-[10px] bg-slate-700 px-1 rounded text-slate-300">Sync</div>
+                    </div>
+                    <div class="text-[10px] text-slate-500 mt-1">数据清洗 & 指标计算</div>
+                    <div class="mt-2 grid grid-cols-3 gap-1 text-center text-[10px] font-mono">
+                        <div class="bg-slate-900 p-1 rounded">
+                            <div class="text-slate-500">MA5</div>
+                            <div class="text-white" id="ind-ma5">--</div>
+                        </div>
+                        <div class="bg-slate-900 p-1 rounded">
+                            <div class="text-slate-500">MACD</div>
+                            <div class="text-white" id="ind-macd">--</div>
+                        </div>
+                        <div class="bg-slate-900 p-1 rounded">
+                            <div class="text-slate-500">RSI</div>
+                            <div class="text-white" id="ind-rsi">--</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- RIGHT: Imperial Archives (Log) -->
+        <section class="w-1/4 flex flex-col gap-4">
+            <div class="flex items-center gap-2 text-trading-dim text-xs font-bold uppercase tracking-widest border-b border-slate-700 pb-2">
+                <i class="fa-solid fa-clock-rotate-left"></i> 系统运行日志 (System Logs)
+            </div>
+            
+            <div class="glass-panel flex-1 rounded-lg p-0 overflow-hidden flex flex-col">
+                <div class="p-2 bg-slate-800/50 text-[10px] text-center text-slate-400 border-b border-slate-700">实时指令流 (Live Stream)</div>
+                <div class="flex-1 overflow-y-auto p-4 space-y-3 font-mono text-xs" id="imperial-timeline">
+                    <!-- Logs will be injected here -->
+                    <div class="flex gap-2 opacity-50">
+                        <span class="text-slate-500">[09:30:00]</span>
+                        <span class="text-blue-400">SYSTEM</span>
+                        <span class="text-slate-300">系统启动...</span>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Bottom Control Bar -->
+    <footer class="h-16 border-t border-slate-700 bg-trading-bg flex items-center justify-between px-6 z-20">
+        <div class="flex items-center gap-4">
+            <div class="relative">
+                <div class="flex items-center gap-2 bg-slate-800 px-3 py-1.5 rounded border border-slate-600 focus-within:border-trading-blue focus-within:ring-1 focus-within:ring-trading-blue transition-all">
+                    <span class="text-slate-400 text-xs"><i class="fa-solid fa-magnifying-glass"></i></span>
+                    <input type="text" id="stock-search-input" value="301227"
+                        class="bg-transparent border-none text-white focus:outline-none w-32 text-sm font-mono uppercase font-bold placeholder-slate-600" 
+                        placeholder="CODE/PINYIN" autocomplete="off">
+                </div>
+                <!-- Search Results Dropdown -->
+                <div id="stock-search-results" class="hidden absolute bottom-full left-0 mb-2 w-64 bg-slate-900 border border-slate-600 rounded-lg shadow-2xl z-50 max-h-60 overflow-y-auto custom-scrollbar">
+                    <!-- Dynamic Content -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Global Status Bar -->
+        <div class="flex-1 mx-8">
+            <div class="flex justify-between text-[10px] text-slate-400 mb-1">
+                <span>AI 决策置信度 (Confidence)</span>
+                <span class="text-trading-green" id="confidence-val">98.5%</span>
+            </div>
+            <div class="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                <div class="bg-gradient-to-r from-blue-500 to-green-500 h-full w-[98.5%] animate-pulse" id="confidence-bar"></div>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-3">
+            <div class="text-xs text-slate-500 font-mono">STATUS: <span class="text-trading-green animate-pulse">RUNNING</span></div>
+            
+            <button onclick="startBacktest()" class="bg-trading-blue hover:bg-blue-600 text-white px-4 py-2 rounded font-bold text-sm transition-all shadow-[0_0_10px_rgba(59,130,246,0.3)] border border-blue-500">
+                <i class="fa-solid fa-play"></i> 立即回测
+            </button>
+            
+            <button class="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded font-bold text-sm transition-all border border-slate-600">
+                <i class="fa-solid fa-terminal"></i> 调试
+            </button>
+        </div>
+    </footer>
+
+    <!-- JavaScript Logic -->
+    <script>
+        // System State
+        const SYSTEM_STATE = {
+            stock: '301227.SZ',
+            price: 0,
+            assets: 1000000,
+            strategy: 'Trend Follow',
+            logs: []
+        };
+
+        // --- WebSocket Integration ---
+        const ws = new WebSocket(`ws://${window.location.host}/ws`);
+        
+        ws.onopen = () => {
+            console.log('Connected to Cabinet');
+            logMessage('SYSTEM', 'WebSocket 连接成功', 'system');
+            // Auto-start upon connection
+            startSimulation();
+        };
+        
+        ws.onmessage = (event) => {
+            const payload = JSON.parse(event.data);
+            handleEvent(payload);
+        };
+        
+        ws.onclose = () => {
+            logMessage('SYSTEM', 'WebSocket 连接断开', 'danger');
+        };
+
+        function handleEvent(payload) {
+            const { type, data } = payload;
+            
+            switch(type) {
+                case 'system':
+                    logMessage('SYSTEM', data.msg, 'system');
+                    break;
+                case 'init_strategies':
+                    updateStrategyList(data);
+                    logMessage('SYSTEM', `已加载 ${data.length} 套内阁策略`, 'system');
+                    break;
+                case 'market':
+                    updateMarket(data);
+                    break;
+                case 'zhongshu':
+                    updateCard('log-zhongshu', data.details, data.status);
+                    logMessage('策略中心', data.msg, 'info');
+                    break;
+                case 'menxia':
+                    updateCard('log-menxia', data.details, data.status);
+                    logMessage('风控中心', data.msg, data.status.includes('green') ? 'success' : 'danger');
+                    break;
+                case 'shangshu':
+                    updateCard('log-shangshu', data.details, data.status);
+                    logMessage('执行中心', data.msg, 'warning');
+                    break;
+                case 'account':
+                    if(data.assets) document.getElementById('total-assets').innerText = '¥ ' + parseFloat(data.assets).toLocaleString();
+                    if(data.pnl) document.getElementById('daily-pnl').innerText = data.pnl;
+                    if(data.pos_ratio) document.getElementById('position-ratio').innerText = data.pos_ratio;
+                    break;
+                case 'backtest_progress':
+                    updateBacktestProgress(data);
+                    break;
+                case 'backtest_result':
+                    showBacktestResults(data);
+                    break;
+            }
+        }
+        
+        function updateMarket(data) {
+            if(data.price) {
+                document.getElementById('war-price').innerText = data.price;
+                SYSTEM_STATE.price = data.price;
+            }
+            if(data.ma5) document.getElementById('ind-ma5').innerText = parseFloat(data.ma5).toFixed(2);
+        }
+
+        function updateStrategyList(strategies) {
+            const selector = document.getElementById('strategy-selector');
+            selector.innerHTML = '';
+            
+            strategies.forEach(s => {
+                const opt = document.createElement('option');
+                opt.value = s.id;
+                opt.innerText = `[${s.id}] ${s.name}`;
+                selector.appendChild(opt);
+            });
+            
+            // Add "ALL" option
+            const allOpt = document.createElement('option');
+            allOpt.value = 'all';
+            allOpt.innerText = '★ 全策略协同 (All Active)';
+            allOpt.selected = true;
+            selector.prepend(allOpt);
+        }
+
+        function startSimulation() {
+            logMessage('SYSTEM', '正在自动启动内阁进程...', 'system');
+            const code = document.getElementById('stock-search-input').value || '600036';
+            ws.send(JSON.stringify({
+                type: 'start_simulation',
+                stock: code
+            }));
+        }
+
+        // --- Stock Search Logic ---
+        const searchInput = document.getElementById('stock-search-input');
+        const resultsBox = document.getElementById('stock-search-results');
+        let searchTimeout;
+
+        searchInput.addEventListener('input', (e) => {
+            const val = e.target.value.trim();
+            if (val.length < 1) {
+                resultsBox.classList.add('hidden');
+                return;
+            }
+            
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => {
+                fetch(`/api/search?q=${val}`)
+                    .then(res => res.json())
+                    .then(data => {
+                        renderSearchResults(data.results);
+                    })
+                    .catch(err => console.error("Search failed", err));
+            }, 300);
+        });
+
+        function renderSearchResults(results) {
+            resultsBox.innerHTML = '';
+            if (!results || results.length === 0) {
+                resultsBox.innerHTML = '<div class="p-3 text-xs text-slate-500 text-center">未找到匹配股票</div>';
+            } else {
+                results.forEach(stock => {
+                    const div = document.createElement('div');
+                    div.className = 'px-4 py-2 hover:bg-slate-800 cursor-pointer text-xs flex justify-between items-center border-b border-slate-800 last:border-0 transition-colors';
+                    div.innerHTML = `
+                        <div class="flex flex-col">
+                            <span class="font-bold text-white font-mono text-sm">${stock.code}</span>
+                            <span class="text-[10px] text-slate-500">${stock.pinyin || ''}</span>
+                        </div>
+                        <span class="text-trading-blue font-bold">${stock.name}</span>
+                    `;
+                    div.onclick = () => {
+                        selectStock(stock);
+                    };
+                    resultsBox.appendChild(div);
+                });
+            }
+            resultsBox.classList.remove('hidden');
+        }
+
+        function selectStock(stock) {
+            searchInput.value = stock.code;
+            resultsBox.classList.add('hidden');
+            restartSimulation(stock.code);
+        }
+
+        function restartSimulation(code) {
+            // Stop current
+            ws.send(JSON.stringify({ type: 'stop_simulation' }));
+            
+            logMessage('SYSTEM', `正在切换监控标的: ${code}...`, 'warning');
+            
+            setTimeout(() => {
+                // Start new
+                ws.send(JSON.stringify({
+                    type: 'start_simulation',
+                    stock: code
+                }));
+            }, 1000);
+        }
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!searchInput.contains(e.target) && !resultsBox.contains(e.target)) {
+                resultsBox.classList.add('hidden');
+            }
+        });
+
+        function switchStrategy(val) {
+            if (val === 'waiting' || val === 'loading') return;
+            
+            // Show Overlay
+            const overlay = document.getElementById('strategy-overlay');
+            const text = document.getElementById('overlay-text');
+            overlay.classList.add('active');
+            
+            // Simulation of reconfiguration steps
+            const steps = [
+                "Disconnecting current signals...",
+                "Loading strategy parameters...",
+                "Initializing indicators...",
+                "Reconnecting to Menxia Sheng...",
+                "Strategy ONLINE"
+            ];
+            
+            let i = 0;
+            const interval = setInterval(() => {
+                if(i < steps.length) {
+                    text.innerText = steps[i];
+                    i++;
+                } else {
+                    clearInterval(interval);
+                    setTimeout(() => {
+                        overlay.classList.remove('active');
+                        logMessage('SYSTEM', `策略切换完成: ${val}`, 'success');
+                    }, 500);
+                }
+            }, 300);
+            
+            // Here you would send a message to backend to actually switch context if needed
+            ws.send(JSON.stringify({ type: 'switch_strategy', id: val }));
+        }
+
+        // --- Backtest Logic ---
+        function startBacktest() {
+            const overlay = document.getElementById('backtest-overlay');
+            const progressContainer = document.getElementById('backtest-progress-container');
+            const resultsDiv = document.getElementById('backtest-results');
+            
+            // Reset UI
+            overlay.classList.add('active');
+            progressContainer.classList.remove('hidden');
+            resultsDiv.classList.add('hidden');
+            document.getElementById('backtest-progress-bar').style.width = '0%';
+            document.getElementById('backtest-status-text').innerText = 'Initializing...';
+            
+            const code = document.getElementById('stock-search-input').value || '600036.SH';
+            const strategy = document.getElementById('strategy-selector').value;
+            
+            ws.send(JSON.stringify({
+                type: 'start_backtest',
+                stock: code,
+                strategy: strategy
+            }));
+        }
+        
+        function updateBacktestProgress(data) {
+            const { progress, current_date } = data;
+            document.getElementById('backtest-progress-bar').style.width = `${progress}%`;
+            document.getElementById('backtest-date-display').innerText = current_date;
+            document.getElementById('backtest-status-text').innerText = `Simulating Market Data... ${progress}%`;
+        }
+        
+        function showBacktestResults(data) {
+            const progressContainer = document.getElementById('backtest-progress-container');
+            const resultsDiv = document.getElementById('backtest-results');
+            
+            progressContainer.classList.add('hidden');
+            resultsDiv.classList.remove('hidden');
+            
+            // Fill Data
+            document.getElementById('bt-code').innerText = data.stock;
+            document.getElementById('bt-period').innerText = data.period;
+            document.getElementById('bt-trades').innerText = data.total_trades;
+            
+            const best = data.ranking[0];
+            if (best) {
+                document.getElementById('bt-best-strat').innerText = `[${best.strategy_id}]`;
+                document.getElementById('bt-calmar').innerText = parseFloat(best.calmar).toFixed(2);
+                document.getElementById('bt-roi').innerText = (parseFloat(best.annualized_roi) * 100).toFixed(2) + '%';
+            }
+            
+            // Fill Table
+            const tbody = document.getElementById('bt-ranking-body');
+            tbody.innerHTML = '';
+            
+            data.ranking.forEach(row => {
+                const tr = document.createElement('tr');
+                tr.className = 'hover:bg-slate-700/50 transition-colors';
+                
+                // Colorize Rating
+                let ratingColor = 'text-slate-400';
+                if(row.rating.includes('A')) ratingColor = 'text-trading-green font-bold';
+                if(row.rating.includes('S')) ratingColor = 'text-trading-yellow font-bold text-lg';
+                
+                tr.innerHTML = `
+                    <td class="px-3 py-2 text-slate-400">#${row.rank}</td>
+                    <td class="px-3 py-2 font-bold text-white">${row.strategy_id}</td>
+                    <td class="px-3 py-2 ${ratingColor}">${row.rating}</td>
+                    <td class="px-3 py-2 text-trading-yellow">${(row.annualized_roi * 100).toFixed(2)}%</td>
+                    <td class="px-3 py-2 text-trading-red">${(row.max_dd * 100).toFixed(2)}%</td>
+                    <td class="px-3 py-2">${(row.win_rate * 100).toFixed(1)}%</td>
+                    <td class="px-3 py-2 text-trading-blue">${parseFloat(row.calmar).toFixed(2)}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+        
+        function closeBacktest() {
+            document.getElementById('backtest-overlay').classList.remove('active');
+            // Restart live simulation if needed, or just close overlay
+            // Ideally we should switch back to live mode automatically or manual
+        }
+
+        // UI Helpers
+        const getTime = () => new Date().toLocaleTimeString('en-GB', { hour12: false });
+        
+        function logMessage(module, message, type = 'info') {
+            const timeline = document.getElementById('imperial-timeline');
+            const el = document.createElement('div');
+            el.className = 'flex gap-2 animate-pulse';
+            
+            let color = 'text-slate-300';
+            if (type === 'success') color = 'text-trading-green';
+            if (type === 'warning') color = 'text-trading-yellow';
+            if (type === 'danger') color = 'text-trading-red';
+            if (type === 'system') color = 'text-trading-blue';
+
+            el.innerHTML = `
+                <span class="text-slate-500">[${getTime()}]</span>
+                <span class="font-bold w-16 text-right ${color}">${module}</span>
+                <span class="text-slate-200 flex-1">${message}</span>
+            `;
+            
+            timeline.appendChild(el);
+            timeline.scrollTop = timeline.scrollHeight;
+
+            setTimeout(() => el.classList.remove('animate-pulse'), 1000);
+        }
+
+        function updateCard(id, html, statusColor = null) {
+            const el = document.getElementById(id);
+            if(el) {
+                el.innerHTML = html;
+                el.scrollTop = el.scrollHeight;
+            }
+            
+            if (statusColor) {
+                const statusDot = document.getElementById(`status-${id.split('-')[1]}`);
+                if(statusDot) {
+                    // Extract color from class (e.g., bg-trading-green)
+                    // Simplified: just use the passed class
+                    statusDot.className = `status-dot ${statusColor} shadow-[0_0_8px_currentColor]`;
+                }
+            }
+        }
+        
+        // Initial Log
+        logMessage('SYSTEM', '控制台就绪，等待连接...', 'info');
+
+    </script>
+</body>
+</html>

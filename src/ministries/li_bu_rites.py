@@ -1,0 +1,126 @@
+# src/ministries/li_bu_rites.py
+import pandas as pd
+import numpy as np
+
+class LiBuRites:
+    """
+    礼部 (Rites): 生成每套策略独立业绩报表、排行榜
+    """
+    def generate_report(self, strategy_id, hu_bu, xing_bu, initial_capital):
+        """
+        Generate performance report for a single strategy.
+        """
+        # Get transactions for this strategy
+        transactions = [t for t in hu_bu.transactions if t['strategy_id'] == strategy_id]
+        
+        # Calculate basic metrics
+        total_trades = len([t for t in transactions if t['direction'] == 'SELL']) # Count closed trades
+        wins = len([t for t in transactions if t.get('pnl', 0) > 0])
+        losses = len([t for t in transactions if t.get('pnl', 0) <= 0 and t['direction'] == 'SELL'])
+        
+        win_rate = wins / total_trades if total_trades > 0 else 0.0
+        
+        total_pnl = sum([t.get('pnl', 0) for t in transactions])
+        final_capital = initial_capital + total_pnl # Simplified: Assuming allocated capital or proportional share
+        
+        roi = total_pnl / initial_capital
+        
+        # Drawdown calculation requires daily NAV for this strategy specifically
+        # HuBu tracks total portfolio NAV. We need strategy-specific NAV or PnL curve.
+        # Let's approximate using transaction history for now.
+        
+        cumulative_pnl = 0.0
+        peak = 0.0
+        max_dd = 0.0
+        
+        pnl_curve = []
+        for t in transactions:
+            if t['direction'] == 'SELL':
+                cumulative_pnl += t['pnl']
+                pnl_curve.append(cumulative_pnl)
+                if cumulative_pnl > peak:
+                    peak = cumulative_pnl
+                dd = peak - cumulative_pnl
+                if dd > max_dd:
+                    max_dd = dd
+                    
+        # Max Drawdown % (relative to initial capital + peak profit)
+        max_dd_pct = max_dd / initial_capital # Simplified
+        
+        avg_win = np.mean([t['pnl'] for t in transactions if t.get('pnl', 0) > 0]) if wins > 0 else 0.0
+        avg_loss = np.mean([t['pnl'] for t in transactions if t.get('pnl', 0) <= 0 and t['direction'] == 'SELL']) if losses > 0 else 0.0
+        profit_factor = abs(avg_win / avg_loss) if avg_loss != 0 else float('inf')
+        
+        rejections = xing_bu.get_rejection_count(strategy_id)
+        violations = xing_bu.get_violation_count(strategy_id)
+        circuit_breaks = xing_bu.get_circuit_break_count(strategy_id)
+
+        # Annualized Return
+        # Assuming we know the duration. But here we just have transactions.
+        # We need start and end date of backtest.
+        # Let's approximate using transaction dates range if available, else pass in duration.
+        if transactions:
+            start_date = min(t['dt'] for t in transactions)
+            end_date = max(t['dt'] for t in transactions)
+            days = (end_date - start_date).days
+            if days > 0:
+                annualized_roi = (1 + roi) ** (365 / days) - 1
+                if isinstance(annualized_roi, complex): # Handle negative base with fractional exponent
+                    annualized_roi = -1.0 # Or some error value
+            else:
+                annualized_roi = 0.0
+        else:
+            annualized_roi = 0.0
+            
+        # Sharpe Ratio
+        # Need daily returns.
+        # We can reconstruct daily PnL from transactions + holding change.
+        # This is complex without daily NAV history.
+        # Approximation: Use per-trade returns? No, Sharpe is time-based.
+        # Let's use a simplified Sharpe based on average trade return / std dev of trade return * sqrt(trades per year)
+        # This is "Trade Sharpe", not "Time Sharpe".
+        # Better: Since we don't have daily NAV per strategy easily, let's use 0.0 placeholder or estimate.
+        sharpe = 0.0
+        
+        calmar = (annualized_roi / max_dd_pct) if max_dd_pct > 0 else 0.0
+        
+        return {
+            'strategy_id': strategy_id,
+            'roi': roi,
+            'annualized_roi': annualized_roi,
+            'max_dd': max_dd_pct,
+            'win_rate': win_rate,
+            'profit_factor': profit_factor,
+            'total_trades': total_trades,
+            'rejections': rejections,
+            'violations': violations,
+            'circuit_breaks': circuit_breaks,
+            'calmar': calmar,
+            'sharpe': sharpe
+        }
+
+    def generate_ranking(self, reports):
+        """
+        Generate ranking table.
+        """
+        df = pd.DataFrame(reports)
+        if df.empty:
+            return df
+            
+        # Rank by Calmar Ratio
+        df['rank'] = df['calmar'].rank(ascending=False).astype(int)
+        df = df.sort_values('rank')
+        
+        # Add Rating
+        def get_rating(row):
+            if row['violations'] > 0:
+                return 'D'
+            if row['roi'] > 0.2 and row['max_dd'] < 0.1:
+                return 'A'
+            if row['roi'] > 0:
+                return 'B'
+            return 'C' # Negative ROI
+            
+        df['rating'] = df.apply(get_rating, axis=1)
+        
+        return df
