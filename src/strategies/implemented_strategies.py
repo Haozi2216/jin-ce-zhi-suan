@@ -52,6 +52,39 @@ class BaseImplementedStrategy(BaseStrategy):
     def _qty(self):
         return int(self._cfg("order_qty", 1000))
 
+    def set_backtest_context(self, **kwargs):
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
+class Strategy00(BaseImplementedStrategy):
+    def __init__(self):
+        super().__init__("00", "长期持有一次买入", trigger_timeframe="D")
+        self.entered = {}
+        self.final_bar_dt = None
+
+    def on_bar(self, kline):
+        code = kline['code']
+        qty = int(self.positions.get(code, 0))
+        current_dt = pd.to_datetime(kline['dt'])
+
+        if qty <= 0 and not self.entered.get(code, False):
+            self.entered[code] = True
+            return {
+                'strategy_id': self.id,
+                'code': code,
+                'dt': kline['dt'],
+                'direction': 'BUY',
+                'price': kline['close'],
+                'qty': self._qty(),
+                'stop_loss': 0.0,
+                'take_profit': None
+            }
+
+        if qty > 0 and self.final_bar_dt is not None and current_dt >= pd.to_datetime(self.final_bar_dt):
+            return self.create_exit_signal(kline, qty, "Backtest Last Bar Exit")
+
+        return None
+
 # Strategy 01: 三周期共振波段策略
 class Strategy01(BaseImplementedStrategy):
     def __init__(self):

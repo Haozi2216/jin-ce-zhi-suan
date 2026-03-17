@@ -138,6 +138,9 @@ class BacktestCabinet:
         await self._emit('system', {'msg': f"已获取 {total_bars} 条K线数据，正在初始化策略..."})
         await self._emit('backtest_flow', {'module': '工部', 'level': 'system', 'msg': f'数据清洗完成，共 {total_bars} 条分钟K线'})
         day_end_dt_set = set(pd.to_datetime(df.groupby(df["dt"].dt.date)["dt"].max()).tolist())
+        final_bar_dt = pd.to_datetime(df.iloc[-1]["dt"])
+        for strategy in self.strategies:
+            strategy.set_backtest_context(final_bar_dt=final_bar_dt)
 
         strategy_trigger_tf = {s.id: getattr(s, "trigger_timeframe", "1min") for s in self.strategies}
         needed_timeframes = sorted(set([tf for tf in strategy_trigger_tf.values() if tf != "1min"]))

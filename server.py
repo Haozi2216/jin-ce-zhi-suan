@@ -56,6 +56,7 @@ current_provider_source = None
 latest_backtest_result = None
 latest_strategy_reports = {}
 current_backtest_report = None
+current_backtest_progress = {"progress": 0, "current_date": None}
 report_history = []
 REPORTS_DIR = os.path.join("data", "reports")
 REPORTS_FILE = os.path.join(REPORTS_DIR, "backtest_reports.json")
@@ -113,7 +114,7 @@ def _sanitize_non_finite(obj):
     return obj
 
 def start_new_backtest_report(stock_code, strategy_id):
-    global current_backtest_report, latest_backtest_result, latest_strategy_reports
+    global current_backtest_report, latest_backtest_result, latest_strategy_reports, current_backtest_progress
     report_id = str(int(asyncio.get_event_loop().time() * 1000))
     current_backtest_report = {
         "report_id": report_id,
@@ -126,6 +127,8 @@ def start_new_backtest_report(stock_code, strategy_id):
     }
     latest_backtest_result = None
     latest_strategy_reports = {}
+    current_backtest_progress = {"progress": 0, "current_date": None}
+    return report_id
 
 def finalize_current_backtest_report():
     global report_history, current_backtest_report
@@ -167,6 +170,11 @@ async def cabinet_event_handler(event_type, data):
 class BacktestRequest(BaseModel):
     stock_code: str = "600036.SH"
     strategy_id: str = "all"
+    strategy_ids: Optional[list[str]] = None
+    strategy_mode: Optional[str] = None
+    start: Optional[str] = None
+    end: Optional[str] = None
+    capital: Optional[float] = None
 
 class LiveRequest(BaseModel):
     stock_code: str = "600036.SH"
@@ -346,9 +354,9 @@ async def api_start_backtest(req: BacktestRequest):
     global cabinet_task
     if cabinet_task and not cabinet_task.done():
         cabinet_task.cancel()
-    start_new_backtest_report(req.stock_code, req.strategy_id)
-    cabinet_task = asyncio.create_task(run_backtest_task(req.stock_code, req.strategy_id))
-    return {"status": "success", "msg": f"Backtest started for {req.stock_code}"}
+    report_id = start_new_backtest_report(req.stock_code, req.strategy_id)
+    cabinet_task = asyncio.create_task(run_backtest_task(req.stock_code, req.strategy_id, req.strategy_mode, req.start, req.end, req.capital, req.strategy_ids))
+    return {"status": "success", "msg": f"Backtest started for {req.stock_code}", "report_id": report_id}
 
 @app.post("/api/control/start_live")
 async def api_start_live(req: LiveRequest):
@@ -439,7 +447,9 @@ async def api_get_status():
         "is_running": is_running,
         "active_cabinet_type": type(current_cabinet).__name__ if current_cabinet else None,
         "provider_source": current_provider_source or config.get("data_provider.source", "default"),
-        "live_enabled": is_live_enabled()
+        "live_enabled": is_live_enabled(),
+        "progress": current_backtest_progress,
+        "current_report_id": current_backtest_report.get("report_id") if current_backtest_report else None
     }
 
 
@@ -595,13 +605,17 @@ async def run_backtest_task(stock_code, strategy_id, strategy_mode=None, start=N
         print("Backtest Task Cancelled")
 
 async def emit_event_to_ws(event_type, data):
-    global latest_backtest_result, latest_strategy_reports, current_backtest_report
+    global latest_backtest_result, latest_strategy_reports, current_backtest_report, current_backtest_progress
     if event_type == "backtest_result":
         latest_backtest_result = data
         if current_backtest_report is not None:
             current_backtest_report["summary"] = data
             current_backtest_report["ranking"] = data.get("ranking", [])
             finalize_current_backtest_report()
+        # Mark progress as done
+        current_backtest_progress = {"progress": 100, "current_date": "Done"}
+    elif event_type == "backtest_progress":
+        current_backtest_progress = data
     elif event_type == "backtest_strategy_report":
         sid = str(data.get("strategy_id", ""))
         if sid:

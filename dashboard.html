@@ -144,6 +144,26 @@
             z-index: 50;
         }
 
+        .metric-pop-up {
+            animation: metricPopUp 420ms cubic-bezier(0.22, 1, 0.36, 1);
+        }
+
+        .metric-pop-down {
+            animation: metricPopDown 420ms cubic-bezier(0.22, 1, 0.36, 1);
+        }
+
+        @keyframes metricPopUp {
+            0% { transform: translateY(0) scale(1); filter: brightness(1); }
+            45% { transform: translateY(-3px) scale(1.06); filter: brightness(1.25); }
+            100% { transform: translateY(0) scale(1); filter: brightness(1); }
+        }
+
+        @keyframes metricPopDown {
+            0% { transform: translateY(0) scale(1); filter: brightness(1); }
+            45% { transform: translateY(3px) scale(0.96); filter: brightness(0.9); }
+            100% { transform: translateY(0) scale(1); filter: brightness(1); }
+        }
+
         @keyframes scan {
             0% { top: 0%; }
             100% { top: 100%; }
@@ -238,6 +258,7 @@
                 <span class="text-xs text-slate-400">查看策略</span>
                 <select id="strategy-doc-selector" onchange="renderStrategyDoc(this.value)" class="bg-slate-800 border border-slate-600 text-white py-1 px-2 rounded text-xs">
                     <option value="all">全部策略总览</option>
+                    <option value="00">00 长期持有一次买入</option>
                     <option value="01">01 三周期共振波段</option>
                     <option value="02">02 短线弱转强烂板</option>
                     <option value="03">03 ETF行业轮动</option>
@@ -272,7 +293,7 @@
             <div class="h-8 w-px bg-slate-700"></div>
             <div class="text-center">
                 <div class="text-[10px] text-trading-dim uppercase">日盈亏 (P&L)</div>
-                <div class="font-mono font-bold text-lg text-trading-green" id="daily-pnl">+0.00%</div>
+                <div class="font-mono font-bold text-lg text-trading-red" id="daily-pnl">+0.00%</div>
             </div>
             <div class="h-8 w-px bg-slate-700"></div>
             <div class="text-center">
@@ -598,15 +619,29 @@
         </div>
 
         <!-- Global Status Bar -->
-        <div class="w-72 ml-12 mr-4">
-            <div class="flex justify-between text-[10px] text-slate-400 mb-1">
-                <span>AI 决策置信度 (Confidence)</span>
-                <span class="text-trading-green" id="confidence-val">98.5%</span>
+        <div class="w-[470px] ml-6 mr-3 flex items-center gap-3">
+            <div class="w-[210px]">
+                <div class="flex justify-between text-[10px] text-slate-400 mb-1">
+                    <span>AI 决策置信度</span>
+                    <span class="text-trading-green" id="confidence-val">98.5%</span>
+                </div>
+                <div class="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                    <div class="bg-gradient-to-r from-blue-500 to-green-500 h-full w-[98.5%] animate-pulse" id="confidence-bar"></div>
+                </div>
+                <div id="confidence-desc" class="text-[10px] text-slate-500 mt-1 truncate">一致性 50% · 放行率 50% · 胜率 50%</div>
             </div>
-            <div class="w-full bg-slate-800 h-1.5 rounded-full overflow-hidden">
-                <div class="bg-gradient-to-r from-blue-500 to-green-500 h-full w-[98.5%] animate-pulse" id="confidence-bar"></div>
+            <div class="flex-1 px-1 py-0.5">
+                <svg id="confidence-sparkline" viewBox="0 0 210 48" class="w-full h-11 rounded bg-slate-800/40">
+                    <polyline id="confidence-line-consistency" fill="none" stroke="#60a5fa" stroke-width="1.8" points=""></polyline>
+                    <polyline id="confidence-line-passrate" fill="none" stroke="#34d399" stroke-width="1.8" points=""></polyline>
+                    <polyline id="confidence-line-winrate" fill="none" stroke="#f59e0b" stroke-width="1.8" points=""></polyline>
+                </svg>
+                <div class="flex items-center justify-between text-[9px] mt-0.5">
+                    <span id="confidence-consistency-val" class="text-blue-300">一致性 --</span>
+                    <span id="confidence-passrate-val" class="text-emerald-300">放行率 --</span>
+                    <span id="confidence-winrate-val" class="text-amber-300">胜率 --</span>
+                </div>
             </div>
-            <div id="confidence-desc" class="text-[10px] text-slate-500 mt-1">一致性 50% · 放行率 50% · 胜率 50%</div>
         </div>
 
         <div class="flex items-center gap-3">
@@ -708,7 +743,12 @@
             riskApproved: 0,
             riskRejected: 0,
             riskRejects: [],
-            recentPnls: []
+            recentPnls: [],
+            confidenceSeries: {
+                consistency: [],
+                passrate: [],
+                winrate: []
+            }
         };
         const BT_STATE = {
             progress: -1,
@@ -727,6 +767,18 @@
                 params: ['每次信号默认下单数量：1000股（各策略当前实现）'],
                 note: '适合先观察系统联动与策略分歧程度。',
                 example: '示例：若07与01同向看多，信号一致性提升；若方向分歧，置信度会下降。'
+            },
+            '00': {
+                name: '00 长期持有一次买入',
+                trigger: '日线',
+                entry_rules: [
+                    '仅在首次触发时买入一次。',
+                    '买入后不再重复加仓。'
+                ],
+                exit_rules: ['到达回测最后一根K线时一次性全部卖出。'],
+                params: ['下单数量：strategy_params.common.order_qty（默认1000）'],
+                note: '该策略仅用于回测基准对照，模拟买入并持有到回测结束。',
+                example: '示例：第一根K线买入后全程持有，最后一根K线自动平仓。'
             },
             '01': {
                 name: '01 三周期共振波段',
@@ -837,6 +889,7 @@
             }
         };
         const STRATEGY_FALLBACK = [
+            { id: '00', name: '长期持有一次买入' },
             { id: '01', name: '三周期共振波段' },
             { id: '02', name: '短线弱转强烂板' },
             { id: '03', name: 'ETF行业轮动' },
@@ -932,16 +985,26 @@
                     pulsePanel('panel-bing');
                     break;
                 case 'account':
-                    if(data.assets) document.getElementById('total-assets').innerText = '¥ ' + parseFloat(data.assets).toLocaleString();
-                    if(data.pnl) document.getElementById('daily-pnl').innerText = data.pnl;
-                    if(data.pos_ratio) document.getElementById('position-ratio').innerText = data.pos_ratio;
+                    if (data.assets !== undefined && data.assets !== null) {
+                        const assetNum = Number(data.assets);
+                        setMetricText('total-assets', `¥ ${assetNum.toLocaleString()}`, assetNum);
+                    }
+                    if (data.pnl !== undefined && data.pnl !== null) {
+                        const pnlNum = parseMetricNumber(data.pnl) ?? 0;
+                        setMetricText('daily-pnl', String(data.pnl), pnlNum);
+                        setDailyPnlStyle(pnlNum);
+                    }
+                    if (data.pos_ratio !== undefined && data.pos_ratio !== null) {
+                        const posNum = parseMetricNumber(data.pos_ratio) ?? 0;
+                        setMetricText('position-ratio', String(data.pos_ratio), posNum);
+                    }
                     if (data.cash !== undefined) {
-                        const cashEl = document.getElementById('revenue-cash');
-                        if (cashEl) cashEl.innerText = Number(data.cash).toLocaleString();
+                        const cashNum = Number(data.cash);
+                        setMetricText('revenue-cash', cashNum.toLocaleString(), cashNum);
                     }
                     if (data.pos_ratio) {
-                        const avail = document.getElementById('personnel-available-pos');
-                        if (avail) avail.innerText = `${(100 - Number(String(data.pos_ratio).replace('%','') || 0)).toFixed(1)}%`;
+                        const availVal = (100 - Number(String(data.pos_ratio).replace('%','') || 0));
+                        setMetricText('personnel-available-pos', `${availVal.toFixed(1)}%`, availVal);
                     }
                     pulsePanel('panel-hu');
                     break;
@@ -986,12 +1049,22 @@
         
         function updateMarket(data) {
             if(data.price) {
-                document.getElementById('war-price').innerText = data.price;
+                const p = Number(data.price);
+                setMetricText('war-price', String(data.price), p);
                 SYSTEM_STATE.price = data.price;
             }
-            if(data.ma5) document.getElementById('ind-ma5').innerText = parseFloat(data.ma5).toFixed(2);
-            if(data.macd !== undefined && data.macd !== null) document.getElementById('ind-macd').innerText = Number(data.macd).toFixed(3);
-            if(data.rsi !== undefined && data.rsi !== null) document.getElementById('ind-rsi').innerText = Number(data.rsi).toFixed(2);
+            if(data.ma5) {
+                const ma5 = Number(data.ma5);
+                setMetricText('ind-ma5', ma5.toFixed(2), ma5);
+            }
+            if(data.macd !== undefined && data.macd !== null) {
+                const macd = Number(data.macd);
+                setMetricText('ind-macd', macd.toFixed(3), macd);
+            }
+            if(data.rsi !== undefined && data.rsi !== null) {
+                const rsi = Number(data.rsi);
+                setMetricText('ind-rsi', rsi.toFixed(2), rsi);
+            }
         }
 
         function updateStrategyList(strategies) {
@@ -1306,6 +1379,40 @@
             }
         }
 
+        function pushConfidencePoint(name, value) {
+            const arr = DIAG_STATE.confidenceSeries[name];
+            if (!arr) return;
+            arr.push(Math.max(0, Math.min(100, Number(value || 0))));
+            if (arr.length > 60) arr.shift();
+        }
+
+        function buildSparklinePoints(series, width, height) {
+            if (!Array.isArray(series) || !series.length) return '';
+            if (series.length === 1) return `0,${height - (series[0] / 100) * height}`;
+            return series.map((v, idx) => {
+                const x = (idx / (series.length - 1)) * width;
+                const y = height - (Math.max(0, Math.min(100, v)) / 100) * height;
+                return `${x.toFixed(2)},${y.toFixed(2)}`;
+            }).join(' ');
+        }
+
+        function renderConfidenceSparkline(consistency, passrate, winrate) {
+            pushConfidencePoint('consistency', consistency);
+            pushConfidencePoint('passrate', passrate);
+            pushConfidencePoint('winrate', winrate);
+            const w = 210;
+            const h = 48;
+            const cLine = document.getElementById('confidence-line-consistency');
+            const pLine = document.getElementById('confidence-line-passrate');
+            const wLine = document.getElementById('confidence-line-winrate');
+            if (cLine) cLine.setAttribute('points', buildSparklinePoints(DIAG_STATE.confidenceSeries.consistency, w, h));
+            if (pLine) pLine.setAttribute('points', buildSparklinePoints(DIAG_STATE.confidenceSeries.passrate, w, h));
+            if (wLine) wLine.setAttribute('points', buildSparklinePoints(DIAG_STATE.confidenceSeries.winrate, w, h));
+            setMetricText('confidence-consistency-val', `一致性 ${Number(consistency).toFixed(1)}%`, Number(consistency));
+            setMetricText('confidence-passrate-val', `放行率 ${Number(passrate).toFixed(1)}%`, Number(passrate));
+            setMetricText('confidence-winrate-val', `胜率 ${Number(winrate).toFixed(1)}%`, Number(winrate));
+        }
+
         function updateConfidenceScore() {
             const consistency = Math.max(0, Math.min(100, Number(DIAG_STATE.signalConsistency || 0)));
             const riskTotal = DIAG_STATE.riskApproved + DIAG_STATE.riskRejected;
@@ -1319,13 +1426,15 @@
             const valEl = document.getElementById('confidence-val');
             const barEl = document.getElementById('confidence-bar');
             const descEl = document.getElementById('confidence-desc');
-            if (valEl) valEl.innerText = `${score.toFixed(1)}%`;
+            if (valEl) setMetricText('confidence-val', `${score.toFixed(1)}%`, score);
             if (barEl) {
+                barEl.style.transition = 'width 360ms cubic-bezier(0.22,1,0.36,1)';
                 barEl.style.width = `${Math.max(0, Math.min(100, score)).toFixed(1)}%`;
             }
             if (descEl) {
                 descEl.innerText = `一致性 ${consistency.toFixed(1)}% · 放行率 ${riskPassRate.toFixed(1)}% · 胜率 ${recentWinRate.toFixed(1)}%`;
             }
+            renderConfidenceSparkline(consistency, riskPassRate, recentWinRate);
             updateDebugPanel();
         }
 
@@ -1409,6 +1518,7 @@
 
         const STRATEGY_FORM_GROUPS = [
             { id: 'common', name: '公共参数', fields: [{ path: 'strategy_params.common.order_qty', label: '默认下单数量', type: 'number', min: 100, max: 100000, step: 100, slider: true }] },
+            { id: '00', name: '00 长期持有', fields: [] },
             { id: '01', name: '01 三周期共振', fields: [{ path: 'strategy_params.01.min_history_bars', label: '最小历史K线', type: 'number', min: 50, max: 5000, step: 10, slider: true }, { path: 'strategy_params.01.daily_ma10_tolerance', label: 'MA10偏离容忍', type: 'number', min: 0.001, max: 0.1, step: 0.001, slider: true, scale: 100 }, { path: 'strategy_params.01.volume_ma_window', label: '量能均线窗口', type: 'number', min: 2, max: 30, step: 1, slider: true }, { path: 'strategy_params.01.stop_loss_pct', label: '止损比例', type: 'number', min: 0.001, max: 0.2, step: 0.001, slider: true, scale: 100 }] },
             { id: '02', name: '02 烂板战法', fields: [{ path: 'strategy_params.02.max_hold_bars', label: '最大持有Bar', type: 'number', min: 10, max: 5000, step: 10, slider: true }] },
             { id: '03', name: '03 ETF轮动', fields: [{ path: 'strategy_params.03.stop_loss_pct', label: '止损比例', type: 'number', min: 0.001, max: 0.2, step: 0.001, slider: true, scale: 100 }] },
@@ -1434,6 +1544,43 @@
             if (el) el.innerText = text;
         }
 
+        function parseMetricNumber(v) {
+            if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+            const s = String(v ?? '').replace(/[^0-9+-.]/g, '');
+            const n = Number(s);
+            return Number.isFinite(n) ? n : null;
+        }
+
+        function animateMetric(el, nextRaw) {
+            if (!el) return;
+            const prevRaw = parseMetricNumber(el.dataset.metricRaw);
+            if (nextRaw === null || nextRaw === undefined) return;
+            if (prevRaw === null) {
+                el.dataset.metricRaw = String(nextRaw);
+                return;
+            }
+            const diff = Number(nextRaw) - Number(prevRaw);
+            if (Math.abs(diff) < 1e-12) return;
+            el.classList.remove('metric-pop-up', 'metric-pop-down');
+            void el.offsetWidth;
+            el.classList.add(diff >= 0 ? 'metric-pop-up' : 'metric-pop-down');
+            el.dataset.metricRaw = String(nextRaw);
+        }
+
+        function setMetricText(id, text, rawValue = null) {
+            const el = document.getElementById(id);
+            if (!el) return;
+            const raw = rawValue === null ? parseMetricNumber(text) : rawValue;
+            animateMetric(el, raw);
+            el.innerText = text;
+        }
+
+        function setDailyPnlStyle(rawPnl) {
+            const el = document.getElementById('daily-pnl');
+            if (!el) return;
+            el.className = `font-mono font-bold text-lg ${rawPnl >= 0 ? 'text-trading-red' : 'text-trading-green'}`;
+        }
+
         function fmtPct(v, digits = 2) {
             const n = Number(v);
             if (!Number.isFinite(n)) return '--';
@@ -1445,20 +1592,28 @@
             const active = getByPath(cfg, 'strategies.active_ids', []);
             const activeText = Array.isArray(active) ? `${active.length}个 (${active.join(',')})` : '--';
             setText('cfg-zhongshu-active', activeText);
-            setText('cfg-zhongshu-box', `${getByPath(cfg, 'strategy_params.09.box_period', '--')}`);
-            setText('cfg-menxia-stop', fmtPct(getByPath(cfg, 'risk_control.max_stop_loss_pct', null)));
-            setText('cfg-menxia-dayloss', fmtPct(getByPath(cfg, 'risk_control.max_daily_loss_pct', null)));
-            setText('cfg-shangshu-slippage', fmtPct(getByPath(cfg, 'execution.slippage', null), 3));
+            const boxPeriod = Number(getByPath(cfg, 'strategy_params.09.box_period', 0));
+            const stopPct = Number(getByPath(cfg, 'risk_control.max_stop_loss_pct', 0));
+            const dayLossPct = Number(getByPath(cfg, 'risk_control.max_daily_loss_pct', 0));
+            const slippage = Number(getByPath(cfg, 'execution.slippage', 0));
+            const capital = Number(getByPath(cfg, 'system.initial_capital', 0));
+            const commissionRate = Number(getByPath(cfg, 'trading_cost.commission_rate', 0));
+            const minCommission = Number(getByPath(cfg, 'trading_cost.min_commission', 0));
+            const totalPos = Number(getByPath(cfg, 'risk_control.max_total_pos', 0));
+            setMetricText('cfg-zhongshu-box', `${boxPeriod}`, boxPeriod);
+            setMetricText('cfg-menxia-stop', fmtPct(stopPct), stopPct * 100);
+            setMetricText('cfg-menxia-dayloss', fmtPct(dayLossPct), dayLossPct * 100);
+            setMetricText('cfg-shangshu-slippage', fmtPct(slippage, 3), slippage * 100);
             setText('cfg-shangshu-mode', `${getByPath(cfg, 'system.mode', '--')}`);
-            setText('cfg-li-capital', `¥ ${Number(getByPath(cfg, 'system.initial_capital', 0)).toLocaleString()}`);
-            setText('cfg-hu-commission', `${Number(getByPath(cfg, 'trading_cost.commission_rate', 0)).toFixed(6)}`);
-            setText('cfg-hu-minc', `¥ ${Number(getByPath(cfg, 'trading_cost.min_commission', 0)).toFixed(2)}`);
+            setMetricText('cfg-li-capital', `¥ ${capital.toLocaleString()}`, capital);
+            setMetricText('cfg-hu-commission', `${commissionRate.toFixed(6)}`, commissionRate);
+            setMetricText('cfg-hu-minc', `¥ ${minCommission.toFixed(2)}`, minCommission);
             setText('cfg-li-rites-live', getByPath(cfg, 'system.enable_live', false) ? '开启' : '关闭');
-            setText('cfg-bing-slippage', fmtPct(getByPath(cfg, 'execution.slippage', null), 3));
-            setText('cfg-xing-totalpos', fmtPct(getByPath(cfg, 'risk_control.max_total_pos', null)));
+            setMetricText('cfg-bing-slippage', fmtPct(slippage, 3), slippage * 100);
+            setMetricText('cfg-xing-totalpos', fmtPct(totalPos), totalPos * 100);
             setText('cfg-gong-source', `${getByPath(cfg, 'data_provider.source', '--')}`);
             setText('cfg-gong-fallback', getByPath(cfg, 'data_provider.enable_fallback', false) ? 'ON' : 'OFF');
-            setText('justice-dd-limit', fmtPct(getByPath(cfg, 'risk_control.max_daily_loss_pct', null)));
+            setMetricText('justice-dd-limit', fmtPct(dayLossPct), dayLossPct * 100);
         }
 
         async function syncBoardConfig() {
@@ -2010,8 +2165,7 @@
                 actionEl.innerText = dir;
                 actionEl.className = `font-bold ${dir === 'BUY' ? 'text-trading-green' : 'text-trading-red'}`;
             }
-            const warPrice = document.getElementById('war-price');
-            if (warPrice) warPrice.innerText = price;
+            setMetricText('war-price', price, Number(price));
             BT_STATE.totalTrades += 1;
             pulsePanel('panel-bing');
             logMessage('尚书省', `[${strategy}] ${dir} ${code} @ ${price} x ${qty}`, dir === 'BUY' ? 'success' : 'warning');
@@ -2020,12 +2174,12 @@
 
         function updateMinistryTick(data) {
             if (data.cash !== undefined) {
-                const cashEl = document.getElementById('revenue-cash');
-                if (cashEl) cashEl.innerText = Number(data.cash).toLocaleString();
+                const cashNum = Number(data.cash);
+                setMetricText('revenue-cash', cashNum.toLocaleString(), cashNum);
             }
             if (data.available_pos_pct !== undefined) {
-                const ap = document.getElementById('personnel-available-pos');
-                if (ap) ap.innerText = `${Number(data.available_pos_pct).toFixed(1)}%`;
+                const apNum = Number(data.available_pos_pct);
+                setMetricText('personnel-available-pos', `${apNum.toFixed(1)}%`, apNum);
             }
             if (data.main_strategy) {
                 const ms = document.getElementById('personnel-main-strategy');
@@ -2034,7 +2188,8 @@
             if (data.drawdown_pct !== undefined) {
                 const dd = document.getElementById('justice-dd-current');
                 if (dd) {
-                    dd.innerText = `${Number(data.drawdown_pct).toFixed(2)}%`;
+                    const ddNum = Number(data.drawdown_pct);
+                    setMetricText('justice-dd-current', `${ddNum.toFixed(2)}%`, ddNum);
                     dd.className = Number(data.drawdown_pct) > 2 ? 'font-mono text-trading-red' : 'font-mono text-trading-green';
                 }
             }
