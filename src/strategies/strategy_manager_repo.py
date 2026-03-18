@@ -36,7 +36,34 @@ def ensure_strategy_store():
             json.dump({"strategies": []}, f, ensure_ascii=False, indent=2)
     if not os.path.exists(state_store_path()):
         with open(state_store_path(), "w", encoding="utf-8") as f:
-            json.dump({"disabled_ids": []}, f, ensure_ascii=False, indent=2)
+            json.dump({"disabled_ids": [], "deleted_ids": []}, f, ensure_ascii=False, indent=2)
+
+
+def _load_state_payload():
+    ensure_strategy_store()
+    try:
+        with open(state_store_path(), "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        if not isinstance(payload, dict):
+            payload = {}
+    except Exception:
+        payload = {}
+    if not isinstance(payload.get("disabled_ids"), list):
+        payload["disabled_ids"] = []
+    if not isinstance(payload.get("deleted_ids"), list):
+        payload["deleted_ids"] = []
+    return payload
+
+
+def _save_state_payload(payload):
+    ensure_strategy_store()
+    data = payload if isinstance(payload, dict) else {}
+    if not isinstance(data.get("disabled_ids"), list):
+        data["disabled_ids"] = []
+    if not isinstance(data.get("deleted_ids"), list):
+        data["deleted_ids"] = []
+    with open(state_store_path(), "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
 
 def list_builtin_strategy_meta():
@@ -66,10 +93,8 @@ def save_custom_strategies(rows):
 
 
 def load_disabled_ids():
-    ensure_strategy_store()
     try:
-        with open(state_store_path(), "r", encoding="utf-8") as f:
-            payload = json.load(f)
+        payload = _load_state_payload()
         rows = payload.get("disabled_ids", [])
         return set(str(x) for x in rows if str(x).strip())
     except Exception:
@@ -77,36 +102,83 @@ def load_disabled_ids():
 
 
 def save_disabled_ids(ids):
-    ensure_strategy_store()
     unique_ids = sorted(set(str(x) for x in ids if str(x).strip()))
-    with open(state_store_path(), "w", encoding="utf-8") as f:
-        json.dump({"disabled_ids": unique_ids}, f, ensure_ascii=False, indent=2)
+    payload = _load_state_payload()
+    payload["disabled_ids"] = unique_ids
+    _save_state_payload(payload)
+
+
+def load_deleted_ids():
+    try:
+        payload = _load_state_payload()
+        rows = payload.get("deleted_ids", [])
+        return set(str(x) for x in rows if str(x).strip())
+    except Exception:
+        return set()
+
+
+def save_deleted_ids(ids):
+    unique_ids = sorted(set(str(x) for x in ids if str(x).strip()))
+    payload = _load_state_payload()
+    payload["deleted_ids"] = unique_ids
+    _save_state_payload(payload)
 
 
 def list_all_strategy_meta():
     builtin = list_builtin_strategy_meta()
     custom = load_custom_strategies()
     disabled = load_disabled_ids()
+    deleted = load_deleted_ids()
     out = []
     for b in builtin:
         sid = str(b["id"])
+        if sid in deleted:
+            continue
         out.append({
             "id": sid,
             "name": str(b["name"]),
             "builtin": True,
             "enabled": sid not in disabled,
-            "deletable": False
+            "deletable": True,
+            "editable": False,
+            "source": "builtin",
+            "source_label": "内置策略",
+            "analysis_text": "",
+            "code": "",
+            "raw_requirement_title": "原始需求",
+            "raw_requirement": ""
         })
     for c in custom:
         sid = str(c.get("id", "")).strip()
         if not sid:
             continue
+        if sid in deleted:
+            continue
+        source = str(c.get("source", "")).strip().lower()
+        if source not in {"human", "market"}:
+            source = str(((c.get("strategy_intent") or {}).get("source", ""))).strip().lower()
+        if source not in {"human", "market"}:
+            source = "human"
+        source_label = "用户输入" if source == "human" else "行情驱动"
+        raw_requirement_title = str(c.get("raw_requirement_title", "")).strip()
+        if not raw_requirement_title:
+            raw_requirement_title = "策略模板" if source == "human" else "行情状态"
+        raw_requirement = str(c.get("raw_requirement", "")).strip()
+        if not raw_requirement:
+            raw_requirement = str(c.get("template_text", "")).strip()
         out.append({
             "id": sid,
             "name": str(c.get("name", sid)),
             "builtin": False,
             "enabled": sid not in disabled,
-            "deletable": True
+            "deletable": True,
+            "editable": True,
+            "source": source,
+            "source_label": source_label,
+            "analysis_text": str(c.get("analysis_text", "")),
+            "code": str(c.get("code", "")),
+            "raw_requirement_title": raw_requirement_title,
+            "raw_requirement": raw_requirement
         })
     out.sort(key=lambda x: x["id"])
     return out
@@ -114,12 +186,17 @@ def list_all_strategy_meta():
 
 def next_custom_strategy_id():
     used_numeric = set()
+    deleted = load_deleted_ids()
     for b in list_builtin_strategy_meta():
         sid = str(b["id"]).strip()
+        if sid in deleted:
+            continue
         if sid.isdigit():
             used_numeric.add(int(sid))
     for c in load_custom_strategies():
         sid = str(c.get("id", "")).strip()
+        if sid in deleted:
+            continue
         if sid.isdigit():
             used_numeric.add(int(sid))
     i = 0
@@ -204,6 +281,17 @@ def add_custom_strategy(entry):
     if not isinstance(intent_payload, dict):
         raise ValueError("strategy_intent is required")
     strategy_intent, intent_explain = normalize_strategy_intent(intent_payload)
+    source = str(entry.get("source", "")).strip().lower()
+    if source not in {"human", "market"}:
+        source = str(strategy_intent.get("source", "")).strip().lower()
+    if source not in {"human", "market"}:
+        source = "human"
+    raw_requirement_title = str(entry.get("raw_requirement_title", "")).strip()
+    if not raw_requirement_title:
+        raw_requirement_title = "策略模板" if source == "human" else "行情状态"
+    raw_requirement = str(entry.get("raw_requirement", "")).strip()
+    if not raw_requirement:
+        raw_requirement = str(entry.get("template_text", "")).strip()
     now = datetime.now().isoformat(timespec="seconds")
     row = {
         "id": sid,
@@ -212,6 +300,9 @@ def add_custom_strategy(entry):
         "code": str(entry.get("code", "")),
         "template_text": str(entry.get("template_text", "")),
         "analysis_text": str(entry.get("analysis_text", "")),
+        "source": source,
+        "raw_requirement_title": raw_requirement_title,
+        "raw_requirement": raw_requirement,
         "strategy_intent": strategy_intent,
         "intent_explain": intent_explain,
         "created_at": now,
@@ -237,6 +328,31 @@ def delete_custom_strategy(strategy_id):
     return changed
 
 
+def delete_strategy(strategy_id):
+    sid = str(strategy_id or "").strip()
+    if not sid:
+        return False
+    builtin_ids = {str(x.get("id", "")).strip() for x in list_builtin_strategy_meta()}
+    if sid in builtin_ids:
+        deleted = load_deleted_ids()
+        if sid in deleted:
+            return False
+        deleted.add(sid)
+        save_deleted_ids(deleted)
+        disabled = load_disabled_ids()
+        if sid in disabled:
+            disabled.remove(sid)
+            save_disabled_ids(disabled)
+        return True
+    changed = delete_custom_strategy(sid)
+    if changed:
+        deleted = load_deleted_ids()
+        if sid in deleted:
+            deleted.remove(sid)
+            save_deleted_ids(deleted)
+    return changed
+
+
 def set_strategy_enabled(strategy_id, enabled):
     sid = str(strategy_id or "").strip()
     if not sid:
@@ -250,6 +366,45 @@ def set_strategy_enabled(strategy_id, enabled):
     else:
         disabled.add(sid)
     save_disabled_ids(disabled)
+
+
+def update_custom_strategy(entry):
+    sid = str(entry.get("id", "")).strip()
+    if not sid:
+        raise ValueError("strategy id is required")
+    rows = load_custom_strategies()
+    idx = -1
+    for i, r in enumerate(rows):
+        if str(r.get("id", "")).strip() == sid:
+            idx = i
+            break
+    if idx < 0:
+        raise ValueError(f"strategy not found: {sid}")
+    row = rows[idx]
+    if "name" in entry:
+        row["name"] = str(entry.get("name", sid)).strip() or sid
+    if "class_name" in entry:
+        row["class_name"] = str(entry.get("class_name", "")).strip()
+    if "code" in entry:
+        row["code"] = str(entry.get("code", ""))
+    if "analysis_text" in entry:
+        row["analysis_text"] = str(entry.get("analysis_text", ""))
+    if "raw_requirement" in entry:
+        row["raw_requirement"] = str(entry.get("raw_requirement", ""))
+    if "raw_requirement_title" in entry:
+        row["raw_requirement_title"] = str(entry.get("raw_requirement_title", "")).strip() or "原始需求"
+    if "source" in entry:
+        source = str(entry.get("source", "")).strip().lower()
+        if source in {"human", "market"}:
+            row["source"] = source
+    if "strategy_intent" in entry and isinstance(entry.get("strategy_intent"), dict):
+        strategy_intent, intent_explain = normalize_strategy_intent(entry.get("strategy_intent"))
+        row["strategy_intent"] = strategy_intent
+        row["intent_explain"] = intent_explain
+    row["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    rows[idx] = row
+    save_custom_strategies(rows)
+    return True
 
 
 def instantiate_custom_strategy(entry):

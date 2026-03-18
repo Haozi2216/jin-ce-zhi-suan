@@ -30,7 +30,8 @@ from src.strategies.strategy_manager_repo import (
     next_custom_strategy_id,
     build_fallback_strategy_code,
     add_custom_strategy,
-    delete_custom_strategy,
+    update_custom_strategy,
+    delete_strategy,
     set_strategy_enabled
 )
 from src.strategy_intent.intent_engine import StrategyIntentEngine
@@ -260,6 +261,20 @@ class StrategyAddRequest(BaseModel):
     template_text: Optional[str] = None
     analysis_text: Optional[str] = None
     strategy_intent: Optional[dict] = None
+    source: Optional[str] = None
+    raw_requirement_title: Optional[str] = None
+    raw_requirement: Optional[str] = None
+
+
+class StrategyUpdateRequest(BaseModel):
+    strategy_id: str
+    strategy_name: Optional[str] = None
+    class_name: Optional[str] = None
+    code: Optional[str] = None
+    analysis_text: Optional[str] = None
+    source: Optional[str] = None
+    raw_requirement_title: Optional[str] = None
+    raw_requirement: Optional[str] = None
 
 class StrategyDeleteRequest(BaseModel):
     strategy_id: str
@@ -473,7 +488,10 @@ async def api_strategy_manager_add(req: StrategyAddRequest):
             "code": req.code,
             "template_text": req.template_text or "",
             "analysis_text": req.analysis_text or "",
-            "strategy_intent": strategy_intent
+            "strategy_intent": strategy_intent,
+            "source": req.source or "",
+            "raw_requirement_title": req.raw_requirement_title or "",
+            "raw_requirement": req.raw_requirement or ""
         })
         return {"status": "success"}
     except Exception as e:
@@ -481,10 +499,37 @@ async def api_strategy_manager_add(req: StrategyAddRequest):
         return {"status": "error", "msg": str(e)}
 
 
+@app.post("/api/strategy_manager/update")
+async def api_strategy_manager_update(req: StrategyUpdateRequest):
+    try:
+        payload = {"id": req.strategy_id}
+        if req.strategy_name is not None:
+            payload["name"] = req.strategy_name
+        if req.class_name is not None:
+            payload["class_name"] = req.class_name
+        if req.code is not None:
+            payload["code"] = req.code
+            if not req.class_name:
+                payload["class_name"] = _extract_first_class_name(req.code)
+        if req.analysis_text is not None:
+            payload["analysis_text"] = req.analysis_text
+        if req.source is not None:
+            payload["source"] = req.source
+        if req.raw_requirement_title is not None:
+            payload["raw_requirement_title"] = req.raw_requirement_title
+        if req.raw_requirement is not None:
+            payload["raw_requirement"] = req.raw_requirement
+        update_custom_strategy(payload)
+        return {"status": "success"}
+    except Exception as e:
+        logger.error(f"/api/strategy_manager/update failed: {e}", exc_info=True)
+        return {"status": "error", "msg": str(e)}
+
+
 @app.post("/api/strategy_manager/delete")
 async def api_strategy_manager_delete(req: StrategyDeleteRequest):
     try:
-        deleted = delete_custom_strategy(req.strategy_id)
+        deleted = delete_strategy(req.strategy_id)
         return {"status": "success" if deleted else "info", "deleted": bool(deleted)}
     except Exception as e:
         logger.error(f"/api/strategy_manager/delete failed: {e}", exc_info=True)

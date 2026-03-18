@@ -334,9 +334,6 @@
             <button onclick="reloadStrategies()" class="bg-trading-blue hover:bg-blue-600 text-white px-3 py-1.5 rounded text-xs transition-all border border-blue-500">
                 <i class="fa-solid fa-rotate"></i> 热更新策略
             </button>
-            <button onclick="openStrategyDocs()" class="bg-violet-600 hover:bg-violet-500 text-white px-3 py-1.5 rounded text-xs transition-all border border-violet-500">
-                <i class="fa-solid fa-book"></i> 策略说明
-            </button>
             <a href="/report" class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded text-xs transition-all border border-indigo-500">
                 <i class="fa-solid fa-file-lines"></i> 打开报告
             </a>
@@ -686,7 +683,7 @@
         </div>
     </div>
     <div id="strategy-manager-modal" class="hidden fixed inset-0 bg-black/70 z-[145] flex items-center justify-center p-6">
-        <div class="w-[980px] max-w-[96vw] h-[78vh] bg-slate-900 border border-slate-700 rounded-lg shadow-2xl flex flex-col overflow-hidden">
+        <div class="w-[980px] max-w-[96vw] h-[78vh] bg-slate-900 border border-slate-700 rounded-lg shadow-2xl flex flex-col overflow-hidden resize" style="resize: both; min-width: 760px; min-height: 480px;">
             <div class="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
                 <div class="text-white font-bold"><i class="fa-solid fa-chess-knight mr-2 text-indigo-400"></i>策略管理器</div>
                 <button onclick="closeStrategyManager()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
@@ -707,12 +704,59 @@
                                 <th class="px-3 py-2 text-left">策略ID</th>
                                 <th class="px-3 py-2 text-left">策略名称</th>
                                 <th class="px-3 py-2 text-left">类型</th>
+                                <th class="px-3 py-2 text-left">策略详情说明</th>
+                                <th class="px-3 py-2 text-left">策略代码</th>
+                                <th class="px-3 py-2 text-left">原始需求</th>
                                 <th class="px-3 py-2 text-left">状态</th>
                                 <th class="px-3 py-2 text-right">操作</th>
                             </tr>
                         </thead>
                         <tbody id="strategy-manager-list" class="divide-y divide-slate-800"></tbody>
                     </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div id="strategy-edit-modal" class="hidden fixed inset-0 bg-black/70 z-[152] flex items-center justify-center p-6">
+        <div class="w-[980px] max-w-[96vw] h-[82vh] bg-slate-900 border border-slate-700 rounded-lg shadow-2xl flex flex-col overflow-hidden">
+            <div class="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
+                <div class="text-white font-bold"><i class="fa-solid fa-pen-to-square mr-2 text-amber-300"></i>编辑策略字段</div>
+                <button onclick="closeStrategyEditModal()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="px-4 py-3 border-b border-slate-700 grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div>
+                    <div class="text-xs text-slate-400 mb-1">策略ID</div>
+                    <input id="strategy-edit-id" type="text" readonly class="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200">
+                </div>
+                <div>
+                    <div class="text-xs text-slate-400 mb-1">策略名称</div>
+                    <input id="strategy-edit-name" type="text" class="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm text-slate-100">
+                </div>
+                <div>
+                    <div class="text-xs text-slate-400 mb-1">来源类型</div>
+                    <select id="strategy-edit-source" class="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm text-slate-100">
+                        <option value="human">用户输入</option>
+                        <option value="market">行情驱动</option>
+                    </select>
+                </div>
+            </div>
+            <div class="flex-1 p-4 overflow-y-auto grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div class="space-y-2">
+                    <div class="text-xs text-slate-300">策略详情说明</div>
+                    <textarea id="strategy-edit-analysis" class="h-40 w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs text-slate-200"></textarea>
+                    <div class="text-xs text-slate-300" id="strategy-edit-raw-title-label">原始需求</div>
+                    <textarea id="strategy-edit-raw" class="h-40 w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs text-slate-200"></textarea>
+                </div>
+                <div class="space-y-2">
+                    <div class="text-xs text-slate-300">策略代码</div>
+                    <textarea id="strategy-edit-code" class="h-[334px] w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs font-mono text-emerald-200"></textarea>
+                </div>
+            </div>
+            <div class="px-4 py-3 border-t border-slate-700 flex items-center justify-between">
+                <div id="strategy-edit-status" class="text-xs text-slate-400">可编辑后保存生效</div>
+                <div class="flex items-center gap-2">
+                    <button onclick="closeStrategyEditModal()" class="bg-slate-700 hover:bg-slate-600 text-white px-3 py-1.5 rounded text-xs border border-slate-600">取消</button>
+                    <button onclick="saveStrategyEditModal()" class="bg-amber-700 hover:bg-amber-600 text-white px-3 py-1.5 rounded text-xs border border-amber-500">保存生效</button>
                 </div>
             </div>
         </div>
@@ -866,6 +910,7 @@
         let selectedStrategyIds = [];
         let backtestResultRecovered = false;
         let strategyManagerRows = [];
+        let strategyManagerEditingId = null;
         let pendingGeneratedStrategy = null;
         let klineModalTimer = null;
         let klineModalOpened = false;
@@ -2266,9 +2311,14 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             const body = document.getElementById('strategy-manager-list');
             if (!body) return;
             if (!rows.length) {
-                body.innerHTML = '<tr><td colspan="5" class="px-3 py-4 text-center text-slate-500">暂无策略</td></tr>';
+                body.innerHTML = '<tr><td colspan="8" class="px-3 py-4 text-center text-slate-500">暂无策略</td></tr>';
                 return;
             }
+            const shortText = (txt, limit = 28) => {
+                const s = String(txt || '').replace(/\s+/g, ' ').trim();
+                if (!s) return '<span class="text-slate-500">--</span>';
+                return s.length > limit ? `${s.slice(0, limit)}...` : s;
+            };
             body.innerHTML = rows.map(r => {
                 const sid = String(r.id || '');
                 const enabled = !!r.enabled;
@@ -2278,14 +2328,21 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 const toggleTxt = enabled ? '停用' : '启用';
                 const toggleCls = enabled ? 'bg-amber-700 hover:bg-amber-600 border-amber-500' : 'bg-emerald-700 hover:bg-emerald-600 border-emerald-500';
                 const delBtn = r.deletable ? `<button onclick="deleteStrategyManaged('${sid}')" class="text-white px-2 py-1 rounded text-[11px] border bg-rose-700 hover:bg-rose-600 border-rose-500">删除</button>` : '';
+                const editBtn = r.editable ? `<button onclick="openStrategyEditModal('${sid}')" class="text-white px-2 py-1 rounded text-[11px] border bg-amber-700 hover:bg-amber-600 border-amber-500">编辑</button>` : '';
+                const sourceLabel = String(r.source_label || (r.source === 'market' ? '行情驱动' : (r.source === 'human' ? '用户输入' : '--')));
+                const rawTitle = String(r.raw_requirement_title || '原始需求');
                 return `
                     <tr class="hover:bg-slate-800/40">
                         <td class="px-3 py-2 text-slate-200 font-mono">${sid}</td>
                         <td class="px-3 py-2 text-slate-200">${String(r.name || sid)}</td>
-                        <td class="px-3 py-2 text-slate-400">${kindTxt}</td>
+                        <td class="px-3 py-2 text-slate-400">${kindTxt}<span class="ml-1 text-[11px] text-slate-500">(${sourceLabel})</span></td>
+                        <td class="px-3 py-2 text-slate-300">${shortText(r.analysis_text || '')}</td>
+                        <td class="px-3 py-2 text-cyan-300 font-mono">${shortText(r.code || '')}</td>
+                        <td class="px-3 py-2 text-slate-300"><span class="text-slate-500">${rawTitle}：</span>${shortText(r.raw_requirement || '')}</td>
                         <td class="px-3 py-2 ${statusCls}">${statusTxt}</td>
                         <td class="px-3 py-2 text-right">
                             <div class="inline-flex gap-1">
+                                ${editBtn}
                                 <button onclick="toggleStrategyManaged('${sid}', ${enabled ? 'false' : 'true'})" class="text-white px-2 py-1 rounded text-[11px] border ${toggleCls}">${toggleTxt}</button>
                                 ${delBtn}
                             </div>
@@ -2344,6 +2401,90 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             }
         }
 
+        function renderStrategyEditRawTitle() {
+            const source = String(document.getElementById('strategy-edit-source')?.value || 'human');
+            const label = document.getElementById('strategy-edit-raw-title-label');
+            if (label) label.innerText = source === 'market' ? '原始需求（行情状态）' : '原始需求（策略模板）';
+        }
+
+        function openStrategyEditModal(strategyId) {
+            const sid = String(strategyId || '');
+            const row = strategyManagerRows.find(x => String(x.id || '') === sid);
+            if (!row || !row.editable) return;
+            strategyManagerEditingId = sid;
+            const modal = document.getElementById('strategy-edit-modal');
+            if (modal) modal.classList.remove('hidden');
+            const source = String(row.source || '').trim().toLowerCase() === 'market' ? 'market' : 'human';
+            const idInput = document.getElementById('strategy-edit-id');
+            const nameInput = document.getElementById('strategy-edit-name');
+            const sourceInput = document.getElementById('strategy-edit-source');
+            const analysisInput = document.getElementById('strategy-edit-analysis');
+            const codeInput = document.getElementById('strategy-edit-code');
+            const rawInput = document.getElementById('strategy-edit-raw');
+            const status = document.getElementById('strategy-edit-status');
+            if (idInput) idInput.value = sid;
+            if (nameInput) nameInput.value = String(row.name || sid);
+            if (sourceInput) sourceInput.value = source;
+            if (analysisInput) analysisInput.value = String(row.analysis_text || '');
+            if (codeInput) codeInput.value = String(row.code || '');
+            if (rawInput) rawInput.value = String(row.raw_requirement || '');
+            if (status) status.innerText = '可编辑后保存生效';
+            if (sourceInput) sourceInput.onchange = renderStrategyEditRawTitle;
+            renderStrategyEditRawTitle();
+        }
+
+        function closeStrategyEditModal() {
+            const modal = document.getElementById('strategy-edit-modal');
+            if (modal) modal.classList.add('hidden');
+            strategyManagerEditingId = null;
+        }
+
+        async function saveStrategyEditModal() {
+            const status = document.getElementById('strategy-edit-status');
+            const sid = String(strategyManagerEditingId || '');
+            if (!sid) return;
+            const nameText = String(document.getElementById('strategy-edit-name')?.value || '').trim();
+            const source = String(document.getElementById('strategy-edit-source')?.value || 'human');
+            const analysisText = String(document.getElementById('strategy-edit-analysis')?.value || '').trim();
+            const codeText = String(document.getElementById('strategy-edit-code')?.value || '').trim();
+            const rawRequirement = String(document.getElementById('strategy-edit-raw')?.value || '').trim();
+            const rawTitle = source === 'market' ? '行情状态' : '策略模板';
+            if (!nameText) {
+                if (status) status.innerText = '策略名称不能为空';
+                return;
+            }
+            if (!codeText) {
+                if (status) status.innerText = '策略代码不能为空';
+                return;
+            }
+            try {
+                if (status) status.innerText = '保存中...';
+                const res = await fetch('/api/strategy_manager/update', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        strategy_id: sid,
+                        strategy_name: nameText,
+                        source: source,
+                        analysis_text: analysisText,
+                        code: codeText,
+                        raw_requirement_title: rawTitle,
+                        raw_requirement: rawRequirement
+                    })
+                });
+                const data = await res.json();
+                if (data.status !== 'success') throw new Error(data.msg || '保存失败');
+                await fetch('/api/control/reload_strategies', { method: 'POST' });
+                if (status) status.innerText = '保存成功，已生效';
+                logMessage('SYSTEM', `策略 ${sid} 已更新`, 'success');
+                closeStrategyEditModal();
+                await loadStrategyManager();
+                await fetchGlobalStrategies();
+            } catch (e) {
+                if (status) status.innerText = `保存失败: ${e}`;
+            }
+        }
+
         function openStrategyCreateModal() {
             pendingGeneratedStrategy = null;
             const modal = document.getElementById('strategy-create-modal');
@@ -2397,6 +2538,18 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             };
         }
 
+        function marketStateToZhText(state) {
+            const s = state || {};
+            const trendMap = { up: '上行', down: '下行', sideways: '震荡' };
+            const volMap = { low: '低波动', medium: '中波动', high: '高波动' };
+            const momMap = { weak: '弱', neutral: '中', strong: '强' };
+            const trend = trendMap[String(s.trend || '')] || String(s.trend || '--');
+            const vol = volMap[String(s.volatility || '')] || String(s.volatility || '--');
+            const momentum = momMap[String(s.momentum || '')] || String(s.momentum || '--');
+            const summary = String(s.summary || '').trim();
+            return `趋势：${trend}\n波动：${vol}\n动量：${momentum}${summary ? `\n补充：${summary}` : ''}`;
+        }
+
         async function analyzeStrategyTemplate() {
             const tplInput = document.getElementById('strategy-template-input');
             const codeTplInput = document.getElementById('strategy-code-template-input');
@@ -2441,7 +2594,9 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     template_text: templateText,
                     source: source,
                     strategy_intent: data.strategy_intent || {},
-                    intent_explain: String(data.intent_explain || '')
+                    intent_explain: String(data.intent_explain || ''),
+                    raw_requirement_title: source === 'market' ? '行情状态' : '策略模板',
+                    raw_requirement: source === 'market' ? marketStateToZhText(marketState) : templateText
                 };
                 const analysis = document.getElementById('strategy-analysis-output');
                 if (analysis) {
@@ -2486,7 +2641,10 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                         code: codeText,
                         template_text: pendingGeneratedStrategy.template_text || '',
                         analysis_text: pendingGeneratedStrategy.analysis_text || '',
-                        strategy_intent: pendingGeneratedStrategy.strategy_intent || null
+                        strategy_intent: pendingGeneratedStrategy.strategy_intent || null,
+                        source: pendingGeneratedStrategy.source || 'human',
+                        raw_requirement_title: pendingGeneratedStrategy.raw_requirement_title || '策略模板',
+                        raw_requirement: pendingGeneratedStrategy.raw_requirement || ''
                     })
                 });
                 const data = await res.json();
