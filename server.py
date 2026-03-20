@@ -688,6 +688,38 @@ async def api_strategy_manager_list():
         logger.error(f"/api/strategy_manager/list failed: {e}", exc_info=True)
         return {"status": "error", "msg": str(e), "strategies": []}
 
+@app.get("/api/strategy_manager/detail")
+async def api_strategy_manager_detail(strategy_id: str):
+    try:
+        sid = str(strategy_id or "").strip()
+        if not sid:
+            return {"status": "error", "msg": "strategy_id is required"}
+        rows = list_all_strategy_meta()
+        target = None
+        for row in rows:
+            row_id = str(row.get("id", "")).strip()
+            if row_id == sid:
+                target = dict(row)
+                break
+        if target is None:
+            return {"status": "not_found", "msg": f"strategy {sid} not found"}
+        sc = strategy_score_cache.get(sid, {})
+        target["score_total"] = sc.get("score_total", None)
+        target["rating"] = sc.get("rating", "")
+        target["score_total_adjusted"] = sc.get("score_total_adjusted", None)
+        target["score_penalty_points"] = sc.get("score_penalty_points", 0.0)
+        target["score_confidence"] = sc.get("score_confidence", 0.0)
+        target["score_backtest_count"] = sc.get("score_backtest_count", 0)
+        target["score_total_latest"] = sc.get("score_total_latest", None)
+        target["rating_latest"] = sc.get("rating_latest", "")
+        target["score_annualized_roi_avg"] = sc.get("score_annualized_roi_avg", 0.0)
+        target["score_max_dd_avg"] = sc.get("score_max_dd_avg", 0.0)
+        target["score_trades_avg"] = sc.get("score_trades_avg", 0.0)
+        return {"status": "success", "strategy": target}
+    except Exception as e:
+        logger.error(f"/api/strategy_manager/detail failed: {e}", exc_info=True)
+        return {"status": "error", "msg": str(e), "strategy": None}
+
 
 @app.post("/api/strategy_manager/toggle")
 async def api_strategy_manager_toggle(req: StrategyToggleRequest):
@@ -1599,6 +1631,16 @@ async def api_backtest_kline_thumb(stock: str, start: str, end: str):
 async def api_start_backtest(req: BacktestRequest):
     """Start a backtest task (useful for OpenClaw API calls)"""
     global cabinet_task
+    logger.info(
+        "start_backtest request params: stock_code=%s strategy_id=%s strategy_ids=%s strategy_mode=%s start=%s end=%s capital=%s",
+        req.stock_code,
+        req.strategy_id,
+        req.strategy_ids,
+        req.strategy_mode,
+        req.start,
+        req.end,
+        req.capital,
+    )
     if cabinet_task and not cabinet_task.done():
         cabinet_task.cancel()
     report_id = start_new_backtest_report(req.stock_code, req.strategy_id, {
@@ -1989,7 +2031,16 @@ async def run_cabinet_task(stock_code):
 
 async def run_backtest_task(stock_code, strategy_id, strategy_mode=None, start=None, end=None, capital=None, strategy_ids=None):
     """Wrapper to run backtest"""
-    print(f"Starting Backtest for {stock_code}")
+    logger.info(
+        "Starting Backtest params: stock_code=%s strategy_id=%s strategy_ids=%s strategy_mode=%s start=%s end=%s capital=%s",
+        stock_code,
+        strategy_id,
+        strategy_ids,
+        strategy_mode,
+        start,
+        end,
+        capital,
+    )
     initial_capital = float(capital) if capital is not None else 1000000.0
     
     cab = BacktestCabinet(
