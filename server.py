@@ -111,9 +111,32 @@ intent_engine = StrategyIntentEngine()
 history_sync_service = HistoryDiffSyncService()
 history_sync_scheduler_task = None
 
+def _system_mode(cfg=None):
+    c = cfg if cfg is not None else ConfigLoader.reload()
+    mode = str(c.get("system.mode", "backtest") or "backtest").strip().lower()
+    return mode if mode in {"backtest", "live"} else "backtest"
+
+def _apply_log_level(cfg=None):
+    c = cfg if cfg is not None else ConfigLoader.reload()
+    level_name = str(c.get("system.log_level", "INFO") or "INFO").strip().upper()
+    level = getattr(logging, level_name, logging.INFO)
+    logging.getLogger().setLevel(level)
+    logger.setLevel(level)
+    return level_name
+
+def _default_target_code(cfg=None):
+    c = cfg if cfg is not None else ConfigLoader.reload()
+    targets = c.get("targets", [])
+    if isinstance(targets, list):
+        for item in targets:
+            code = str(item or "").strip()
+            if code:
+                return code
+    return "600036.SH"
+
 def is_live_enabled():
     cfg = ConfigLoader.reload()
-    return bool(cfg.get("system.enable_live", True))
+    return bool(cfg.get("system.enable_live", True)) and _system_mode(cfg) == "live"
 
 def load_report_history(force=False):
     global report_history, latest_backtest_result, latest_strategy_reports, report_history_mtime, report_detail_cache
@@ -880,8 +903,9 @@ async def api_save_config(req: ConfigUpdateRequest):
         cfg._config = req.config
         cfg.save("config.json")
         config = ConfigLoader.reload()
+        applied_log_level = _apply_log_level(config)
         current_provider_source = config.get("data_provider.source", "default")
-        live_enabled = bool(config.get("system.enable_live", True))
+        live_enabled = is_live_enabled()
         restarted = False
         if current_cabinet and type(current_cabinet).__name__ == "LiveCabinet":
             stock_code = getattr(current_cabinet, "stock_code", None)
@@ -891,7 +915,7 @@ async def api_save_config(req: ConfigUpdateRequest):
                 cabinet_task = asyncio.create_task(run_cabinet_task(stock_code))
                 restarted = True
         await manager.broadcast({"type": "system", "data": {"msg": "配置已更新并生效"}})
-        return {"status": "success", "msg": "config saved", "live_restarted": restarted, "live_enabled": live_enabled}
+        return {"status": "success", "msg": "config saved", "live_restarted": restarted, "live_enabled": live_enabled, "log_level": applied_log_level, "mode": _system_mode(config)}
     except Exception as e:
         logger.error(f"/api/config/save failed: {e}", exc_info=True)
         return {"status": "error", "msg": str(e)}
@@ -1648,6 +1672,9 @@ async def api_backtest_kline_thumb(stock: str, start: str, end: str):
 async def api_start_backtest(req: BacktestRequest):
     """Start a backtest task (useful for OpenClaw API calls)"""
     global cabinet_task
+    cfg = ConfigLoader.reload()
+    if _system_mode(cfg) != "backtest":
+        return {"status": "error", "msg": "当前运行模式非回测模式（system.mode=live），请先切换配置中心运行模式"}
     logger.info(
         "start_backtest request params: stock_code=%s strategy_id=%s strategy_ids=%s strategy_mode=%s start=%s end=%s capital=%s",
         req.stock_code,
@@ -1676,7 +1703,7 @@ async def api_start_backtest(req: BacktestRequest):
 async def api_start_live(req: LiveRequest):
     """Start a live simulation task"""
     if not is_live_enabled():
-        return {"status": "error", "msg": "Live功能已在配置中关闭（system.enable_live=false）"}
+        return {"status": "error", "msg": "Live功能已禁用（需 system.enable_live=true 且 system.mode=live）"}
     global cabinet_task
     if cabinet_task and not cabinet_task.done():
         cabinet_task.cancel()
@@ -1939,9 +1966,9 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 elif cmd.get("type") == "start_simulation":
                     if not is_live_enabled():
-                        await manager.broadcast({"type": "system", "data": {"msg": "Live功能已在配置中关闭（system.enable_live=false）"}})
+                        await manager.broadcast({"type": "system", "data": {"msg": "Live功能已禁用（需 system.enable_live=true 且 system.mode=live）"}})
                         continue
-                    stock_code = cmd.get("stock", "600036.SH")
+                    stock_code = cmd.get("stock", _default_target_code())
                     # Start async task
                     # Check if already running?
                     # The wrapper run_cabinet_task handles new instance creation.
@@ -1953,7 +1980,11 @@ async def websocket_endpoint(websocket: WebSocket):
                     cabinet_task = asyncio.create_task(run_cabinet_task(stock_code))
                 
                 elif cmd.get("type") == "start_backtest":
-                    stock_code = cmd.get("stock", "600036.SH")
+                    cfg = ConfigLoader.reload()
+                    if _system_mode(cfg) != "backtest":
+                        await manager.broadcast({"type": "system", "data": {"msg": "当前运行模式为 live，已拒绝启动回测，请先切回 backtest"}})
+                        continue
+                    stock_code = cmd.get("stock", _default_target_code(cfg))
                     strategy_id = cmd.get("strategy", "all")
                     strategy_ids = cmd.get("strategy_ids")
                     strategy_mode = cmd.get("strategy_mode")  # e.g., 'top5'
@@ -2034,6 +2065,7 @@ async def run_cabinet_task(stock_code):
     
     cab = LiveCabinet(
         stock_code=stock_code,
+        initial_capital=float(config.get("system.initial_capital", 1000000.0) or 1000000.0),
         provider_type=provider_source,
         event_callback=emit_event_to_ws
     )
@@ -2058,7 +2090,8 @@ async def run_backtest_task(stock_code, strategy_id, strategy_mode=None, start=N
         end,
         capital,
     )
-    initial_capital = float(capital) if capital is not None else 1000000.0
+    cfg = ConfigLoader.reload()
+    initial_capital = float(capital) if capital is not None else float(cfg.get("system.initial_capital", 1000000.0) or 1000000.0)
     
     cab = BacktestCabinet(
         stock_code=stock_code,
@@ -2132,6 +2165,7 @@ async def emit_event_to_ws(event_type, data):
 @app.on_event("startup")
 async def startup_event():
     global history_sync_scheduler_task
+    _apply_log_level()
     logger.info("Initializing Cabinet Server...")
     load_report_history()
     _warmup_classic_pattern_thumbs()

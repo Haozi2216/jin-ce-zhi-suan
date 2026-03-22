@@ -147,6 +147,7 @@ def list_all_strategy_meta():
     custom = load_custom_strategies()
     disabled = load_disabled_ids()
     deleted = load_deleted_ids()
+    builtin_ids = {str(b["id"]).strip() for b in builtin}
     out = []
     for b in builtin:
         sid = str(b["id"])
@@ -170,6 +171,8 @@ def list_all_strategy_meta():
     for c in custom:
         sid = str(c.get("id", "")).strip()
         if not sid:
+            continue
+        if sid in builtin_ids:
             continue
         if sid in deleted:
             continue

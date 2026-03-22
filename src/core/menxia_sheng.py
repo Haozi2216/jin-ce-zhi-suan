@@ -15,7 +15,7 @@ class MenxiaSheng:
         self.max_drawdowns = {} # Strategy ID -> Max Drawdown
         self.positions = {} # Strategy ID -> Current Positions
 
-    def check_signal(self, signal, current_portfolio_value, current_positions, daily_pnl):
+    def check_signal(self, signal, current_portfolio_value, current_positions, daily_pnl, current_drawdown=None):
         """
         Check if a signal passes risk control.
         Returns: (bool, reason)
@@ -63,10 +63,6 @@ class MenxiaSheng:
         if direction == 'BUY' and self.consecutive_losses.get(strategy_id, 0) >= CONSECUTIVE_LOSS_LIMIT:
              self.xing_bu.record_rejection(strategy_id, 'R5', f"Consecutive losses {self.consecutive_losses.get(strategy_id)} >= {CONSECUTIVE_LOSS_LIMIT}", signal['dt'])
              return False, f"连续亏损 {self.consecutive_losses.get(strategy_id)} 次，暂停开仓"
-        
-        # Rule 6: Max Drawdown > 10% -> Reduce frequency (implementation detail: reject if frequent?)
-        # This is harder to implement as a strict rule without frequency definition. 
-        # For now, we log it.
 
         # Rule 7: Banned stocks (ST, etc.) - Should be handled by Crown Prince, but double check here?
         # Rule 8: Limit Up/Down - Should be handled by Crown Prince.

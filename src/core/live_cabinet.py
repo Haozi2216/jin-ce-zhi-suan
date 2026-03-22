@@ -61,6 +61,7 @@ class LiveCabinet:
         self.last_dt = None
         self.daily_data_buffer = [] # Buffer for daily data
         self.today_archived = False
+        self.peak_fund_value = float(initial_capital)
 
     def warm_up(self):
         """
@@ -357,8 +358,11 @@ class LiveCabinet:
             # In live mode, we might just use initial capital for calc or track virtual position.
             current_fund_value = self.revenue.cash + self.state_affairs.update_holdings_value({bar['code']: bar['close']})
             current_positions = self.state_affairs.positions.get(strategy_id, {})
-            
-            approved, reason = self.chancellery.check_signal(signal, current_fund_value, current_positions, 0.0)
+            self.peak_fund_value = max(float(self.peak_fund_value), float(current_fund_value))
+            current_drawdown = 0.0
+            if self.peak_fund_value > 0:
+                current_drawdown = max(0.0, (float(self.peak_fund_value) - float(current_fund_value)) / float(self.peak_fund_value))
+            approved, reason = self.chancellery.check_signal(signal, current_fund_value, current_positions, 0.0, current_drawdown=current_drawdown)
             
             if approved:
                 print(f"   ✅ 风控中心批准。正在执行...")

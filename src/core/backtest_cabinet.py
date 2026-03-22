@@ -49,10 +49,11 @@ class BacktestCabinet:
 
         # Initialize Strategies
         # Get the latest strategies every time we start a backtest
-        all_strategies = create_strategies()
+        use_active_filter = not bool(self.strategy_ids)
+        all_strategies = create_strategies(apply_active_filter=use_active_filter)
         if self.strategy_ids:
-            allowed = set(self.strategy_ids)
-            self.strategies = [s for s in all_strategies if s.id in allowed]
+            allowed = {str(x).strip() for x in self.strategy_ids if str(x).strip()}
+            self.strategies = [s for s in all_strategies if str(s.id).strip() in allowed]
         elif self.strategy_mode == 'top5':
             self.strategies = all_strategies[:5]
         elif self.strategy_id == 'all':
@@ -65,6 +66,7 @@ class BacktestCabinet:
         self.strategy_initial_capital = self.initial_capital / strategy_count
         self.strategy_revenues = {s.id: HuBuRevenue(self.strategy_initial_capital) for s in self.strategies}
         self.aggregate_nav = []
+        self.drawdown_above_limit = False
         self._event_queue = None
         self._event_task = None
         
@@ -105,6 +107,23 @@ class BacktestCabinet:
         if low in ("d", "1d", "day", "daily"):
             return "D"
         return x
+
+    def _compute_portfolio_snapshot(self, current_prices):
+        holdings_value = 0.0
+        cash_total = 0.0
+        for sid, account in self.strategy_revenues.items():
+            holdings_value += self.state_affairs.update_strategy_holdings_value(sid, current_prices)
+            cash_total += float(account.cash)
+        fund_value = cash_total + holdings_value
+        return fund_value, cash_total, holdings_value
+
+    def _compute_current_drawdown_ratio(self, fund_value):
+        peak = float(self.initial_capital)
+        if self.aggregate_nav:
+            peak = max(peak, max(float(x.get('nav', 0.0) or 0.0) for x in self.aggregate_nav))
+        if peak <= 0:
+            return 0.0
+        return max(0.0, (float(peak) - float(fund_value)) / float(peak))
 
     async def _force_close_positions_at_end(self, kline):
         if not bool(self.config.get("execution.force_close_on_backtest_end", True)):
@@ -149,6 +168,71 @@ class BacktestCabinet:
         if closed_any:
             await self._emit_account_snapshot(kline, active_strategy_id=None, compliance_status="PASS")
 
+    async def _enforce_drawdown_limit(self, kline):
+        if not self.strategy_revenues:
+            return False
+        max_drawdown_pct = float(self.config.get("risk_control.max_drawdown_pct", 0.0) or 0.0)
+        if max_drawdown_pct <= 0:
+            return False
+        portfolio_value, _, _ = self._compute_portfolio_snapshot({kline['code']: kline['close']})
+        current_drawdown = self._compute_current_drawdown_ratio(portfolio_value)
+        if current_drawdown <= max_drawdown_pct:
+            self.drawdown_above_limit = False
+            return False
+        if self.drawdown_above_limit:
+            return False
+        has_position = False
+        for stocks in self.state_affairs.positions.values():
+            for pos in stocks.values():
+                if int(pos.get("qty", 0) or 0) > 0:
+                    has_position = True
+                    break
+            if has_position:
+                break
+        if not has_position:
+            return False
+        self.drawdown_above_limit = True
+        await self._emit('backtest_flow', {
+            'module': '门下省',
+            'level': 'danger',
+            'msg': f"触发最大回撤限制: {current_drawdown:.2%} > {max_drawdown_pct:.2%}，执行立即平仓"
+        })
+        closed_any = False
+        for sid, stocks in list(self.state_affairs.positions.items()):
+            account = self.strategy_revenues.get(sid)
+            if account is None:
+                continue
+            for code, pos in list(stocks.items()):
+                qty = int(pos.get("qty", 0) or 0)
+                if qty <= 0:
+                    continue
+                order = {
+                    "strategy_id": sid,
+                    "code": code,
+                    "dt": kline["dt"],
+                    "direction": "SELL",
+                    "qty": qty,
+                    "price": float(kline.get("close", 0) or 0),
+                    "reason": "DRAWDOWN_LIMIT"
+                }
+                executed = self.state_affairs.execute_order(sid, order, kline, hu_bu_account=account)
+                if not executed:
+                    continue
+                self.secretariat.update_strategy_state(sid, code, 0)
+                closed_any = True
+                await self._emit('backtest_trade', {
+                    'dt': str(kline['dt']),
+                    'strategy': sid,
+                    'code': code,
+                    'dir': 'SELL',
+                    'price': float(kline.get('close', 0) or 0),
+                    'qty': qty,
+                    'reason': 'DRAWDOWN_LIMIT'
+                })
+        if closed_any:
+            await self._emit_account_snapshot(kline, active_strategy_id=None, compliance_status="RISK_OFF")
+        return True
+
     async def _emit_loop(self):
         while True:
             item = await self._event_queue.get()
@@ -185,14 +269,10 @@ class BacktestCabinet:
 
     async def _emit_account_snapshot(self, kline, active_strategy_id=None, compliance_status="PASS"):
         current_prices = {kline['code']: kline['close']}
-        holdings_value = 0.0
-        cash_total = 0.0
+        fund_value, cash_total, holdings_value = self._compute_portfolio_snapshot(current_prices)
         for sid, account in self.strategy_revenues.items():
             strategy_holdings = self.state_affairs.update_strategy_holdings_value(sid, current_prices)
             account.update_daily_nav(kline['dt'], strategy_holdings)
-            holdings_value += strategy_holdings
-            cash_total += float(account.cash)
-        fund_value = cash_total + holdings_value
         pnl_pct = ((fund_value / self.initial_capital) - 1.0) * 100 if self.initial_capital else 0.0
         pos_ratio = (holdings_value / fund_value * 100) if fund_value > 0 else 0.0
         await self._emit('account', {
@@ -227,6 +307,19 @@ class BacktestCabinet:
         perf_settlement_ms = 0
         await self._start_event_pump()
         try:
+            if not self.strategies:
+                requested = ",".join([str(x).strip() for x in (self.strategy_ids or []) if str(x).strip()])
+                msg = "无可运行策略：未找到可实例化且启用的策略"
+                if requested:
+                    msg = f"{msg}（请求: {requested}）"
+                await self._emit('system', {'msg': f"❌ {msg}"})
+                await self._emit('backtest_failed', {
+                    'msg': msg,
+                    'stock': self.stock_code,
+                    'period': f"{start_date.date()} - {end_date.date()}",
+                    'provider_source': self.config.get("data_provider.source", "default")
+                })
+                return
             await self._emit('system', {'msg': f"开始回测 {self.stock_code} ({start_date.date()} - {end_date.date()})..."})
             await self._emit('backtest_flow', {'module': '太子院', 'level': 'system', 'msg': f'校验标的与回测区间: {self.stock_code} {start_date.date()}~{end_date.date()}'})
             await self._emit('backtest_flow', {'module': '工部', 'level': 'system', 'msg': f'装载行情数据: {self.stock_code} {start_date.date()}~{end_date.date()}...'})
@@ -413,6 +506,9 @@ class BacktestCabinet:
                         'runnable_timeframes': runnable_tf
                     })
                     await self._emit_account_snapshot(kline, active_strategy_id=None, compliance_status="PASS")
+                drawdown_limited = await self._enforce_drawdown_limit(kline)
+                if drawdown_limited:
+                    continue
                 strategy_context = {
                     sid: {
                         "current_cash": float(self.strategy_revenues[sid].cash),
@@ -447,7 +543,9 @@ class BacktestCabinet:
                         continue
                     current_fund_value = float(account.cash) + self.state_affairs.update_strategy_holdings_value(sid, {kline['code']: kline['close']})
                     current_positions = self.state_affairs.positions.get(sid, {})
-                    approved, reason = self.chancellery.check_signal(signal, current_fund_value, current_positions, 0.0)
+                    portfolio_value, _, _ = self._compute_portfolio_snapshot({kline['code']: kline['close']})
+                    current_drawdown = self._compute_current_drawdown_ratio(portfolio_value)
+                    approved, reason = self.chancellery.check_signal(signal, current_fund_value, current_positions, 0.0, current_drawdown=current_drawdown)
                     await self._emit('menxia', {
                         'msg': "风控审核通过" if approved else "风控审核拒绝",
                         'details': f"> 策略: {sid}<br>> 结果: {'通过' if approved else '拒绝'}<br>> 原因: {reason}",
