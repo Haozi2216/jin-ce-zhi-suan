@@ -35,7 +35,8 @@
 - 多策略统一管理（内置 + 自定义）
 - Web 面板配置与任务控制
 
-![](D:\04.量化\三省六部皇帝体系介绍PPT_04.png)
+<img width="2397" height="1343" alt="image" src="https://github.com/user-attachments/assets/01f37497-e060-4755-a44b-03f43c8dc4e6" />
+
 
 ## 核心特性
 
