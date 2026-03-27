@@ -15,6 +15,7 @@ import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.lines as mlines
+from matplotlib import font_manager
 from datetime import datetime
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, BackgroundTasks, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse, Response, FileResponse
@@ -44,6 +45,20 @@ from src.utils.akshare_provider import AkshareProvider
 from src.utils.history_sync_service import HistoryDiffSyncService, TABLE_INTERVAL_MAP
 
 import logging
+
+def _configure_matplotlib_font():
+    font_candidates = [
+        "Microsoft YaHei",
+        "SimHei",
+    ]
+    available_fonts = {f.name for f in font_manager.fontManager.ttflist}
+    chosen_font = next((name for name in font_candidates if name in available_fonts), None)
+    if chosen_font:
+        matplotlib.rcParams["font.family"] = "sans-serif"
+        matplotlib.rcParams["font.sans-serif"] = [chosen_font, "DejaVu Sans"]
+    matplotlib.rcParams["axes.unicode_minus"] = False
+
+_configure_matplotlib_font()
 
 # Configure Logging
 logging.basicConfig(
