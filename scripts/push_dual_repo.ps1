@@ -194,6 +194,10 @@ try {
         "server.log",
         "USER_GUIDE.md"
     )
+    $privateOnlyIncludeList = @(
+        "config.private.json",
+        "data/strategies/custom_strategies.private.json"
+    )
     Ensure-Remote -Name $PublicRemote -Url $PublicRepoUrl
     Ensure-Remote -Name $PrivateRemote -Url $PrivateRepoUrl
     Ensure-LocalBranch -BranchName $PrivateBranch -FromBranch $PublicBranch
@@ -261,7 +265,7 @@ try {
             Invoke-Git -Args @("stash", "drop", "stash@{0}") | Out-Null
             $privateStashCreated = $false
         }
-        foreach ($path in $publicDenyList) {
+        foreach ($path in $privateOnlyIncludeList) {
             if (Test-Path (Join-Path $repoRoot $path)) {
                 Invoke-Git -Args @("add", "-f", $path) -AllowFailure | Out-Null
             }

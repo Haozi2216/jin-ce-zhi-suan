@@ -1488,7 +1488,10 @@ async def api_report_strategy_kline_data(report_id: str, strategy_id: str):
         period_label = _strategy_period_label(strategy_id, srep=srep)
         interval = _period_label_to_interval(period_label)
         provider = _select_provider()
-        df = provider.fetch_kline_data(stock_code, start_dt, end_dt, interval=interval) if hasattr(provider, "fetch_kline_data") else pd.DataFrame()
+        if hasattr(provider, "fetch_kline_data"):
+            df = await asyncio.to_thread(provider.fetch_kline_data, stock_code, start_dt, end_dt, interval)
+        else:
+            df = pd.DataFrame()
         if df is None or df.empty:
             return {"status": "error", "msg": "no kline data"}
         if "dt" not in df.columns:
