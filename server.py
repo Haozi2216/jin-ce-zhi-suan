@@ -164,7 +164,54 @@ def _project_root():
     return os.path.dirname(os.path.abspath(__file__))
 
 def _private_config_path():
-    return os.environ.get("CONFIG_PRIVATE_PATH", os.path.join(_project_root(), "config.private.json"))
+    override = str(os.environ.get("CONFIG_PRIVATE_PATH", "") or "").strip()
+    if override:
+        return override
+    try:
+        cfg = ConfigLoader.reload()
+        cfg_override = str(cfg.get("system.private_config_path", "") or "").strip()
+        if cfg_override:
+            return cfg_override if os.path.isabs(cfg_override) else os.path.join(_project_root(), cfg_override)
+    except Exception:
+        pass
+    return os.path.join(_project_root(), "config.private.json")
+
+def _custom_private_strategy_path():
+    override = str(os.environ.get("CUSTOM_STRATEGIES_PRIVATE_PATH", "") or "").strip()
+    if override:
+        return override
+    try:
+        cfg = ConfigLoader.reload()
+        cfg_override = str(cfg.get("system.private_strategy_path", "") or "").strip()
+        if cfg_override:
+            return cfg_override if os.path.isabs(cfg_override) else os.path.join(_project_root(), cfg_override)
+    except Exception:
+        pass
+    return os.path.join(_project_root(), "data", "strategies", "custom_strategies.private.json")
+
+def _startup_private_data_check(cfg=None):
+    c = cfg if cfg is not None else ConfigLoader.reload()
+    private_path = _private_config_path()
+    strategy_private_path = _custom_private_strategy_path()
+    required_paths = [
+        "data_provider.default_api_key",
+        "data_provider.tushare_token",
+    ]
+    missing_secrets = []
+    for p in required_paths:
+        val = str(c.get(p, "") or "").strip()
+        if not val:
+            missing_secrets.append(p)
+    if (not os.path.exists(private_path)) or missing_secrets:
+        logger.warning("私有配置检查: CONFIG_PRIVATE_PATH=%s", private_path)
+        if not os.path.exists(private_path):
+            logger.warning("未找到私有配置文件 config.private.json，密钥不会随代码仓库同步。")
+        if missing_secrets:
+            logger.warning("以下关键密钥为空: %s", ",".join(missing_secrets))
+        logger.warning("建议：在目标机器创建私有目录并设置环境变量 CONFIG_PRIVATE_PATH/CUSTOM_STRATEGIES_PRIVATE_PATH。")
+    if not os.path.exists(strategy_private_path):
+        logger.warning("未找到私有策略文件: %s", strategy_private_path)
+        logger.warning("若需私有策略持久化，请创建该文件并设置 CUSTOM_STRATEGIES_WRITE_PRIVATE=1。")
 
 def _load_json_with_comments(file_path, silent=False):
     import re
@@ -2491,6 +2538,7 @@ async def startup_event():
     strategies = strategy_factory_module.create_strategies()
     logger.info(f"Loaded {len(strategies)} Strategies: {[s.name for s in strategies]}")
     cfg = ConfigLoader.reload()
+    _startup_private_data_check(cfg)
     if bool(cfg.get("history_sync.scheduler_enabled", False)):
         history_sync_scheduler_task = asyncio.create_task(_history_sync_scheduler_loop())
     logger.info("Server Started. Access dashboard at http://localhost:8000")

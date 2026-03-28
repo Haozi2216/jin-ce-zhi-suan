@@ -24,7 +24,13 @@ class ConfigLoader:
         project_root = os.path.dirname(os.path.dirname(base_dir))
         base_config_path = config_path if os.path.exists(config_path) else os.path.join(project_root, "config.json")
         base_config = self._load_json_config(base_config_path)
-        private_config_path = os.environ.get("CONFIG_PRIVATE_PATH", os.path.join(project_root, "config.private.json"))
+        private_config_path = str(
+            os.environ.get("CONFIG_PRIVATE_PATH", "")
+            or self._get_path_value(base_config, "system.private_config_path", "")
+            or os.path.join(project_root, "config.private.json")
+        ).strip()
+        if private_config_path and (not os.path.isabs(private_config_path)):
+            private_config_path = os.path.join(project_root, private_config_path)
         private_config = self._load_json_config(private_config_path, silent=True)
         private_config = self._filter_private_override_config(private_config)
         self._config = self._deep_merge_dict(base_config, private_config)

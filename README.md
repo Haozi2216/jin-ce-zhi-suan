@@ -144,6 +144,33 @@ pip install tushare akshare fastapi uvicorn
 - 若本地不存在 `config.private.json`，首次在前端保存密钥后会自动创建该文件。
 - 自定义策略也支持“私有优先读取”：若存在 `data/strategies/custom_strategies.private.json`，系统会优先读取并写入该文件；否则回退到 `data/strategies/custom_strategies.json`。
 
+推荐做法（多机器一致）：
+
+- 建议将私有文件放到仓库外目录，例如：`D:\04.量化\private-data`
+- 可直接在 `config.json` 中配置以下路径（无需每次敲命令）：
+  - `system.private_config_path`
+  - `system.private_strategy_path`
+- 建议配置如下环境变量（每台机器各自设置一次）：
+  - `CONFIG_PRIVATE_PATH=D:\04.量化\private-data\config.private.json`
+  - `CUSTOM_STRATEGIES_PRIVATE_PATH=D:\04.量化\private-data\strategies\custom_strategies.private.json`
+  - `CUSTOM_STRATEGIES_WRITE_PRIVATE=1`
+
+PowerShell 示例：
+
+```powershell
+New-Item -ItemType Directory -Force -Path "D:\04.量化\private-data\strategies" | Out-Null
+setx CONFIG_PRIVATE_PATH "D:\04.量化\private-data\config.private.json"
+setx CUSTOM_STRATEGIES_PRIVATE_PATH "D:\04.量化\private-data\strategies\custom_strategies.private.json"
+setx CUSTOM_STRATEGIES_WRITE_PRIVATE "1"
+```
+
+说明：
+
+- 代码拉取到新机器后，不会自动带上私有文件，需要你自行放置到上述路径。
+- 路径优先级：环境变量 > `config.json` 路径配置 > 项目默认路径。
+- 新版 `server.py` 启动时会检查私有配置与私有策略路径，缺失会在日志中给出明确原因与修复建议。
+- `config.private.json` 必须保存为 `UTF-8`（无 BOM）；若使用 `UTF-8 with BOM`，加载会失败并表现为 `default_api_key`、`tushare_token` 为空。
+
 ### 4. 启动方式
 
 回测模式：

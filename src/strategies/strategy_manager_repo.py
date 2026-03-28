@@ -29,6 +29,18 @@ def custom_private_store_path():
     override = str(os.environ.get("CUSTOM_STRATEGIES_PRIVATE_PATH", "") or "").strip()
     if override:
         return override
+    cfg = {}
+    cfg_path = os.path.join(_project_root(), "config.json")
+    if os.path.exists(cfg_path):
+        try:
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                cfg = json.load(f) or {}
+        except Exception:
+            cfg = {}
+    system_cfg = cfg.get("system", {}) if isinstance(cfg, dict) else {}
+    cfg_override = str(system_cfg.get("private_strategy_path", "") or "").strip()
+    if cfg_override:
+        return cfg_override if os.path.isabs(cfg_override) else os.path.join(_project_root(), cfg_override)
     return os.path.join(_data_dir(), "custom_strategies.private.json")
 
 
