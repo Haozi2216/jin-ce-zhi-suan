@@ -52,6 +52,55 @@ class TushareProvider:
         except Exception:
             return
 
+    def _is_live_console_trace_enabled(self):
+        return bool(self.event_callback)
+
+    def _summarize_df_result(self, df):
+        if df is None or df.empty:
+            return "rows=0"
+        dt_min = ""
+        dt_max = ""
+        close_last = ""
+        try:
+            dt_min = str(pd.to_datetime(df["dt"], errors="coerce").min())
+            dt_max = str(pd.to_datetime(df["dt"], errors="coerce").max())
+        except Exception:
+            dt_min = ""
+            dt_max = ""
+        try:
+            close_last = float(df.iloc[-1].get("close", 0.0) or 0.0)
+            close_last = f"{close_last:.4f}"
+        except Exception:
+            close_last = ""
+        extra = []
+        if dt_min:
+            extra.append(f"start={dt_min}")
+        if dt_max:
+            extra.append(f"end={dt_max}")
+        if close_last:
+            extra.append(f"last_close={close_last}")
+        extra_text = (" " + " ".join(extra)) if extra else ""
+        return f"rows={len(df)}{extra_text}"
+
+    def _trace_fetch(self, interface, code, start_time=None, end_time=None, result=None, err=""):
+        if not self._is_live_console_trace_enabled():
+            return
+        range_text = ""
+        if start_time is not None or end_time is not None:
+            st = str(start_time) if start_time is not None else "-"
+            et = str(end_time) if end_time is not None else "-"
+            range_text = f" range={st}->{et}"
+        if isinstance(result, pd.DataFrame):
+            result_text = self._summarize_df_result(result)
+        elif isinstance(result, dict):
+            dt_text = str(result.get("dt", "") or "")
+            close_text = str(result.get("close", "") or "")
+            result_text = f"payload dt={dt_text} close={close_text}"
+        else:
+            result_text = str(result or "")
+        status = "ok" if not err else f"fail err={err}"
+        print(f"📡 Tushare拉取 interface={interface} code={code}{range_text} status={status} result={result_text}")
+
     def _cache_file_path(self, code, interval="1min"):
         safe_code = str(code).upper().replace(".", "_")
         return os.path.join(self._cache_dir, f"tushare_{safe_code}_{interval}.csv")
@@ -288,9 +337,11 @@ class TushareProvider:
             return pd.DataFrame()
         try:
             df = self.pro.rt_min(ts_code=code)
-        except Exception:
+        except Exception as e:
+            self._trace_fetch("rt_min", code, start_time=start_time, end_time=end_time, result=pd.DataFrame(), err=str(e))
             return pd.DataFrame()
         if df is None or df.empty:
+            self._trace_fetch("rt_min", code, start_time=start_time, end_time=end_time, result=pd.DataFrame(), err="empty")
             return pd.DataFrame()
         work = df.copy()
         if "time" in work.columns and "dt" not in work.columns:
@@ -321,7 +372,9 @@ class TushareProvider:
             work = work[work["dt"] >= st]
         if et is not None and (not pd.isna(et)):
             work = work[work["dt"] <= et]
-        return work.reset_index(drop=True)
+        out = work.reset_index(drop=True)
+        self._trace_fetch("rt_min", code, start_time=start_time, end_time=end_time, result=out)
+        return out
 
     def set_token(self, token):
         self.token = token
@@ -368,9 +421,11 @@ class TushareProvider:
                     }
                     self._append_rt_today_bar(code, payload)
                     self.last_error = ""
+                    self._trace_fetch("rt_min", code, result=payload)
                     return payload
             except Exception as e_rt:
                 self.last_error = f"rt_min_failed code={code} err={e_rt}"
+                self._trace_fetch("rt_min", code, result={}, err=str(e_rt))
             df = ts.get_realtime_quotes(code)
             if df is None or df.empty:
                 end_date = datetime.now().strftime("%Y%m%d")
@@ -480,12 +535,14 @@ class TushareProvider:
                 try:
                     df_hist_remote = self.pro.stk_mins(ts_code=code, freq='1min', start_date=start_str, end_date=end_str)
                     df_hist_remote = self._normalize_minutes_df(df_hist_remote)
+                    self._trace_fetch("stk_mins", code, start_time=start_str, end_time=end_str, result=df_hist_remote, err="empty" if df_hist_remote.empty else "")
                     if df_hist_remote.empty:
                         self.last_error = f"stk_mins_empty code={code} range={start_str}->{end_str}"
                     hist_df = pd.concat([hist_cached, df_hist_remote], ignore_index=True) if not hist_cached.empty else df_hist_remote
                     hist_df = self._normalize_minutes_df(hist_df)
                 except Exception as e:
                     self.last_error = f"fetch_minute_data_failed code={code} range={start_str}->{end_str} err={e}"
+                    self._trace_fetch("stk_mins", code, start_time=start_str, end_time=end_str, result=pd.DataFrame(), err=str(e))
                     hist_df = hist_cached if not hist_cached.empty else pd.DataFrame()
         today_df = pd.DataFrame()
         if include_today:
@@ -520,9 +577,12 @@ class TushareProvider:
                 start_date=start_str,
                 end_date=end_str
             )
-            return self._normalize_minutes_df(df)
+            out = self._normalize_minutes_df(df)
+            self._trace_fetch("stk_mins", code, start_time=start_str, end_time=end_str, result=out, err="empty" if out.empty else "")
+            return out
         except Exception as e:
             self.last_error = f"_fetch_stk_mins_failed code={code} freq={freq} err={e}"
+            self._trace_fetch("stk_mins", code, start_time=start_str, end_time=end_str, result=pd.DataFrame(), err=str(e))
             return pd.DataFrame()
 
     def fetch_kline_data(self, code, start_time, end_time, interval="1min"):

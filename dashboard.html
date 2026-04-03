@@ -895,7 +895,7 @@
                     <span>更多</span>
                 </button>
                 <div id="action-more-menu" class="hidden absolute right-0 bottom-12 w-40 bg-slate-900 border border-slate-700 rounded shadow-2xl p-1.5 space-y-1 z-[130]">
-                    <button onclick="openPatternPicker(); closeActionMoreMenu();" class="w-full text-left bg-slate-800 hover:bg-slate-700 text-white px-2 py-1.5 rounded text-xs border border-slate-700"><i class="fa-solid fa-table-cells-large mr-1"></i>经典形态</button>
+                    <button id="pattern-picker-menu-btn" onclick="openPatternPicker(); closeActionMoreMenu();" class="w-full text-left bg-slate-800 hover:bg-slate-700 text-white px-2 py-1.5 rounded text-xs border border-slate-700"><i class="fa-solid fa-table-cells-large mr-1"></i>经典形态</button>
                     <button onclick="openConfigCenter(); closeActionMoreMenu();" class="w-full text-left bg-purple-800 hover:bg-purple-700 text-white px-2 py-1.5 rounded text-xs border border-purple-700"><i class="fa-solid fa-sliders mr-1"></i>配置中心</button>
                     <button id="webhook-retry-menu-btn" onclick="openWebhookRetryCenter(); closeActionMoreMenu();" class="w-full text-left bg-amber-800 hover:bg-amber-700 text-white px-2 py-1.5 rounded text-xs border border-amber-700"><i class="fa-solid fa-bell mr-1"></i>推送补偿</button>
                 </div>
@@ -3502,10 +3502,17 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             const liveStreamPanel = document.getElementById('live-stream-panel');
             const liveStatusWrap = document.getElementById('live-status-wrap');
             const liveToggleBtn = document.getElementById('live-toggle-btn');
+            const backtestTriggerBtn = document.getElementById('backtest-trigger-btn');
+            const patternPickerBtn = document.getElementById('pattern-picker-btn');
+            const patternPickerMenuBtn = document.getElementById('pattern-picker-menu-btn');
             if (liveConsolePanel) liveConsolePanel.classList.toggle('hidden', !liveEnabled);
             if (liveStreamPanel) liveStreamPanel.classList.remove('hidden');
             if (liveStatusWrap) liveStatusWrap.classList.toggle('hidden', !liveEnabled);
             if (liveToggleBtn) liveToggleBtn.classList.toggle('hidden', !liveEnabled);
+            if (backtestTriggerBtn) backtestTriggerBtn.classList.toggle('hidden', liveEnabled);
+            if (patternPickerBtn) patternPickerBtn.classList.toggle('hidden', liveEnabled);
+            if (patternPickerMenuBtn) patternPickerMenuBtn.classList.toggle('hidden', liveEnabled);
+            if (liveEnabled) closePatternPicker();
             syncRuntimeParamsUI();
             updateWebhookRetryEntryState();
             syncActionLayout();
