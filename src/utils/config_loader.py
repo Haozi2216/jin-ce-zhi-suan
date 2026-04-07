@@ -13,6 +13,10 @@ class ConfigLoader:
         "data_provider.api_key",
         "data_provider.mysql_password",
     }
+    _default_private_passthrough_paths = {
+        "targets",
+        "strategies.active_ids",
+    }
 
     def __new__(cls, config_path="config.json"):
         if cls._instance is None:
@@ -35,7 +39,9 @@ class ConfigLoader:
         private_config = self._load_json_config(private_config_path, silent=True)
         private_override_paths = self.resolve_private_override_paths(base_config)
         private_config = self._filter_private_override_config(private_config, private_override_paths)
-        self._config = self._deep_merge_dict(base_config, private_config)
+        private_passthrough = self._extract_private_passthrough_config(private_config)
+        merged_private = self._deep_merge_dict(private_config, private_passthrough)
+        self._config = self._deep_merge_dict(base_config, merged_private)
 
     def _load_json_config(self, config_path, silent=False):
         import re
@@ -137,6 +143,15 @@ class ConfigLoader:
             if self._path_exists(payload, path):
                 self._set_path_value(filtered, path, self._get_path_value(payload, path, ""))
         return filtered
+
+    def _extract_private_passthrough_config(self, payload):
+        if not isinstance(payload, dict):
+            return {}
+        out = {}
+        for path in self._default_private_passthrough_paths:
+            if self._path_exists(payload, path):
+                self._set_path_value(out, path, self._get_path_value(payload, path, None))
+        return out
 
     def get(self, key, default=None):
         keys = key.split('.')

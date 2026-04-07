@@ -184,6 +184,7 @@ startup_server_host = None
 startup_server_port = None
 webhook_notifier = WebhookNotifier()
 SECRET_CONFIG_PATHS = set(ConfigLoader._default_private_override_paths)
+PRIVATE_ONLY_CONFIG_PATHS = {"targets", "strategies.active_ids"}
 SECRET_MASK = "********"
 LIVE_FUND_POOL_DIR = os.path.join("data", "live_fund_pool")
 
@@ -837,6 +838,7 @@ def _save_split_config(incoming):
     current_cfg = ConfigLoader.reload().to_dict()
     merged_cfg = _deep_merge_dict(current_cfg, incoming_dict)
     secret_paths = _secret_config_paths(merged_cfg)
+    private_only_paths = set(PRIVATE_ONLY_CONFIG_PATHS)
 
     secret_updates = {}
     for path in secret_paths:
@@ -846,10 +848,20 @@ def _save_split_config(incoming):
         if isinstance(val, str) and _is_secret_mask_value(val):
             continue
         secret_updates[path] = val
+    private_only_updates = {}
+    for path in private_only_paths:
+        if not _path_exists(incoming_dict, path):
+            continue
+        private_only_updates[path] = _get_path_value(incoming_dict, path, [])
 
     public_cfg = json.loads(json.dumps(merged_cfg, ensure_ascii=False))
     for path in secret_paths:
         _set_path_value(public_cfg, path, "")
+    for path in private_only_paths:
+        if _path_exists(public_cfg, path):
+            cur_val = _get_path_value(public_cfg, path, None)
+            if isinstance(cur_val, list):
+                _set_path_value(public_cfg, path, [])
 
     cfg = ConfigLoader.reload()
     cfg._config = public_cfg
@@ -857,7 +869,7 @@ def _save_split_config(incoming):
 
     private_path = _private_config_path()
     private_exists = os.path.exists(private_path)
-    if secret_updates:
+    if secret_updates or private_only_updates:
         private_cfg = _load_json_with_comments(private_path, silent=True)
         if not isinstance(private_cfg, dict):
             private_cfg = {}
@@ -872,6 +884,16 @@ def _save_split_config(incoming):
                 continue
             if str(old_val) != text:
                 _set_path_value(private_cfg, path, text)
+                private_changed = True
+        for path, val in private_only_updates.items():
+            old_val = _get_path_value(private_cfg, path, None)
+            if isinstance(val, list) and not val:
+                if _path_exists(private_cfg, path):
+                    _delete_path_value(private_cfg, path)
+                    private_changed = True
+                continue
+            if old_val != val:
+                _set_path_value(private_cfg, path, val)
                 private_changed = True
         if private_changed or private_exists:
             _write_json_file(private_path, private_cfg)

@@ -366,7 +366,7 @@ python server.py
 - 联系方式：`zthx410@163.com`
 - 说明：商业授权范围、费用与支持条款以双方签署协议为准。
 
-<img width="508" height="813" alt="d02b159dbb826cdf9875c01aa06d9b63" src="static/硅基流码.png" />
+
 
 **项目答疑咨询** 
 - 星球内容
@@ -385,6 +385,8 @@ Web 面板、飞书消息推送、告警配置
   <img src="static/星球优惠券.png" width="45%" />
   <img src="static/星球二维码.png" width="45%" />
 </p>
+
+<img width="508" height="813" alt="d02b159dbb826cdf9875c01aa06d9b63" src="static/硅基流码.png" />
 
 
 **免责声明**
@@ -443,3 +445,6 @@ Web 面板、飞书消息推送、告警配置
 2. 保持提交粒度清晰，说明改动动机
 3. 提交前确保核心脚本可运行
 4. 通过 PR 描述测试方法与影响范围
+
+## Star History
+[![Star History Chart](https://api.star-history.com/svg?repos=ScottZt/jin-ce-zhi-suan&type=Date)](https://star-history.com/#ScottZt/jin-ce-zhi-suan&Date)
