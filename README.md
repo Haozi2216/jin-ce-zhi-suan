@@ -110,6 +110,8 @@ flowchart LR
 └─run_backtest.py     # 命令行回测入口
 ```
 
+
+
 ## 快速开始
 
 ### 1. 环境要求
@@ -364,7 +366,26 @@ python server.py
 - 联系方式：`zthx410@163.com`
 - 说明：商业授权范围、费用与支持条款以双方签署协议为准。
 
-<img width="1108" height="1513" alt="d02b159dbb826cdf9875c01aa06d9b63" src="https://github.com/user-attachments/assets/77a5a2cf-ae19-4f47-8b1d-0f25b1a9e15c" />
+<img width="508" height="813" alt="d02b159dbb826cdf9875c01aa06d9b63" src="static/硅基流码.png" />
+
+**项目答疑咨询** 
+- 星球内容
+金策智算安装、部署、配置一站式教程
+三省六部架构设计思路与源码解读
+AI 辅助生成量化策略代码实战技巧
+多数据源接入、回测优化、本地私密运行
+Web 面板、飞书消息推送、告警配置
+常用策略模板、回测报告分析
+日常技术答疑、BUG 排查、二次开发指导
+定位：纯技术研究、工具学习、代码交流
+不荐股、不指导买卖、不承诺收益、不涉及任何投资建议。
+适合人群：量化爱好者、Python 开发者、想自建量化研究工具的学习者。
+- 新用户优惠券，100张，领完即止
+<p align="center">
+  <img src="static/星球优惠券.png" width="45%" />
+  <img src="static/星球二维码.png" width="45%" />
+</p>
+
 
 **免责声明**
 ## 免责声明与用户使用协议
