@@ -1,8 +1,9 @@
 {
   "system": {
-    "mode": "backtest",
-    "enable_live": false,
+    "mode": "live",
+    "enable_live": true,
     "initial_capital": 1000000,
+    "live_kline_log_on_change_only": true,
     "log_level": "INFO",
     "server_host": "0.0.0.0",
     "server_port": 8000,
@@ -18,16 +19,18 @@
       "data_provider.postgres_password",
       "data_provider.default_api_url",
       "webhook_notification.feishu_webhook_url",
-      "webhook_notification.feishu_secret"
+      "webhook_notification.feishu_secret",
+      "evolution.llm.api_key"
     ]
   },
   "data_provider": {
-    "source": "default",
+    "source": "tdx",
     "enable_fallback": false,
+    "tushare_api_url": "http://api.tushare.pro",
     "tushare_token": "",
     "default_api_key": "",
     "default_api_url": "",
-    "mysql_host": "127.0.0.1",
+    "mysql_host": "192.168.18.62",
     "mysql_port": 3306,
     "mysql_user": "root",
     "mysql_password": "",
@@ -68,7 +71,14 @@
     "strategy_llm_model": "Qwen/Qwen3-Coder-480B-A35B-Instruct",
     "strategy_llm_timeout_sec": 240,
     "api_key": "",
-    "adjustment_mode": "hfq"
+    "adjustment_mode": "hfq",
+    "tdxdir": "D:\\new_tdx64",
+    "tdx_host": "",
+    "tdx_port": 0,
+    "tdx_node_list": "",
+    "tdx_timeout_sec": 0,
+    "tdx_retry_count": 0,
+    "tdx_max_bars": 0
   },
   "history_sync": {
     "scheduler_enabled": false,
@@ -108,7 +118,7 @@
   },
   "trading_cost": {
     "commission_rate": 0.00025,
-    "min_commission": 5.0,
+    "min_commission": 5,
     "stamp_duty": 0.001,
     "transfer_fee": 0
   },
@@ -290,6 +300,9 @@
     "reporting": {
       "daily_t1_deviation_report": true,
       "weekly_attribution_report": true
+    },
+    "minute_close_confirm": {
+      "enabled": false
     }
   },
   "webhook_notification": {
@@ -381,5 +394,46 @@
       "max_dynamic_qty": 1050,
       "stop_loss_pct": 0.05
     }
+  },
+  "evolution": {
+    "llm": {
+      "enabled": true,
+      "provider": "openai_compatible",
+      "model": "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+      "base_url": "https://api.siliconflow.cn/v1",
+      "timeout_seconds": 120,
+      "retry_times": 1,
+      "api_key": "",
+      "fallback_to_mock": true,
+      "temperature": 0.2,
+      "max_tokens": 1200,
+      "system_prompt": "你是量化策略生成助手。只输出可执行Python策略代码（不要解释、不要markdown）。必须继承BaseImplementedStrategy，并实现on_bar。禁止使用未来函数/回看偏差。遵守A股规则：T+1、涨停不可买、跌停不可卖。"
+    }
+  },
+  "fundamental_adapter": {
+    "enabled": true,
+    "apply_in_backtest": true,
+    "apply_in_live": false,
+    "prefetch_on_backtest_start": true,
+    "provider": "tushare",
+    "cache_ttl_sec": 0,
+    "min_refresh_interval_sec": 0,
+    "tushare_interfaces": {
+      "stock_basic": true,
+      "company": true,
+      "concept_detail": true,
+      "daily_basic": true,
+      "moneyflow": true,
+      "fina_indicator": true,
+      "income": true,
+      "balancesheet": true,
+      "cashflow": true,
+      "dividend": true,
+      "forecast": true,
+      "express": true
+    },
+    "disk_persist_enabled": false,
+    "disk_cache_dir": "",
+    "disk_cache_max_files": 0
   }
 }

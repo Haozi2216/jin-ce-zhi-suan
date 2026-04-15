@@ -9,6 +9,7 @@ requests
 tushare
 akshare
 pytdx
+mootdx
 fastapi
 uvicorn
 pydantic

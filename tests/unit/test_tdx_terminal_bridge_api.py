@@ -215,3 +215,106 @@ def test_broker_hook_logger_masks_sensitive_fields(caplog):
     log_text = "\n".join([str(r.message) for r in caplog.records])
     assert "super-secret" not in log_text
     assert "pass-a" not in log_text
+
+
+def test_api_set_source_supports_tdx(monkeypatch):
+    class _DummyCfg:
+        def __init__(self):
+            self._data = {"data_provider": {"source": "default"}}
+
+        def get(self, key, default=None):
+            cur = self._data
+            try:
+                for part in str(key).split("."):
+                    cur = cur[part]
+                return cur
+            except Exception:
+                return default
+
+        def set(self, key, value):
+            keys = str(key).split(".")
+            cur = self._data
+            for part in keys[:-1]:
+                if part not in cur or not isinstance(cur[part], dict):
+                    cur[part] = {}
+                cur = cur[part]
+            cur[keys[-1]] = value
+
+        def save(self):
+            return None
+
+    class _FakeLoader:
+        _cfg = _DummyCfg()
+
+        @classmethod
+        def reload(cls, config_path="config.json"):
+            return cls._cfg
+
+    async def _fake_broadcast(_msg):
+        return None
+
+    monkeypatch.setattr(server, "ConfigLoader", _FakeLoader)
+    monkeypatch.setattr(server, "_live_running_codes", lambda: [])
+    monkeypatch.setattr(server.manager, "broadcast", _fake_broadcast)
+
+    req = server.SourceSwitchRequest(source="tdx")
+    resp = asyncio.run(server.api_set_source(req))
+    assert resp["status"] == "success"
+    assert resp["source"] == "tdx"
+    assert resp["live_restarted"] is False
+
+
+def test_api_test_tdx_connectivity_autodetect_success(monkeypatch):
+    class _DummyCfg:
+        def get(self, key, default=None):
+            if key == "data_provider.tdxdir":
+                return ""
+            if key == "data_provider.tdx_dir":
+                return ""
+            return default
+
+    class _FakeLoader:
+        @classmethod
+        def reload(cls, config_path="config.json"):
+            return _DummyCfg()
+
+    class _FakeProvider:
+        def __init__(self, tdxdir=None, **kwargs):
+            self.last_error = ""
+            self._tdxdir = str(tdxdir or "")
+
+        def check_connectivity(self, code):
+            return True, "ok_local"
+
+    monkeypatch.setattr(server, "ConfigLoader", _FakeLoader)
+    monkeypatch.setattr(server, "_detect_tdxdir_candidates", lambda limit=8: [r"D:\new_tdx"])
+    monkeypatch.setattr(server, "_is_valid_tdxdir", lambda p: str(p).strip().lower() == r"d:\new_tdx")
+    monkeypatch.setattr(server, "TdxProvider", _FakeProvider)
+
+    req = server.TdxConnectivityTestRequest(tdxdir="", stock_code="600000.SH", auto_detect=True)
+    resp = asyncio.run(server.api_test_tdx_connectivity(req))
+    assert resp["status"] == "success"
+    assert resp["ok"] is True
+    assert str(resp["tdxdir_used"]).lower() == r"d:\new_tdx"
+    assert resp["autodetected"] is True
+
+
+def test_api_test_tdx_connectivity_no_dir_error(monkeypatch):
+    class _DummyCfg:
+        def get(self, key, default=None):
+            return default
+
+    class _FakeLoader:
+        @classmethod
+        def reload(cls, config_path="config.json"):
+            return _DummyCfg()
+
+    monkeypatch.setattr(server, "ConfigLoader", _FakeLoader)
+    monkeypatch.setattr(server, "_detect_tdxdir_candidates", lambda limit=8: [])
+    monkeypatch.setattr(server, "_is_valid_tdxdir", lambda p: False)
+
+    req = server.TdxConnectivityTestRequest(tdxdir="", stock_code="600000.SH", auto_detect=True)
+    resp = asyncio.run(server.api_test_tdx_connectivity(req))
+    assert resp["status"] == "error"
+    assert resp["ok"] is False
+    assert "未找到可用通达信数据目录" in str(resp.get("msg", ""))

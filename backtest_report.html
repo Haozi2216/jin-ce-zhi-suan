@@ -22,9 +22,10 @@
     <div class="max-w-7xl mx-auto px-3 sm:px-6 py-4 sm:py-8">
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4 sm:mb-6">
             <h1 class="text-2xl font-bold"><i class="fa-solid fa-chart-line text-blue-400 mr-2"></i>回测报告中心</h1>
-            <div class="flex items-center gap-2 w-full sm:w-auto">
-                <button id="refresh-btn" class="text-sm bg-blue-700 hover:bg-blue-600 px-3 py-2 rounded border border-blue-600 w-1/2 sm:w-auto whitespace-nowrap transition-all duration-200 hover:-translate-y-0.5 active:scale-95">刷新报告</button>
-                <a id="return-console-btn" href="/" class="text-sm bg-slate-800 hover:bg-slate-700 px-3 py-2 rounded border border-slate-700 text-center w-1/2 sm:w-auto whitespace-nowrap transition-all duration-200 hover:-translate-y-0.5 active:scale-95">返回控制台</a>
+            <div class="flex items-center gap-2 w-full sm:w-auto flex-wrap">
+                <button id="refresh-btn" class="text-sm bg-blue-700 hover:bg-blue-600 px-3 py-2 rounded border border-blue-600 w-[32%] sm:w-auto whitespace-nowrap transition-all duration-200 hover:-translate-y-0.5 active:scale-95">刷新报告</button>
+                <a id="fundamental-config-link" href="/?open=config" class="text-sm bg-emerald-700 hover:bg-emerald-600 px-3 py-2 rounded border border-emerald-600 text-center w-[32%] sm:w-auto whitespace-nowrap transition-all duration-200 hover:-translate-y-0.5 active:scale-95">前往配置</a>
+                <a id="return-console-btn" href="/" class="text-sm bg-slate-800 hover:bg-slate-700 px-3 py-2 rounded border border-slate-700 text-center w-[32%] sm:w-auto whitespace-nowrap transition-all duration-200 hover:-translate-y-0.5 active:scale-95">返回控制台</a>
             </div>
         </div>
 
@@ -39,7 +40,9 @@
             <div class="lg:col-span-8 space-y-6">
                 <div id="summary-card" class="bg-slate-900/60 border border-slate-800 rounded-lg p-4 hidden"></div>
                 <div id="insight-card" class="bg-slate-900/60 border border-slate-800 rounded-lg p-4 hidden"></div>
+                <div id="fundamental-readonly-card" class="bg-slate-900/60 border border-slate-800 rounded-lg p-4 hidden"></div>
                 <div id="ai-review-card" class="bg-slate-900/60 border border-slate-800 rounded-lg p-4 hidden"></div>
+                <div id="buffett-review-card" class="bg-slate-900/60 border border-slate-800 rounded-lg p-4 hidden"></div>
 
                 <div class="bg-slate-900/60 border border-slate-800 rounded-lg p-4">
                     <div class="text-lg font-semibold mb-3">多策略业绩对比</div>
@@ -128,6 +131,9 @@
         let aiReviewLoading = false;
         let aiReviewLoadingReportId = null;
         const aiReviewStateMap = {};
+        let buffettReviewLoading = false;
+        let buffettReviewLoadingReportId = null;
+        const buffettReviewStateMap = {};
         let lastReportSummary = null;
         let lastReportRanking = [];
         let lastReportStrategyReports = [];
@@ -172,6 +178,44 @@
             return `<pre class="whitespace-pre-wrap text-sm leading-7 text-slate-200">${src}</pre>`;
         }
 
+        function renderFundamentalReadonly(profile = null) {
+            const card = document.getElementById('fundamental-readonly-card');
+            if (!card) return;
+            const p = (profile && typeof profile === 'object') ? profile : {};
+            const status = String(p.status || '').trim();
+            const cache = (p.cache && typeof p.cache === 'object') ? p.cache : {};
+            const hit = Boolean(cache.hit);
+            const interfaces = Array.isArray(p.interfaces_enabled) ? p.interfaces_enabled : [];
+            const warnings = Array.isArray(p.warnings) ? p.warnings.filter(Boolean).slice(0, 3) : [];
+            const summary = (p.summary && typeof p.summary === 'object') ? p.summary : {};
+            const company = (summary.company_profile && typeof summary.company_profile === 'object') ? summary.company_profile : {};
+            if (!status) {
+                card.classList.remove('hidden');
+                card.innerHTML = `
+                    <div class="text-lg font-semibold text-white mb-2">基本面适配器（只读）</div>
+                    <div class="text-sm text-slate-300">当前报告无基本面画像数据，配置后在下一次回测生效。</div>
+                    <a href="/?open=config" class="inline-block mt-3 text-xs bg-emerald-700 hover:bg-emerald-600 text-white px-3 py-1.5 rounded border border-emerald-600">前往配置中心</a>
+                `;
+                return;
+            }
+            card.classList.remove('hidden');
+            card.innerHTML = `
+                <div class="text-lg font-semibold text-white mb-2">基本面适配器（只读）</div>
+                <div class="text-sm text-slate-300 leading-7">
+                    状态：<span class="text-cyan-300 font-semibold">${status}</span>
+                    ${hit ? '<span class="text-xs text-slate-500 ml-2">(缓存)</span>' : ''}
+                    <br>
+                    标的：<span class="font-mono text-white">${String(p.stock_code || '--')}</span>
+                    · 公司：<span class="text-white">${String(company.name || '--')}</span>
+                    · 行业：<span class="text-white">${String(company.industry || '--')}</span>
+                    <br>
+                    已启用接口：<span class="text-emerald-300">${interfaces.length}</span>${interfaces.length ? `（${interfaces.join(', ')}）` : ''}
+                    ${warnings.length ? `<br>告警：<span class="text-amber-300">${warnings.join('；')}</span>` : ''}
+                </div>
+                <a href="/?open=config" class="inline-block mt-3 text-xs bg-emerald-700 hover:bg-emerald-600 text-white px-3 py-1.5 rounded border border-emerald-600">前往配置中心</a>
+            `;
+        }
+
         function renderAiReviewCard(opts = {}) {
             const card = document.getElementById('ai-review-card');
             if (!card) return;
@@ -201,6 +245,35 @@
             card.innerHTML = '';
         }
 
+        function renderBuffettReviewCard(opts = {}) {
+            const card = document.getElementById('buffett-review-card');
+            if (!card) return;
+            const loading = Boolean(opts.loading);
+            const markdown = String(opts.markdown || '').trim();
+            const error = String(opts.error || '').trim();
+            const cached = Boolean(opts.cached);
+            if (loading) {
+                card.classList.remove('hidden');
+                card.innerHTML = '<div class="text-sm text-slate-300"><i class="fa-solid fa-spinner fa-spin mr-2"></i>巴菲特版复盘生成中...</div>';
+                return;
+            }
+            if (markdown) {
+                card.classList.remove('hidden');
+                card.innerHTML = `
+                    <div class="text-lg font-semibold text-white mb-2">巴菲特版复盘 ${cached ? '<span class="text-xs text-slate-500">(缓存)</span>' : ''}</div>
+                    <div class="text-sm leading-7 text-slate-200">${renderMarkdownHtml(markdown)}</div>
+                `;
+                return;
+            }
+            if (error) {
+                card.classList.remove('hidden');
+                card.innerHTML = `<div class="text-rose-300 text-sm">巴菲特版复盘失败：${error}</div>`;
+                return;
+            }
+            card.classList.add('hidden');
+            card.innerHTML = '';
+        }
+
         function getAiReviewState(reportId) {
             const rid = String(reportId || '').trim();
             if (!rid) return { loading: false, markdown: '', error: '', cached: false };
@@ -214,6 +287,26 @@
             if (!rid) return;
             const prev = getAiReviewState(rid);
             aiReviewStateMap[rid] = {
+                loading: Boolean(Object.prototype.hasOwnProperty.call(patch, 'loading') ? patch.loading : prev.loading),
+                markdown: String(Object.prototype.hasOwnProperty.call(patch, 'markdown') ? (patch.markdown || '') : (prev.markdown || '')),
+                error: String(Object.prototype.hasOwnProperty.call(patch, 'error') ? (patch.error || '') : (prev.error || '')),
+                cached: Boolean(Object.prototype.hasOwnProperty.call(patch, 'cached') ? patch.cached : prev.cached)
+            };
+        }
+
+        function getBuffettReviewState(reportId) {
+            const rid = String(reportId || '').trim();
+            if (!rid) return { loading: false, markdown: '', error: '', cached: false };
+            const state = buffettReviewStateMap[rid];
+            if (state && typeof state === 'object') return state;
+            return { loading: false, markdown: '', error: '', cached: false };
+        }
+
+        function setBuffettReviewState(reportId, patch = {}) {
+            const rid = String(reportId || '').trim();
+            if (!rid) return;
+            const prev = getBuffettReviewState(rid);
+            buffettReviewStateMap[rid] = {
                 loading: Boolean(Object.prototype.hasOwnProperty.call(patch, 'loading') ? patch.loading : prev.loading),
                 markdown: String(Object.prototype.hasOwnProperty.call(patch, 'markdown') ? (patch.markdown || '') : (prev.markdown || '')),
                 error: String(Object.prototype.hasOwnProperty.call(patch, 'error') ? (patch.error || '') : (prev.error || '')),
@@ -257,12 +350,20 @@
                 renderRanking(lastReportRanking);
                 renderStrategyReports(lastReportStrategyReports);
                 renderInsight(lastReportSummary, lastReportRanking, lastReportStrategyReports);
+                renderFundamentalReadonly(data.fundamental_profile || null);
                 if (!aiReviewLoading || aiReviewLoadingReportId !== currentReportId) {
                     const cached = String(data.ai_review_text || '').trim();
                     if (cached) {
                         setAiReviewState(currentReportId, { markdown: cached, error: '', cached: true, loading: false });
                     }
                     renderAiReviewCard(getAiReviewState(currentReportId));
+                }
+                if (!buffettReviewLoading || buffettReviewLoadingReportId !== currentReportId) {
+                    const cachedBuffett = String(data.buffett_review_text || '').trim();
+                    if (cachedBuffett) {
+                        setBuffettReviewState(currentReportId, { markdown: cachedBuffett, error: '', cached: true, loading: false });
+                    }
+                    renderBuffettReviewCard(getBuffettReviewState(currentReportId));
                 }
             } catch (err) {
                 const msg = (err && err.message) ? err.message : String(err);
@@ -272,6 +373,9 @@
                 renderRanking([]);
                 renderStrategyReports([]);
                 renderInsight(null, [], []);
+                renderFundamentalReadonly(null);
+                renderAiReviewCard({ loading: false, markdown: '', error: '', cached: false });
+                renderBuffettReviewCard({ loading: false, markdown: '', error: '', cached: false });
             }
         }
 
@@ -404,6 +508,7 @@
             const total = reports.length;
             const netState = Number(summary.total_trades || 0) === 0 ? '全策略空仓' : '策略已恢复成交';
             const isCurrentAiReviewLoading = aiReviewLoading && aiReviewLoadingReportId === String(currentReportId || '');
+            const isCurrentBuffettReviewLoading = buffettReviewLoading && buffettReviewLoadingReportId === String(currentReportId || '');
             card.classList.remove('hidden');
             card.innerHTML = `
                 <div class="text-lg font-semibold text-white mb-2">内阁总评</div>
@@ -416,6 +521,7 @@
                 </div>
                 <div class="mt-3">
                     <button onclick="runAiReview()" ${isCurrentAiReviewLoading ? 'disabled' : ''} class="text-xs px-3 py-1.5 rounded border ${isCurrentAiReviewLoading ? 'bg-violet-900/70 border-violet-700 text-violet-200 cursor-not-allowed' : 'bg-violet-700 hover:bg-violet-600 border-violet-500 text-white'}">${isCurrentAiReviewLoading ? 'AI复盘生成中...' : 'AI复盘分析'}</button>
+                    <button onclick="runBuffettReview()" ${isCurrentBuffettReviewLoading ? 'disabled' : ''} class="text-xs px-3 py-1.5 rounded border ml-2 ${isCurrentBuffettReviewLoading ? 'bg-amber-900/70 border-amber-700 text-amber-200 cursor-not-allowed' : 'bg-amber-700 hover:bg-amber-600 border-amber-500 text-white'}">${isCurrentBuffettReviewLoading ? 'Buffett版生成中...' : 'Buffett版复盘'}</button>
                 </div>
             `;
         }
@@ -506,6 +612,37 @@
             } finally {
                 aiReviewLoading = false;
                 aiReviewLoadingReportId = null;
+                renderInsight(lastReportSummary, lastReportRanking, lastReportStrategyReports);
+            }
+        }
+
+        async function runBuffettReview() {
+            const rid = String(currentReportId || '').trim();
+            if (!rid) return;
+            if (buffettReviewLoading && buffettReviewLoadingReportId === rid) return;
+            buffettReviewLoading = true;
+            buffettReviewLoadingReportId = rid;
+            setBuffettReviewState(rid, { loading: true, error: '', cached: false });
+            renderInsight(lastReportSummary, lastReportRanking, lastReportStrategyReports);
+            renderBuffettReviewCard(getBuffettReviewState(rid));
+            try {
+                const res = await fetch(`/api/report/${encodeURIComponent(rid)}/ai_review_buffett?force=1`, { method: 'POST' });
+                const data = await res.json();
+                if (data.status !== 'success') throw new Error(data.msg || '生成失败');
+                const md = String(data.analysis || '').trim() || '暂无复盘内容';
+                setBuffettReviewState(rid, { loading: false, markdown: md, error: '', cached: Boolean(data.cached) });
+                if (String(currentReportId || '') === rid) {
+                    renderBuffettReviewCard(getBuffettReviewState(rid));
+                }
+            } catch (e) {
+                const errMsg = e && e.message ? e.message : String(e || '未知错误');
+                setBuffettReviewState(rid, { loading: false, markdown: '', error: errMsg, cached: false });
+                if (String(currentReportId || '') === rid) {
+                    renderBuffettReviewCard(getBuffettReviewState(rid));
+                }
+            } finally {
+                buffettReviewLoading = false;
+                buffettReviewLoadingReportId = null;
                 renderInsight(lastReportSummary, lastReportRanking, lastReportStrategyReports);
             }
         }

@@ -11,7 +11,7 @@
   <img alt="Status" src="https://img.shields.io/badge/Status-Active-success" />
   <img alt="Market" src="https://img.shields.io/badge/Market-A--Share-red" />
 </p>
-
+<span style="color:red">**⚠️ 当前Github发布是唯一官方版本，其他任何平台、论坛发布均非本人提供，注意风险甄别！**</span>
 ## 目录
 
 - [项目简介](#项目简介)
@@ -31,15 +31,13 @@
 
 ## 项目简介
 
-本项目采用“三省六部”思想构建量化系统，把**策略生成、风控审核、执行清算**分层解耦，支持A股以下核心场景：
+本项目采用“三省六部”思想构建量化系统，把**策略生成、风控审核、执行清算**分层解耦，支持以下核心场景：
 
 - 历史回测与报告输出
-- 实盘监控与风控拦截
 - 多策略统一管理（内置 + 自定义）
 - Web 面板配置与任务控制
 
 ![alt text](static/三省六部体系介绍.png)
-
 
 ## 核心特性
 
@@ -50,16 +48,16 @@
 - 可视化运维：`server.py + dashboard.html` 提供操作面板
 
 ### 回测模式
-![alt text](static/回测模式.png)
-#### 回测k线信号标记与回测报告
-![alt text](static/回测k线显示.png)
-![alt text](static/回测报告.png)
 
-### 实盘模式与信号推送
-![alt text](static/实盘模式.png)
-![alt text](static/实盘信号推送.png)
+![alt text](static/回测模式.png)
 
 ![](C:\Users\scott\AppData\Roaming\marktext\images\2026-03-23-22-14-57-image.png)
+
+### 策略进化看板
+
+![alt text](static/策略进化看板.png)
+
+
 
 ## 架构设计(智能体智能）
 
@@ -126,7 +124,7 @@ flowchart LR
 <p align="center">
   <img src="static/星球优惠券.png" width="45%" />
   <img src="static/星球二维码.png" width="45%" />
-  <img src="static/硅基流码.png" width="45%" /> 
+  <img src="static/视频更新.png" width="45%" /><img src="static/数据服务.png" width="45%" />
 </p>
 
 ## 快速开始
@@ -136,7 +134,7 @@ flowchart LR
 - Python 3.8+
 - 建议使用虚拟环境
 
-### 2. 安装依赖
+### 2. 安装依赖（下方有一键启动方式）
 
 ```bash
 pip install -r requirements.txt
@@ -198,7 +196,7 @@ setx CUSTOM_STRATEGIES_WRITE_PRIVATE "1"
 - 新版 `server.py` 启动时会检查私有配置与私有策略路径，缺失会在日志中给出明确原因与修复建议。
 - `config.private.json` 必须保存为 `UTF-8`（无 BOM）；若使用 `UTF-8 with BOM`，加载会失败并表现为 `default_api_key`、`tushare_token` 为空。
 
-### 4. 启动方式
+### 4. 手动启动&一键启动方式
 
 回测模式：
 
@@ -222,6 +220,21 @@ python run_live.py
 
 ```bash
 python server.py
+```
+
+一键启动脚本：
+
+Windows（双击即可）：
+
+```bash
+scripts/win一键启动.bat
+```
+
+Linux / macOS：
+
+```bash
+chmod +x "scripts/linux&macOS系统启动.sh"
+bash "scripts/linux&macOS系统启动.sh"
 ```
 
 命令行临时指定端口：
@@ -297,13 +310,13 @@ python scripts/batch_backtest_runner.py ^
 
 ## 数据源与使用条件
 
-| 数据源         | 配置项                                                                    | 使用条件                   | 典型用途         |
-| ----------- | ---------------------------------------------------------------------- | ---------------------- | ------------ |
-| default API | `data_provider.source=default` + `default_api_url` + `default_api_key` | 需要可访问的私有/自建行情服务        | 统一分钟线、批量回测   |
-| Tushare     | `data_provider.source=tushare` + `tushare_token`                       | 需要 Tushare Token 与网络连通 | 标准化行情获取、历史补数 |
-| AkShare     | `data_provider.source=akshare`                                         | 通常无需 Token，但依赖网络与上游可用性 | 快速验证、轻量使用    |
-| MySQL       | `data_provider.source=mysql` + `mysql_*` 配置                           | 需安装 `pymysql` 并可直连 MySQL | 本地库直读、低延迟回测 |
-| PostgreSQL  | `data_provider.source=postgresql` + `postgres_*` 配置                   | 需安装 `psycopg2-binary` 并可直连 PostgreSQL | 本地库直读、低延迟回测 |
+| 数据源         | 配置项                                                                    | 使用条件                                  | 典型用途         |
+| ----------- | ---------------------------------------------------------------------- | ------------------------------------- | ------------ |
+| default API | `data_provider.source=default` + `default_api_url` + `default_api_key` | 需要可访问的私有/自建行情服务                       | 统一分钟线、批量回测   |
+| Tushare     | `data_provider.source=tushare` + `tushare_token`                       | 需要 Tushare Token 与网络连通                | 标准化行情获取、历史补数 |
+| AkShare     | `data_provider.source=akshare`                                         | 通常无需 Token，但依赖网络与上游可用性                | 快速验证、轻量使用    |
+| MySQL       | `data_provider.source=mysql` + `mysql_*` 配置                            | 需安装 `pymysql` 并可直连 MySQL              | 本地库直读、低延迟回测  |
+| PostgreSQL  | `data_provider.source=postgresql` + `postgres_*` 配置                    | 需安装 `psycopg2-binary` 并可直连 PostgreSQL | 本地库直读、低延迟回测  |
 
 说明：
 
@@ -398,32 +411,30 @@ python scripts/batch_backtest_runner.py ^
 - 仪表盘密钥字段为密码框，仅提供前端遮挡，不等同于后端鉴权与传输加密能力。
 - 当前仓库未内置 CI 自动检查流程，提交前建议自行执行核心脚本与测试。
 
-
-
 ## 授权说明
 
 本项目采用 **“个人非商业免费 + 商业需授权”** 模式。
 
 **免费使用范围（非商业）**
+
 - 个人学习
 - 学术研究
 - 本地自用（不对外提供商业服务）
 
 **以下行为必须事先取得作者书面商业授权**
+
 - 售卖本项目或衍生版本
 - 托管服务、SaaS、云端收费服务
 - 二次包装后销售、分销、代理
 - 任何直接或间接盈利部署
 
 **商业授权联系**
+
 - 联系方式：`zthx410@163.com`
 - 说明：商业授权范围、费用与支持条款以双方签署协议为准。
 
-
-
-
-
 **免责声明**
+
 ## 免责声明与用户使用协议
 
 ### 重要提示
@@ -470,7 +481,6 @@ python scripts/batch_backtest_runner.py ^
 
 > 详细条款请见仓库根目录 `LICENSE` 文件；如与商业协议冲突，以商业协议为准。
 
-
 ## 贡献指南
 
 欢迎提交 Issue 和 PR。建议流程：
@@ -481,4 +491,5 @@ python scripts/batch_backtest_runner.py ^
 4. 通过 PR 描述测试方法与影响范围
 
 ## Star History
+
 [![Star History Chart](https://api.star-history.com/svg?repos=ScottZt/jin-ce-zhi-suan&type=Date)](https://star-history.com/#ScottZt/jin-ce-zhi-suan&Date)

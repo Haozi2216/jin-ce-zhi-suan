@@ -10,12 +10,15 @@ import traceback
 import math
 import numbers
 import re
+import time
 import urllib.request
 import urllib.error
 import io
 import subprocess
 import threading
 import uuid
+import signal
+from collections import deque
 import pandas as pd
 import numpy as np
 import matplotlib
@@ -52,12 +55,15 @@ from src.utils.tushare_provider import TushareProvider
 from src.utils.akshare_provider import AkshareProvider
 from src.utils.mysql_provider import MysqlProvider
 from src.utils.postgres_provider import PostgresProvider
+from src.utils.tdx_provider import TdxProvider
 from src.utils.history_sync_service import HistoryDiffSyncService, TABLE_INTERVAL_MAP, DEFAULT_SYNC_TABLES
 from src.utils.backtest_baseline import apply_backtest_baseline
 from src.utils.webhook_notifier import WebhookNotifier
 from src.tdx.formula_compiler import compile_tdx_formula, get_tdx_compile_capabilities
 from src.tdx.terminal_bridge import TdxTerminalBridge
 from src.utils.blk_loader import parse_blk_file, parse_blk_text
+from src.evolution.core.runtime_manager import EvolutionRuntimeManager
+from src.evolution.adapters.fundamental_adapter import FundamentalAdapterManager
 
 import logging
 
@@ -91,6 +97,13 @@ _QUIET_HTTP_PATHS = {
     "/api/config",
     "/api/config/save",
     "/api/live/fund_pool",
+    "/api/evolution/status",
+    "/api/evolution/history",
+    "/api/evolution/top",
+    "/api/backtest/kline_thumb_status",
+    "/api/backtest/kline_data",
+    "/api/fundamental/cache_list",
+    "/api/fundamental/cache_file",
 }
 
 class _UvicornAccessPathFilter(logging.Filter):
@@ -164,10 +177,13 @@ BACKTEST_KLINE_PAYLOAD_CACHE_TTL_SECONDS = 8
 BACKTEST_KLINE_PAYLOAD_CACHE_MAX_ITEMS = 120
 report_strategy_kline_cache = {}
 report_ai_review_cache = {}
+report_buffett_review_cache = {}
+fundamental_adapter_manager = FundamentalAdapterManager()
 strategy_score_cache = {}
 report_detail_cache = {}
 report_history_mtime = None
 AI_REVIEW_SCHEMA_VERSION = 2
+BUFFETT_REVIEW_SCHEMA_VERSION = 1
 report_history = []
 REPORTS_DIR = os.path.join("data", "reports")
 REPORTS_LEGACY_FILE = os.path.join(REPORTS_DIR, "backtest_reports.json")
@@ -203,6 +219,15 @@ PROJECT_ROOT = os.path.abspath(".")
 BATCH_TASKS_DIR = os.path.join("data", "batch_tasks")
 SERVER_STARTED_AT = datetime.now().isoformat(timespec="seconds")
 SERVER_BOOT_ID = f"{datetime.now().strftime('%Y%m%d%H%M%S')}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+SERVER_SHUTDOWN_CONTEXT: Dict[str, Any] = {
+    "reason": "",
+    "detail": "",
+    "origin": "",
+    "signal": "",
+    "updated_at": None,
+}
+SERVER_SIGNAL_HANDLER_CHAIN: Dict[int, Any] = {}
+server_signal_handlers_installed = False
 DEFAULT_BATCH_TASKS_CSV = os.path.join(BATCH_TASKS_DIR, "批量回测任务.csv")
 DEFAULT_BATCH_ARCHIVE_CSV = os.path.join(BATCH_TASKS_DIR, "archive", "批量回测任务.archive.csv")
 BATCH_TASK_TEMPLATE_HEADERS = [
@@ -228,6 +253,76 @@ batch_run_state: Dict[str, Any] = {
     "parallel_workers": 1,
     "logs": [],
 }
+evolution_runtime = EvolutionRuntimeManager()
+evolution_ws_events = deque(maxlen=2000)
+evolution_ws_lock = threading.Lock()
+evolution_ws_pump_task = None
+pattern_thumb_building_keys = set()
+pattern_thumb_building_lock = threading.Lock()
+pattern_thumb_warmup_task = None
+pattern_thumb_warmup_state: Dict[str, Any] = {
+    "status": "idle",
+    "total": len(CLASSIC_PATTERN_ITEMS),
+    "ready": 0,
+    "building": 0,
+    "started_at": None,
+    "finished_at": None,
+}
+_ws_event_last_emit_ts: Dict[str, float] = {}
+_WS_EVENT_THROTTLE_SECONDS = {
+    "backtest_progress": 0.8,
+    "backtest_flow": 0.8,
+    "backtest_trade": 0.5,
+    "ministry_tick": 0.3,
+    "market": 0.25,
+    "live_tick": 0.5,
+}
+_WS_SKIP_WEBHOOK_EVENT_TYPES = {"backtest_progress", "backtest_flow", "backtest_trade", "ministry_tick", "market", "live_tick"}
+
+
+def _push_evolution_ws_event(payload: Dict[str, Any]) -> None:
+    if not isinstance(payload, dict):
+        return
+    with evolution_ws_lock:
+        evolution_ws_events.append(dict(payload))
+
+
+def _pop_all_evolution_ws_events() -> List[Dict[str, Any]]:
+    with evolution_ws_lock:
+        items = list(evolution_ws_events)
+        evolution_ws_events.clear()
+    return items
+
+
+async def _evolution_ws_pump_loop():
+    while True:
+        try:
+            items = _pop_all_evolution_ws_events()
+            for item in items:
+                kind = str(item.get("kind", "")).strip().lower()
+                if kind == "tick":
+                    payload = {"type": "evolution_tick", "data": item.get("record", {}), "server_time": datetime.now().isoformat(timespec="seconds")}
+                elif kind == "progress":
+                    payload = {"type": "evolution_progress", "data": item.get("progress", {}), "server_time": datetime.now().isoformat(timespec="seconds")}
+                else:
+                    payload = {"type": "evolution_state", "data": item.get("state", {}), "server_time": datetime.now().isoformat(timespec="seconds")}
+                await manager.broadcast(payload)
+        except Exception as e:
+            logger.error("evolution ws pump failed: %s", e, exc_info=True)
+        await asyncio.sleep(0.2)
+
+
+def _allow_ws_emit(event_type: str) -> bool:
+    et = str(event_type or "").strip()
+    throttle = float(_WS_EVENT_THROTTLE_SECONDS.get(et, 0.0) or 0.0)
+    if throttle <= 0:
+        return True
+    now = time.monotonic()
+    last = float(_ws_event_last_emit_ts.get(et, 0.0) or 0.0)
+    if last > 0 and (now - last) < throttle:
+        return False
+    _ws_event_last_emit_ts[et] = now
+    return True
 
 def _project_rel_path(path: str) -> str:
     try:
@@ -312,6 +407,60 @@ def _resolve_server_bind(cfg=None, argv=None):
         else:
             logger.warning("Invalid cli port '%s', keep port=%s", cli_port, port)
     return host, port
+
+
+def _signal_name(signum: Any) -> str:
+    try:
+        return signal.Signals(int(signum)).name
+    except Exception:
+        return f"SIG{signum}"
+
+
+def _mark_server_shutdown_reason(reason: str, detail: str = "", origin: str = "", signal_name: str = "", overwrite: bool = False) -> None:
+    current_reason = str(SERVER_SHUTDOWN_CONTEXT.get("reason", "") or "").strip()
+    if current_reason and not overwrite:
+        return
+    SERVER_SHUTDOWN_CONTEXT["reason"] = str(reason or "").strip()
+    SERVER_SHUTDOWN_CONTEXT["detail"] = str(detail or "").strip()
+    SERVER_SHUTDOWN_CONTEXT["origin"] = str(origin or "").strip()
+    SERVER_SHUTDOWN_CONTEXT["signal"] = str(signal_name or "").strip()
+    SERVER_SHUTDOWN_CONTEXT["updated_at"] = datetime.now().isoformat(timespec="seconds")
+
+
+def _install_server_signal_handlers() -> None:
+    global server_signal_handlers_installed
+    if server_signal_handlers_installed:
+        return
+    for name in ("SIGINT", "SIGTERM", "SIGBREAK"):
+        sig_obj = getattr(signal, name, None)
+        if sig_obj is None:
+            continue
+        try:
+            sig_no = int(sig_obj)
+            prev_handler = signal.getsignal(sig_no)
+        except Exception:
+            continue
+
+        def _handler(signum, frame, _prev=prev_handler):
+            sig_name = _signal_name(signum)
+            _mark_server_shutdown_reason(
+                reason="signal",
+                detail=f"received {sig_name}",
+                origin="signal_handler",
+                signal_name=sig_name,
+            )
+            logger.warning("Received exit signal: %s", sig_name)
+            if callable(_prev):
+                _prev(signum, frame)
+            elif _prev == signal.SIG_DFL:
+                raise KeyboardInterrupt(f"received {sig_name}")
+
+        try:
+            signal.signal(sig_no, _handler)
+            SERVER_SIGNAL_HANDLER_CHAIN[sig_no] = prev_handler
+        except Exception as e:
+            logger.warning("install signal handler failed: %s error=%s", name, e)
+    server_signal_handlers_installed = True
 
 def _default_target_code(cfg=None):
     c = cfg if cfg is not None else ConfigLoader.reload()
@@ -1120,6 +1269,8 @@ def _build_provider_by_source(source: str, cfg=None):
         return MysqlProvider()
     if s == "postgresql":
         return PostgresProvider()
+    if s == "tdx":
+        return TdxProvider()
     return DataProvider(
         api_key=c.get("data_provider.default_api_key", ""),
         base_url=c.get("data_provider.default_api_url", "")
@@ -1445,6 +1596,75 @@ def _sanitize_non_finite(obj):
         return v if math.isfinite(v) else 0.0
     return obj
 
+
+def _resolve_event_stock_code(event_type, emit_data, stock_code):
+    if str(stock_code or "").strip():
+        return str(stock_code).strip().upper()
+    if isinstance(emit_data, dict):
+        if str(emit_data.get("stock_code", "")).strip():
+            return str(emit_data.get("stock_code", "")).strip().upper()
+        if str(emit_data.get("stock", "")).strip():
+            return str(emit_data.get("stock", "")).strip().upper()
+    if str(event_type or "").startswith("backtest_") and isinstance(current_backtest_report, dict):
+        if str(current_backtest_report.get("stock_code", "")).strip():
+            return str(current_backtest_report.get("stock_code", "")).strip().upper()
+    return ""
+
+
+async def _try_attach_fundamental_profile(event_type, emit_data, stock_code):
+    if not isinstance(emit_data, dict):
+        return emit_data
+    code = _resolve_event_stock_code(event_type, emit_data, stock_code)
+    if not code:
+        return emit_data
+    et = str(event_type or "").strip().lower()
+    context = "backtest" if et.startswith("backtest_") else "live"
+    allow_network = et in {"backtest_result", "live_alert", "daily_summary"}
+    try:
+        profile = await asyncio.to_thread(
+            fundamental_adapter_manager.get_profile,
+            code,
+            context,
+            False,
+            allow_network
+        )
+    except Exception as e:
+        profile = {"status": "error", "msg": f"fundamental adapter error: {e}"}
+    if isinstance(profile, dict):
+        out = dict(emit_data)
+        out["fundamental_profile"] = profile
+        return out
+    return emit_data
+
+
+async def _maybe_prefetch_fundamental_before_backtest(stock_code: str, emit_to_frontend: bool = True):
+    try:
+        if not fundamental_adapter_manager.prefetch_on_backtest_start():
+            return
+        code = str(stock_code or "").strip().upper()
+        if not code:
+            return
+        profile = await asyncio.to_thread(
+            fundamental_adapter_manager.get_profile,
+            code,
+            "backtest",
+            False,
+            True,
+        )
+        status = str((profile or {}).get("status", "")).strip().lower() if isinstance(profile, dict) else ""
+        if emit_to_frontend:
+            if status in {"success", "empty"}:
+                await manager.broadcast({"type": "system", "data": {"msg": f"基本面预热完成：{code}（status={status}）"}})
+            elif status in {"disabled", "throttled"}:
+                await manager.broadcast({"type": "system", "data": {"msg": f"基本面预热跳过：{code}（{status}）"}})
+            elif status:
+                msg = str(profile.get("msg", "") or "")
+                await manager.broadcast({"type": "system", "data": {"msg": f"基本面预热异常：{code}（{status}{' - ' + msg if msg else ''}）"}})
+    except Exception as e:
+        logger.warning("fundamental prefetch before backtest failed stock=%s err=%s", stock_code, e, exc_info=True)
+        if emit_to_frontend:
+            await manager.broadcast({"type": "system", "data": {"msg": f"基本面预热异常：{stock_code} - {e}"}})
+
 def start_new_backtest_report(stock_code, strategy_id, request_payload=None):
     global current_backtest_report, latest_backtest_result, latest_strategy_reports, current_backtest_progress, current_backtest_trades, backtest_kline_payload_cache
     report_id = f"{int(datetime.now().timestamp() * 1000)}-{os.urandom(2).hex()}"
@@ -1606,6 +1826,16 @@ class WebhookDailySummaryRepushRequest(BaseModel):
 class ConfigUpdateRequest(BaseModel):
     config: dict
 
+class TushareConnectivityTestRequest(BaseModel):
+    api_url: Optional[str] = None
+    token: Optional[str] = None
+    stock_code: Optional[str] = None
+
+class TdxConnectivityTestRequest(BaseModel):
+    tdxdir: Optional[str] = None
+    stock_code: Optional[str] = None
+    auto_detect: bool = True
+
 class StrategyToggleRequest(BaseModel):
     strategy_id: str
     enabled: bool
@@ -1660,6 +1890,14 @@ class StrategyDeleteRequest(BaseModel):
 
 class ReportDeleteRequest(BaseModel):
     report_id: str
+
+
+class FundamentalProfileRequest(BaseModel):
+    stock_code: str
+    context: Optional[str] = "backtest"
+    force: Optional[bool] = False
+    allow_network: Optional[bool] = True
+
 
 class HistorySyncRunRequest(BaseModel):
     codes: Optional[list[str]] = None
@@ -1864,6 +2102,19 @@ class BatchCombinationRecommendRequest(BaseModel):
     strategy_profiles: Optional[List[Dict[str, Any]]] = None
     max_tokens: Optional[int] = 600
     temperature: Optional[float] = 0.2
+
+
+class EvolutionStartRequest(BaseModel):
+    interval_seconds: Optional[float] = 1.0
+    max_iterations: Optional[int] = None
+    seed_strategy_id: Optional[str] = None
+    seed_strategy_ids: Optional[List[str]] = None
+    seed_include_builtin: Optional[bool] = None
+    seed_only_enabled: Optional[bool] = None
+    target_stock_codes: Optional[List[str]] = None
+    timeframes: Optional[List[str]] = None
+    persist_enabled: Optional[bool] = None
+    persist_score_threshold: Optional[float] = None
 
 
 def _extract_code_block(text):
@@ -4170,15 +4421,8 @@ async def api_strategy_manager_delete(req: StrategyDeleteRequest):
         sid = str(req.strategy_id or "").strip()
         if not sid:
             return {"status": "error", "msg": "strategy_id is required"}
-        if _is_protected_strategy(sid) and (not req.force):
-            return {"status": "error", "msg": f"strategy {sid} is protected and cannot be deleted"}
-        meta = _find_strategy_meta(sid)
-        if isinstance(meta, dict):
-            if bool(meta.get("enabled", False)) and (not req.force):
-                return {"status": "error", "msg": f"strategy {sid} is enabled, disable it before delete"}
-        dependents = list_strategy_dependents(sid)
-        if dependents and (not req.force):
-            return {"status": "error", "msg": f"strategy {sid} is referenced by: {','.join(dependents)}"}
+        if not req.force:
+            return {"status": "error", "msg": "请勾选强制删除后再执行删除"}
         deleted = delete_strategy(sid)
         return {"status": "success" if deleted else "info", "deleted": bool(deleted)}
     except Exception as e:
@@ -4219,6 +4463,242 @@ async def api_save_config(req: ConfigUpdateRequest):
         logger.error(f"/api/config/save failed: {e}", exc_info=True)
         return {"status": "error", "msg": str(e)}
 
+@app.post("/api/config/test_tushare_connectivity")
+async def api_test_tushare_connectivity(req: TushareConnectivityTestRequest):
+    try:
+        cfg = ConfigLoader.reload()
+        raw_url = req.api_url
+        if raw_url is None:
+            raw_url = cfg.get("data_provider.tushare_api_url", "http://tushare.xyz")
+        api_url = str(raw_url or "").strip().strip("`'\" ").strip()
+        req_token = str(req.token or "").strip()
+        token = req_token if req_token else str(cfg.get("data_provider.tushare_token", "") or "").strip()
+        stock_code = str(req.stock_code or "").strip().upper() or "000001.SZ"
+        if not api_url:
+            return {"status": "error", "msg": "tushare_api_url 不能为空"}
+        if not token:
+            return {"status": "error", "msg": "tushare_token 未配置（请在 private/config 配置后重试）"}
+
+        provider = TushareProvider(token=token)
+        provider._tushare_http_url = api_url
+        provider.set_token(token)
+        ok, detail = provider.check_connectivity(stock_code)
+        if ok:
+            return {
+                "status": "success",
+                "ok": True,
+                "msg": "Tushare 连通性校验通过",
+                "api_url": api_url,
+                "stock_code": stock_code,
+                "detail": str(detail or "ok")
+            }
+        return {
+            "status": "error",
+            "ok": False,
+            "msg": str(detail or provider.last_error or "连通性校验失败"),
+            "api_url": api_url,
+            "stock_code": stock_code
+        }
+    except Exception as e:
+        logger.error(f"/api/config/test_tushare_connectivity failed: {e}", exc_info=True)
+        return {"status": "error", "ok": False, "msg": str(e)}
+
+
+def _normalize_tdxdir_path(path: str) -> str:
+    p = str(path or "").strip().strip("`'\" ").strip()
+    if not p:
+        return ""
+    p = os.path.expandvars(os.path.expanduser(p))
+    try:
+        return os.path.normpath(p)
+    except Exception:
+        return p
+
+
+def _is_valid_tdxdir(path: str) -> bool:
+    p = _normalize_tdxdir_path(path)
+    if not p:
+        return False
+    try:
+        if not os.path.isdir(p):
+            return False
+        vipdoc = os.path.join(p, "vipdoc")
+        return os.path.isdir(vipdoc)
+    except Exception:
+        return False
+
+
+def _detect_tdxdir_candidates(limit: int = 8) -> List[str]:
+    seed_paths: List[str] = []
+    cfg = ConfigLoader.reload()
+    seed_paths.append(str(os.environ.get("TDX_DIR", "") or "").strip())
+    seed_paths.append(str(cfg.get("data_provider.tdxdir", "") or cfg.get("data_provider.tdx_dir", "") or "").strip())
+
+    common_suffix = ["new_tdx", "tdx", "TdxW", "TdxW_HuaTai"]
+    base_roots = [
+        r"C:\\",
+        r"D:\\",
+        r"E:\\",
+        r"F:\\",
+        r"C:\\Program Files\\",
+        r"C:\\Program Files (x86)\\",
+    ]
+    for root in base_roots:
+        root_n = _normalize_tdxdir_path(root)
+        if not root_n or (not os.path.isdir(root_n)):
+            continue
+        for name in common_suffix:
+            seed_paths.append(os.path.join(root_n, name))
+
+    # Quick shallow scan for folders containing "tdx" under Program Files roots.
+    for pf in [r"C:\\Program Files\\", r"C:\\Program Files (x86)\\"]:
+        pf_n = _normalize_tdxdir_path(pf)
+        if not pf_n or (not os.path.isdir(pf_n)):
+            continue
+        try:
+            for entry in os.scandir(pf_n):
+                if not entry.is_dir():
+                    continue
+                nm = str(entry.name or "").lower()
+                if "tdx" in nm or "tongda" in nm:
+                    seed_paths.append(entry.path)
+        except Exception:
+            continue
+
+    out: List[str] = []
+    seen = set()
+    for raw in seed_paths:
+        p = _normalize_tdxdir_path(raw)
+        if not p:
+            continue
+        if p in seen:
+            continue
+        seen.add(p)
+        if _is_valid_tdxdir(p):
+            out.append(p)
+        if len(out) >= max(1, int(limit or 8)):
+            break
+    return out
+
+
+@app.post("/api/config/test_tdx_connectivity")
+async def api_test_tdx_connectivity(req: TdxConnectivityTestRequest):
+    try:
+        cfg = ConfigLoader.reload()
+        stock_code = str(req.stock_code or "").strip().upper() or "000001.SZ"
+        cfg_tdxdir = str(cfg.get("data_provider.tdxdir", "") or cfg.get("data_provider.tdx_dir", "") or "").strip()
+        req_tdxdir = str(req.tdxdir or "").strip()
+        tdxdir = _normalize_tdxdir_path(req_tdxdir or cfg_tdxdir)
+        candidates = _detect_tdxdir_candidates(limit=8) if bool(req.auto_detect) else []
+        autodetected = False
+
+        if (not _is_valid_tdxdir(tdxdir)) and candidates:
+            tdxdir = candidates[0]
+            autodetected = True
+
+        if not _is_valid_tdxdir(tdxdir):
+            return {
+                "status": "error",
+                "ok": False,
+                "msg": "未找到可用通达信数据目录（需包含 vipdoc）",
+                "stock_code": stock_code,
+                "tdxdir_used": "",
+                "candidates": candidates,
+            }
+
+        provider = TdxProvider(tdxdir=tdxdir)
+        ok, detail = provider.check_connectivity(stock_code)
+        if ok:
+            return {
+                "status": "success",
+                "ok": True,
+                "msg": "TDX(Mootdx) 连通性校验通过",
+                "stock_code": stock_code,
+                "tdxdir_used": tdxdir,
+                "autodetected": autodetected,
+                "candidates": candidates,
+                "detail": str(detail or "ok"),
+            }
+        return {
+            "status": "error",
+            "ok": False,
+            "msg": str(detail or provider.last_error or "连通性校验失败"),
+            "stock_code": stock_code,
+            "tdxdir_used": tdxdir,
+            "autodetected": autodetected,
+            "candidates": candidates,
+        }
+    except Exception as e:
+        logger.error(f"/api/config/test_tdx_connectivity failed: {e}", exc_info=True)
+        return {"status": "error", "ok": False, "msg": str(e)}
+
+
+@app.get("/api/fundamental/catalog")
+async def api_fundamental_catalog():
+    try:
+        return {"status": "success", "catalog": fundamental_adapter_manager.catalog_with_selection()}
+    except Exception as e:
+        logger.error(f"/api/fundamental/catalog failed: {e}", exc_info=True)
+        return {"status": "error", "msg": str(e), "catalog": {}}
+
+
+@app.post("/api/fundamental/profile")
+async def api_fundamental_profile(req: FundamentalProfileRequest):
+    try:
+        stock_code = str(req.stock_code or "").strip().upper()
+        if not stock_code:
+            return {"status": "error", "msg": "stock_code is required"}
+        context = str(req.context or "backtest").strip().lower()
+        if context not in {"backtest", "live"}:
+            context = "backtest"
+        profile = await asyncio.to_thread(
+            fundamental_adapter_manager.get_profile,
+            stock_code,
+            context,
+            bool(req.force),
+            bool(req.allow_network),
+        )
+        if isinstance(profile, dict) and str(profile.get("status", "")).strip().lower() == "error":
+            return {
+                "status": "error",
+                "msg": str(profile.get("msg", "fundamental profile failed") or "fundamental profile failed"),
+                "profile": profile,
+            }
+        return {"status": "success", "profile": profile}
+    except Exception as e:
+        logger.error(f"/api/fundamental/profile failed: {e}", exc_info=True)
+        return {"status": "error", "msg": str(e), "profile": {}}
+
+
+@app.get("/api/fundamental/cache_list")
+async def api_fundamental_cache_list(stock_code: str = "", context: str = "", limit: int = 60):
+    try:
+        data = await asyncio.to_thread(
+            fundamental_adapter_manager.list_disk_cache,
+            stock_code,
+            context,
+            limit,
+        )
+        return {"status": "success", **(data if isinstance(data, dict) else {})}
+    except Exception as e:
+        logger.error(f"/api/fundamental/cache_list failed: {e}", exc_info=True)
+        return {"status": "error", "msg": str(e), "items": []}
+
+
+@app.get("/api/fundamental/cache_file")
+async def api_fundamental_cache_file(file_name: str):
+    try:
+        if not str(file_name or "").strip():
+            return {"status": "error", "msg": "file_name is required"}
+        data = await asyncio.to_thread(fundamental_adapter_manager.read_disk_cache, file_name)
+        if isinstance(data, dict):
+            return data
+        return {"status": "error", "msg": "unexpected response"}
+    except Exception as e:
+        logger.error(f"/api/fundamental/cache_file failed: {e}", exc_info=True)
+        return {"status": "error", "msg": str(e)}
+
+
 @app.get("/api/report/latest")
 async def api_latest_report():
     try:
@@ -4249,7 +4729,8 @@ async def api_latest_report():
             "error_msg": first.get("error_msg") if isinstance(first, dict) else None,
             "summary": summary,
             "ranking": ranking if isinstance(ranking, list) else [],
-            "strategy_reports": reports
+            "strategy_reports": reports,
+            "fundamental_profile": first.get("fundamental_profile") if isinstance(first, dict) and isinstance(first.get("fundamental_profile"), dict) else {}
         }
         payload = _sanitize_non_finite(payload)
         safe_payload = _safe_json_obj(payload)
@@ -4281,7 +4762,11 @@ async def api_report_history():
                 "error_msg": r.get("error_msg"),
                 "stock_code": r.get("stock_code") or summary.get("stock"),
                 "period": summary.get("period"),
-                "total_trades": summary.get("total_trades", 0)
+                "total_trades": summary.get("total_trades", 0),
+                "fundamental_status": (
+                    str((r.get("fundamental_profile") or {}).get("status", "")).strip()
+                    if isinstance(r.get("fundamental_profile"), dict) else ""
+                )
             })
         return {"reports": items}
     except Exception as e:
@@ -4315,11 +4800,17 @@ async def api_report_detail(report_id: str):
                     "summary": summary,
                     "ranking": ranking,
                     "strategy_reports": reports,
+                    "fundamental_profile": r.get("fundamental_profile") if isinstance(r.get("fundamental_profile"), dict) else {},
                     "ai_review_text": (
                         (str(r.get("ai_review_text", "") or "") if int(r.get("ai_review_version", 0) or 0) == AI_REVIEW_SCHEMA_VERSION else "")
                         or str(report_ai_review_cache.get(str(report_id), "") or "")
                     ),
-                    "ai_review_version": int(r.get("ai_review_version", 0) or 0)
+                    "ai_review_version": int(r.get("ai_review_version", 0) or 0),
+                    "buffett_review_text": (
+                        (str(r.get("buffett_review_text", "") or "") if int(r.get("buffett_review_version", 0) or 0) == BUFFETT_REVIEW_SCHEMA_VERSION else "")
+                        or str(report_buffett_review_cache.get(str(report_id), "") or "")
+                    ),
+                    "buffett_review_version": int(r.get("buffett_review_version", 0) or 0)
                 }
                 payload = _sanitize_non_finite(payload)
                 safe_payload = _safe_json_obj(payload)
@@ -4435,6 +4926,107 @@ def _build_ai_report_review(report_item):
         return ""
 
 
+def _build_ai_report_review_buffett(report_item):
+    cfg = ConfigLoader.reload()
+    api_key = str(cfg.get("data_provider.llm_api_key", "") or "").strip()
+    base_url = str(cfg.get("data_provider.llm_api_url", "") or "").strip()
+    model_name = str(cfg.get("data_provider.llm_model", "") or "gpt-4o-mini").strip()
+    if not api_key or not base_url:
+        return ""
+    summary = report_item.get("summary") if isinstance(report_item.get("summary"), dict) else {}
+    strategy_reports = report_item.get("strategy_reports") if isinstance(report_item.get("strategy_reports"), dict) else {}
+    compact_reports = []
+
+    def _trade_nodes(trades, direction, max_items=8):
+        out = []
+        for t in trades:
+            if not isinstance(t, dict):
+                continue
+            if str(t.get("direction", "")).upper() != direction:
+                continue
+            out.append({
+                "dt": t.get("dt"),
+                "price": t.get("price"),
+                "quantity": t.get("quantity"),
+                "reason": t.get("reason"),
+                "pnl": t.get("pnl")
+            })
+            if len(out) >= max_items:
+                break
+        return out
+
+    for sid, rep in strategy_reports.items():
+        if not isinstance(rep, dict):
+            continue
+        trades = rep.get("trade_details") if isinstance(rep.get("trade_details"), list) else []
+        compact_reports.append({
+            "strategy_id": sid,
+            "kline_type": rep.get("kline_type"),
+            "period_label": rep.get("period_label"),
+            "score_total": rep.get("score_total"),
+            "annualized_roi": rep.get("annualized_roi"),
+            "max_dd": rep.get("max_dd"),
+            "win_rate": rep.get("win_rate"),
+            "total_trades": rep.get("total_trades"),
+            "force_close_count": rep.get("force_close_count", 0),
+            "last_trade_reason": trades[-1].get("reason") if trades else None,
+            "buy_nodes": _trade_nodes(trades, "BUY"),
+            "sell_nodes": _trade_nodes(trades, "SELL")
+        })
+    req_payload = {
+        "stock_code": report_item.get("stock_code"),
+        "request": report_item.get("request"),
+        "summary": summary,
+        "strategy_reports": compact_reports
+    }
+    url = base_url.rstrip("/")
+    if not url.endswith("/chat/completions"):
+        if url.endswith("/v1"):
+            url = f"{url}/chat/completions"
+        else:
+            url = f"{url}/v1/chat/completions"
+    system_prompt = "你是巴菲特风格的A股回测复盘顾问。仅基于给定回测报告做投资风格点评，禁止给出自动下单或实盘执行指令。"
+    user_prompt = (
+        "请输出简洁Markdown，必须严格包含以下九段：\n"
+        "1) 结论（BUY/WATCH/HOLD/AVOID + 一句话理由）\n"
+        "2) 能力圈判断（IN/BOUNDARY/OUT）\n"
+        "3) 关键假设（3-5条）\n"
+        "4) 业务质量代理评估（用收益稳定性、回撤控制、策略一致性）\n"
+        "5) 安全边际代理评估（用风险收益比、回撤缓冲）\n"
+        "6) 卖出标准检查（drawdown_break、win_rate_decay、ranking_drop、rule_stability）\n"
+        "7) 三大风险\n"
+        "8) 监控指标（季度/每轮回测跟踪项）\n"
+        "9) 最终结论（必须明确：仅分析，不执行交易）\n\n"
+        "注意：\n"
+        "- 缺失字段必须写 N/A，不得编造基本面数据。\n"
+        "- 不得输出买卖指令、仓位执行指令或券商操作步骤。\n"
+        f"回测数据：\n{json.dumps(req_payload, ensure_ascii=False)}"
+    )
+    payload = {
+        "model": model_name,
+        "temperature": 0.2,
+        "max_tokens": 1200,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
+    }
+    try:
+        req = urllib.request.Request(
+            url=url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=45) as resp:
+            raw = resp.read().decode("utf-8")
+        obj = json.loads(raw)
+        return str(obj.get("choices", [{}])[0].get("message", {}).get("content", "")).strip()
+    except Exception as e:
+        logger.error(f"buffett_ai_review llm call failed url={url} model={model_name} err={e}", exc_info=True)
+        return ""
+
+
 @app.post("/api/report/{report_id}/ai_review")
 async def api_report_ai_review(report_id: str, force: bool = False):
     try:
@@ -4476,6 +5068,50 @@ async def api_report_ai_review(report_id: str, force: bool = False):
         return {"status": "error", "msg": "report not found"}
     except Exception as e:
         logger.error(f"/api/report/{report_id}/ai_review failed: {e}", exc_info=True)
+        return {"status": "error", "msg": str(e)}
+
+
+@app.post("/api/report/{report_id}/ai_review_buffett")
+async def api_report_ai_review_buffett(report_id: str, force: bool = False):
+    try:
+        load_report_history()
+        for idx, r in enumerate(report_history if isinstance(report_history, list) else []):
+            if not isinstance(r, dict):
+                continue
+            if str(r.get("report_id")) != str(report_id):
+                continue
+            rid = str(report_id)
+            if not force:
+                cached = str(report_buffett_review_cache.get(rid, "") or "").strip()
+                cached_ver = int(report_buffett_review_cache.get(f"{rid}__v", 0) or 0)
+                if cached and cached_ver == BUFFETT_REVIEW_SCHEMA_VERSION:
+                    return {"status": "success", "report_id": report_id, "analysis": cached, "cached": True}
+                cached = str(r.get("buffett_review_text", "") or "").strip()
+                persisted_ver = int(r.get("buffett_review_version", 0) or 0)
+                if cached and persisted_ver == BUFFETT_REVIEW_SCHEMA_VERSION:
+                    report_buffett_review_cache[rid] = cached
+                    report_buffett_review_cache[f"{rid}__v"] = BUFFETT_REVIEW_SCHEMA_VERSION
+                    return {"status": "success", "report_id": report_id, "analysis": cached, "cached": True}
+            cfg = ConfigLoader.reload()
+            missing = []
+            if not str(cfg.get("data_provider.llm_api_url", "") or "").strip():
+                missing.append("llm_api_url")
+            if not str(cfg.get("data_provider.llm_api_key", "") or "").strip():
+                missing.append("llm_api_key")
+            if missing:
+                return {"status": "error", "msg": f"Buffett复盘未配置：请先在配置中填写 {', '.join(missing)}"}
+            analysis = _build_ai_report_review_buffett(r)
+            if not analysis:
+                return {"status": "error", "msg": "Buffett复盘生成失败：模型调用超时、鉴权失败或返回空内容，请检查模型配置与服务日志"}
+            report_history[idx]["buffett_review_text"] = analysis
+            report_history[idx]["buffett_review_version"] = BUFFETT_REVIEW_SCHEMA_VERSION
+            report_buffett_review_cache[rid] = analysis
+            report_buffett_review_cache[f"{rid}__v"] = BUFFETT_REVIEW_SCHEMA_VERSION
+            persist_report_history()
+            return {"status": "success", "report_id": report_id, "analysis": analysis, "cached": False}
+        return {"status": "error", "msg": "report not found"}
+    except Exception as e:
+        logger.error(f"/api/report/{report_id}/ai_review_buffett failed: {e}", exc_info=True)
         return {"status": "error", "msg": str(e)}
 
 
@@ -4594,7 +5230,7 @@ async def api_report_strategy_kline_data(report_id: str, strategy_id: str):
 
 @app.post("/api/report/delete")
 async def api_report_delete(req: ReportDeleteRequest):
-    global report_history, latest_backtest_result, latest_strategy_reports, report_strategy_kline_cache, report_ai_review_cache, report_detail_cache
+    global report_history, latest_backtest_result, latest_strategy_reports, report_strategy_kline_cache, report_ai_review_cache, report_buffett_review_cache, report_detail_cache
     rid = str(req.report_id or "").strip()
     if not rid:
         return {"status": "error", "msg": "report_id is required"}
@@ -4606,6 +5242,8 @@ async def api_report_delete(req: ReportDeleteRequest):
         if deleted:
             report_ai_review_cache.pop(rid, None)
             report_ai_review_cache.pop(f"{rid}__v", None)
+            report_buffett_review_cache.pop(rid, None)
+            report_buffett_review_cache.pop(f"{rid}__v", None)
             report_detail_cache.pop(rid, None)
             report_strategy_kline_cache = {k: v for k, v in report_strategy_kline_cache.items() if not str(k).startswith(f"{rid}|")}
             persist_report_history()
@@ -4633,6 +5271,8 @@ def _select_provider():
         return MysqlProvider()
     if provider_source == "postgresql":
         return PostgresProvider()
+    if provider_source == "tdx":
+        return TdxProvider()
     return DataProvider()
 
 
@@ -4932,6 +5572,100 @@ def _warmup_classic_pattern_thumbs():
         except Exception:
             continue
     logger.info(f"classic pattern thumbs ready: {ok}/{len(CLASSIC_PATTERN_ITEMS)}")
+    return ok
+
+
+def _build_loading_svg_bytes(text: str) -> bytes:
+    safe = str(text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    svg = (
+        "<svg xmlns='http://www.w3.org/2000/svg' width='440' height='210' viewBox='0 0 440 210'>"
+        "<rect width='440' height='210' fill='#020617'/>"
+        "<rect x='8' y='8' width='424' height='194' rx='8' fill='#0f172a' stroke='#334155' stroke-width='2'/>"
+        "<text x='220' y='102' text-anchor='middle' fill='#cbd5e1' font-size='16' font-family='Microsoft YaHei,SimHei,DejaVu Sans'>"
+        "经典形态缩略图加载中"
+        "</text>"
+        f"<text x='220' y='130' text-anchor='middle' fill='#94a3b8' font-size='12' font-family='Microsoft YaHei,SimHei,DejaVu Sans'>{safe}</text>"
+        "</svg>"
+    )
+    return svg.encode("utf-8")
+
+
+def _pattern_thumb_build_key(stock_code, start_dt, end_dt):
+    s = pd.to_datetime(start_dt).strftime("%Y-%m-%d")
+    e = pd.to_datetime(end_dt).strftime("%Y-%m-%d")
+    return f"{_normalize_symbol(stock_code)}|{s}|{e}"
+
+
+def _count_ready_pattern_thumbs():
+    ready = 0
+    for item in CLASSIC_PATTERN_ITEMS:
+        try:
+            stock_code = _normalize_symbol(item["stock"])
+            start_dt = pd.to_datetime(item["start"])
+            end_dt = pd.to_datetime(item["end"])
+            path = _pattern_thumb_path(stock_code, start_dt, end_dt)
+            if os.path.exists(path):
+                ready += 1
+        except Exception:
+            continue
+    return ready
+
+
+def _pattern_thumb_warmup_snapshot():
+    snap = dict(pattern_thumb_warmup_state)
+    with pattern_thumb_building_lock:
+        building = len(pattern_thumb_building_keys)
+    snap["building"] = int(building)
+    snap["ready"] = int(_count_ready_pattern_thumbs())
+    snap["total"] = len(CLASSIC_PATTERN_ITEMS)
+    snap["is_ready"] = snap["ready"] >= snap["total"] and snap["total"] > 0
+    return snap
+
+
+def _ensure_pattern_thumb_background_build(stock_code, start_dt, end_dt):
+    key = _pattern_thumb_build_key(stock_code, start_dt, end_dt)
+    img_path = _pattern_thumb_path(stock_code, start_dt, end_dt)
+    if os.path.exists(img_path):
+        return "ready"
+    with pattern_thumb_building_lock:
+        if key in pattern_thumb_building_keys:
+            return "building"
+        pattern_thumb_building_keys.add(key)
+
+    async def _runner():
+        try:
+            await asyncio.to_thread(_render_pattern_thumb_png, stock_code, start_dt, end_dt)
+        except Exception as e:
+            logger.warning(f"pattern thumb build failed: {key} err={e}")
+        finally:
+            with pattern_thumb_building_lock:
+                pattern_thumb_building_keys.discard(key)
+
+    asyncio.create_task(_runner())
+    return "queued"
+
+
+def _ensure_pattern_thumb_warmup_task():
+    global pattern_thumb_warmup_task
+    if pattern_thumb_warmup_task and not pattern_thumb_warmup_task.done():
+        return
+
+    async def _runner():
+        pattern_thumb_warmup_state["status"] = "running"
+        pattern_thumb_warmup_state["started_at"] = datetime.now().isoformat(timespec="seconds")
+        pattern_thumb_warmup_state["finished_at"] = None
+        try:
+            ready_count = await asyncio.to_thread(_warmup_classic_pattern_thumbs)
+            pattern_thumb_warmup_state["status"] = "done"
+            pattern_thumb_warmup_state["ready"] = int(ready_count)
+        except Exception as e:
+            pattern_thumb_warmup_state["status"] = "error"
+            pattern_thumb_warmup_state["error"] = str(e)
+            logger.error(f"classic pattern warmup task failed: {e}", exc_info=True)
+        finally:
+            pattern_thumb_warmup_state["finished_at"] = datetime.now().isoformat(timespec="seconds")
+
+    pattern_thumb_warmup_task = asyncio.create_task(_runner())
 
 
 @app.get("/api/backtest/kline_data")
@@ -4947,7 +5681,7 @@ async def api_backtest_kline_data(stock: str, start: str, end: str):
         cached_payload = _get_cached_backtest_kline_payload(cache_key)
         if isinstance(cached_payload, dict):
             return {"status": "success", "stock": stock_code, **cached_payload}
-        payload = _build_backtest_kline_payload(stock_code, start_dt, end_dt)
+        payload = await asyncio.to_thread(_build_backtest_kline_payload, stock_code, start_dt, end_dt)
         if payload is None:
             return {"status": "error", "msg": "no data"}
         _set_cached_backtest_kline_payload(cache_key, payload)
@@ -4967,7 +5701,7 @@ async def api_backtest_kline_chart(stock: str, start: str, end: str):
         end_dt = pd.to_datetime(end)
         if pd.isna(start_dt) or pd.isna(end_dt) or start_dt > end_dt:
             return Response(content="invalid date range", media_type="text/plain", status_code=400)
-        payload = _build_backtest_kline_payload(stock_code, start_dt, end_dt)
+        payload = await asyncio.to_thread(_build_backtest_kline_payload, stock_code, start_dt, end_dt)
         if payload is None:
             return Response(content="no data", media_type="text/plain", status_code=404)
         if not payload["candles"]:
@@ -5040,13 +5774,42 @@ async def api_backtest_kline_thumb(stock: str, start: str, end: str):
         end_dt = pd.to_datetime(end)
         if pd.isna(start_dt) or pd.isna(end_dt) or start_dt > end_dt:
             return Response(content="invalid date range", media_type="text/plain", status_code=400)
-        img_path = _render_pattern_thumb_png(stock_code, start_dt, end_dt)
-        if not img_path or not os.path.exists(img_path):
-            return Response(content="no data", media_type="text/plain", status_code=404)
-        return FileResponse(img_path, media_type="image/png")
+        img_path = _pattern_thumb_path(stock_code, start_dt, end_dt)
+        if os.path.exists(img_path):
+            return FileResponse(img_path, media_type="image/png")
+        queue_state = _ensure_pattern_thumb_background_build(stock_code, start_dt, end_dt)
+        hint = "正在准备K线数据"
+        if queue_state == "building":
+            hint = "后台生成中"
+        elif queue_state == "queued":
+            hint = "已加入后台队列"
+        return Response(
+            content=_build_loading_svg_bytes(hint),
+            media_type="image/svg+xml",
+            status_code=200,
+            headers={"Cache-Control": "no-store"}
+        )
     except Exception as e:
         logger.error(f"/api/backtest/kline_thumb failed: {e}", exc_info=True)
         return Response(content=str(e), media_type="text/plain", status_code=500)
+
+
+@app.get("/api/backtest/kline_thumb_status")
+async def api_backtest_kline_thumb_status(stock: str, start: str, end: str):
+    try:
+        stock_code = _normalize_symbol(stock)
+        start_dt = pd.to_datetime(start)
+        end_dt = pd.to_datetime(end)
+        if pd.isna(start_dt) or pd.isna(end_dt) or start_dt > end_dt:
+            return {"status": "error", "msg": "invalid date range"}
+        img_path = _pattern_thumb_path(stock_code, start_dt, end_dt)
+        if os.path.exists(img_path):
+            return {"status": "success", "ready": True, "building": False}
+        queue_state = _ensure_pattern_thumb_background_build(stock_code, start_dt, end_dt)
+        return {"status": "success", "ready": False, "building": queue_state in {"building", "queued"}}
+    except Exception as e:
+        logger.error(f"/api/backtest/kline_thumb_status failed: {e}", exc_info=True)
+        return {"status": "error", "msg": str(e)}
 
 # --- Control Endpoints for External Systems (e.g. OpenClaw) ---
 @app.post("/api/control/start_backtest")
@@ -5273,8 +6036,8 @@ async def api_switch_strategy(req: StrategySwitchRequest):
 async def api_set_source(req: SourceSwitchRequest):
     global cabinet_task, current_provider_source, current_cabinet, config
     source = str(req.source or "").lower().strip()
-    if source not in {"default", "tushare", "akshare", "mysql", "postgresql"}:
-        return {"status": "error", "msg": "source must be one of: default, tushare, akshare, mysql, postgresql"}
+    if source not in {"default", "tushare", "akshare", "mysql", "postgresql", "tdx"}:
+        return {"status": "error", "msg": "source must be one of: default, tushare, akshare, mysql, postgresql, tdx"}
     cfg = ConfigLoader.reload()
     cfg.set("data_provider.source", source)
     cfg.save()
@@ -5343,6 +6106,7 @@ def _build_status_payload(include_fund_pools: bool = True):
         "live_enabled": is_live_enabled(),
         "server_boot_id": SERVER_BOOT_ID,
         "server_started_at": SERVER_STARTED_AT,
+        "pattern_thumbs": _pattern_thumb_warmup_snapshot(),
         "progress": current_backtest_progress,
         "current_report_id": current_backtest_report.get("report_id") if current_backtest_report else None,
         "current_report_status": current_backtest_report.get("status") if current_backtest_report else None,
@@ -5350,7 +6114,9 @@ def _build_status_payload(include_fund_pools: bool = True):
     }
     if include_fund_pools:
         payload["live_fund_pools"] = _collect_live_fund_pools()
-    return payload
+    # FastAPI/Starlette JSON serialization is strict and rejects NaN/Inf.
+    # Normalize non-finite numbers to keep /api/status always serializable.
+    return _sanitize_non_finite(payload)
 
 @app.get("/api/status")
 async def api_get_status():
@@ -5361,6 +6127,60 @@ async def api_get_status():
 async def api_get_status_light():
     """Get lightweight system status for high-frequency polling"""
     return _build_status_payload(include_fund_pools=False)
+
+
+def _build_evolution_profile_payload(req: EvolutionStartRequest) -> Dict[str, Any]:
+    profile: Dict[str, Any] = {}
+    if req.seed_strategy_id is not None:
+        profile["seed_strategy_id"] = str(req.seed_strategy_id or "").strip()
+    if req.seed_strategy_ids is not None:
+        profile["seed_strategy_ids"] = [str(x or "").strip() for x in req.seed_strategy_ids if str(x or "").strip()]
+    if req.seed_include_builtin is not None:
+        profile["seed_include_builtin"] = bool(req.seed_include_builtin)
+    if req.seed_only_enabled is not None:
+        profile["seed_only_enabled"] = bool(req.seed_only_enabled)
+    if req.target_stock_codes is not None:
+        profile["target_stock_codes"] = [str(x or "").strip() for x in req.target_stock_codes if str(x or "").strip()]
+    if req.timeframes is not None:
+        profile["timeframes"] = [str(x or "").strip() for x in req.timeframes if str(x or "").strip()]
+    if req.persist_enabled is not None:
+        profile["persist_enabled"] = bool(req.persist_enabled)
+    if req.persist_score_threshold is not None:
+        profile["persist_score_threshold"] = float(req.persist_score_threshold)
+    return profile
+
+
+@app.post("/api/evolution/start")
+async def api_evolution_start(req: EvolutionStartRequest):
+    interval = float(req.interval_seconds if req.interval_seconds is not None else 1.0)
+    max_iters = req.max_iterations if req.max_iterations is not None else None
+    profile = _build_evolution_profile_payload(req)
+    state = evolution_runtime.start(interval_seconds=interval, max_iterations=max_iters, profile=profile)
+    return {"status": "success", "msg": "evolution started", "state": state}
+
+
+@app.post("/api/evolution/stop")
+async def api_evolution_stop():
+    state = evolution_runtime.stop()
+    return {"status": "success", "msg": "evolution stopped", "state": state}
+
+
+@app.get("/api/evolution/status")
+async def api_evolution_status():
+    return {"status": "success", "state": evolution_runtime.status()}
+
+
+@app.get("/api/evolution/history")
+async def api_evolution_history(limit: int = 100):
+    rows = evolution_runtime.history(limit=max(1, min(int(limit or 100), 1000)))
+    return {"status": "success", "rows": rows, "count": len(rows)}
+
+
+@app.get("/api/evolution/top")
+async def api_evolution_top(k: int = 20):
+    rows = evolution_runtime.top_strategies(k=max(1, min(int(k or 20), 200)))
+    return {"status": "success", "rows": rows, "count": len(rows)}
+
 
 @app.get("/api/live/fund_pool")
 async def api_get_live_fund_pool(stock_code: Optional[str] = None, include_transactions: bool = False, tx_limit: int = 200):
@@ -5924,6 +6744,7 @@ async def run_backtest_task(
     if not precheck_ok:
         fail_current_backtest_report(f"backtest precheck failed source={precheck_source} reason={precheck_reason}")
         return
+    await _maybe_prefetch_fundamental_before_backtest(stock_code=stock_code, emit_to_frontend=emit_to_frontend)
     baseline_result = apply_backtest_baseline(
         stock_code=stock_code,
         strategy_id=strategy_id,
@@ -5988,12 +6809,22 @@ async def emit_event_to_ws(event_type, data, stock_code=None, report_id=None, br
         if isinstance(data, dict):
             emit_data = dict(data)
             emit_data["stock_code"] = stock_code
+    attach_profile = False
+    et = str(event_type or "").strip().lower()
+    if et.startswith("backtest_"):
+        attach_profile = True
+    elif et in {"live_alert", "live_monitor_snapshot", "daily_summary"}:
+        attach_profile = True
+    if attach_profile:
+        emit_data = await _try_attach_fundamental_profile(event_type, emit_data, stock_code)
     if event_type == "backtest_result":
         latest_backtest_result = emit_data
         _invalidate_backtest_kline_payload_cache()
         if current_backtest_report is not None:
             current_backtest_report["summary"] = emit_data
             current_backtest_report["ranking"] = emit_data.get("ranking", [])
+            if isinstance(emit_data, dict) and isinstance(emit_data.get("fundamental_profile"), dict):
+                current_backtest_report["fundamental_profile"] = emit_data.get("fundamental_profile")
             current_backtest_report["status"] = "success"
             current_backtest_report["error_msg"] = None
             current_backtest_report["finished_at"] = datetime.now().isoformat(timespec="seconds")
@@ -6056,13 +6887,13 @@ async def emit_event_to_ws(event_type, data, stock_code=None, report_id=None, br
     }
     if stock_code:
         payload["stock_code"] = stock_code
-    if broadcast_ws:
+    if broadcast_ws and _allow_ws_emit(event_type):
         await manager.broadcast(payload)
     if stock_code and event_type != "system":
         if event_type == "daily_summary":
             await _notify_daily_summary_once(stock_code=stock_code, data=emit_data)
-        elif _should_notify_webhook_by_category(event_type=event_type, data=emit_data):
-            await webhook_notifier.notify(event_type=event_type, data=emit_data, stock_code=stock_code)
+        elif event_type not in _WS_SKIP_WEBHOOK_EVENT_TYPES and _should_notify_webhook_by_category(event_type=event_type, data=emit_data):
+            asyncio.create_task(webhook_notifier.notify(event_type=event_type, data=emit_data, stock_code=stock_code))
 
 async def _broadcast_system_and_notify(msg: str, stock_codes=None):
     text = str(msg or "").strip()
@@ -6088,12 +6919,12 @@ async def _broadcast_system_and_notify(msg: str, stock_codes=None):
 
 @app.on_event("startup")
 async def startup_event():
-    global history_sync_scheduler_task, startup_server_host, startup_server_port
+    global history_sync_scheduler_task, startup_server_host, startup_server_port, evolution_ws_pump_task
     _apply_log_level()
     logging.getLogger("uvicorn.access").addFilter(_UvicornAccessPathFilter())
     logger.info("Initializing Cabinet Server...")
     load_report_history()
-    _warmup_classic_pattern_thumbs()
+    _ensure_pattern_thumb_warmup_task()
     
     # Log registered routes
     logger.info("--- Registered API Endpoints ---")
@@ -6108,6 +6939,9 @@ async def startup_event():
     _startup_private_data_check(cfg)
     if bool(cfg.get("history_sync.scheduler_enabled", False)):
         history_sync_scheduler_task = asyncio.create_task(_history_sync_scheduler_loop())
+    evolution_runtime.set_event_sink(_push_evolution_ws_event)
+    if evolution_ws_pump_task is None or evolution_ws_pump_task.done():
+        evolution_ws_pump_task = asyncio.create_task(_evolution_ws_pump_loop())
     server_host = startup_server_host if startup_server_host else _server_host(cfg)
     server_port = startup_server_port if startup_server_port else _server_port(cfg)
     access_host = "localhost" if server_host in {"0.0.0.0", "::"} else server_host
@@ -6115,25 +6949,70 @@ async def startup_event():
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    global history_sync_scheduler_task
+    global history_sync_scheduler_task, evolution_ws_pump_task
+    if not str(SERVER_SHUTDOWN_CONTEXT.get("reason", "") or "").strip():
+        _mark_server_shutdown_reason(reason="shutdown_event", detail="lifecycle shutdown event", origin="fastapi", overwrite=True)
+    logger.warning(
+        "Shutdown event triggered reason=%s detail=%s origin=%s signal=%s cabinet_running=%s live_codes=%s history_sync_running=%s evolution_running=%s",
+        SERVER_SHUTDOWN_CONTEXT.get("reason", ""),
+        SERVER_SHUTDOWN_CONTEXT.get("detail", ""),
+        SERVER_SHUTDOWN_CONTEXT.get("origin", ""),
+        SERVER_SHUTDOWN_CONTEXT.get("signal", ""),
+        bool(cabinet_task and not cabinet_task.done()) if cabinet_task is not None else False,
+        _live_running_codes(),
+        bool(history_sync_scheduler_task and not history_sync_scheduler_task.done()) if history_sync_scheduler_task is not None else False,
+        bool(evolution_runtime.status().get("running", False)),
+    )
     if cabinet_task:
         cabinet_task.cancel()
     if _live_running_codes():
         await _stop_live_tasks()
     if history_sync_scheduler_task and not history_sync_scheduler_task.done():
         history_sync_scheduler_task.cancel()
+    evolution_runtime.set_event_sink(None)
+    evolution_runtime.stop()
+    if evolution_ws_pump_task and not evolution_ws_pump_task.done():
+        evolution_ws_pump_task.cancel()
 
 if __name__ == "__main__":
     import uvicorn
+    _install_server_signal_handlers()
     cfg = ConfigLoader.reload()
     server_host, server_port = _resolve_server_bind(cfg)
     startup_server_host = server_host
     startup_server_port = server_port
-    uvicorn.run(
-        app,
-        host=server_host,
-        port=server_port,
-        ws_ping_interval=20.0,
-        ws_ping_timeout=180.0,
-        ws_max_queue=1024
-    )
+    try:
+        uvicorn.run(
+            app,
+            host=server_host,
+            port=server_port,
+            ws_ping_interval=20.0,
+            ws_ping_timeout=180.0,
+            ws_max_queue=1024
+        )
+    except KeyboardInterrupt as e:
+        _mark_server_shutdown_reason(
+            reason="keyboard_interrupt",
+            detail=str(e or "KeyboardInterrupt"),
+            origin="main",
+            signal_name=str(SERVER_SHUTDOWN_CONTEXT.get("signal", "") or ""),
+        )
+        logger.warning("Server interrupted by keyboard input: %s", e or "KeyboardInterrupt")
+    except BaseException as e:
+        _mark_server_shutdown_reason(
+            reason="fatal_exception",
+            detail=f"{type(e).__name__}: {e}",
+            origin="main",
+            overwrite=True,
+        )
+        logger.error("Server stopped by unhandled exception", exc_info=True)
+        raise
+    finally:
+        logger.warning(
+            "Server process exiting reason=%s detail=%s origin=%s signal=%s updated_at=%s",
+            SERVER_SHUTDOWN_CONTEXT.get("reason", ""),
+            SERVER_SHUTDOWN_CONTEXT.get("detail", ""),
+            SERVER_SHUTDOWN_CONTEXT.get("origin", ""),
+            SERVER_SHUTDOWN_CONTEXT.get("signal", ""),
+            SERVER_SHUTDOWN_CONTEXT.get("updated_at"),
+        )

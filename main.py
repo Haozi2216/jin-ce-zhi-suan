@@ -23,6 +23,7 @@ from src.utils.tushare_provider import TushareProvider
 from src.utils.akshare_provider import AkshareProvider
 from src.utils.mysql_provider import MysqlProvider
 from src.utils.postgres_provider import PostgresProvider
+from src.utils.tdx_provider import TdxProvider
 from src.utils.config_loader import ConfigLoader
 from src.utils.data_generator import generate_mock_data
 from src.utils.constants import INITIAL_CAPITAL
@@ -81,6 +82,8 @@ def main():
         provider = MysqlProvider()
     elif provider_source == 'postgresql':
         provider = PostgresProvider()
+    elif provider_source == 'tdx':
+        provider = TdxProvider()
     else:
         provider = DataProvider()
         

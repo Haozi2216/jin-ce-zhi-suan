@@ -21,6 +21,7 @@ from src.utils.tushare_provider import TushareProvider
 from src.utils.akshare_provider import AkshareProvider
 from src.utils.mysql_provider import MysqlProvider
 from src.utils.postgres_provider import PostgresProvider
+from src.utils.tdx_provider import TdxProvider
 from src.utils.config_loader import ConfigLoader
 from src.utils.indicators import Indicators
 
@@ -252,6 +253,8 @@ class BacktestCabinet:
             return MysqlProvider()
         if source == 'postgresql':
             return PostgresProvider()
+        if source == 'tdx':
+            return TdxProvider()
         return DataProvider()
 
     def _resolve_backtest_cache_db_source(self):
@@ -333,12 +336,19 @@ class BacktestCabinet:
             return False, str(e)
 
     async def _fetch_minute_data_with_guard(self, provider, start_time, end_time, provider_source):
+        return await self._fetch_kline_data_with_guard(provider, start_time, end_time, provider_source, interval="1min")
+
+    async def _fetch_kline_data_with_guard(self, provider, start_time, end_time, provider_source, interval="1min"):
         timeout_raw = int(self.config.get("system.backtest_data_fetch_timeout_sec", 240) or 240)
         timeout_sec = max(30, min(timeout_raw, 3600))
         heartbeat_raw = int(self.config.get("system.backtest_data_fetch_heartbeat_sec", 10) or 10)
         heartbeat_sec = max(3, min(heartbeat_raw, 30))
         started_at = perf_counter()
-        task = asyncio.create_task(asyncio.to_thread(provider.fetch_minute_data, self.stock_code, start_time, end_time))
+        tf = self._normalize_trigger_tf(interval)
+        if tf == "1min":
+            task = asyncio.create_task(asyncio.to_thread(provider.fetch_minute_data, self.stock_code, start_time, end_time))
+        else:
+            task = asyncio.create_task(asyncio.to_thread(provider.fetch_kline_data, self.stock_code, start_time, end_time, tf))
         heartbeat_count = 0
         while True:
             try:
@@ -347,7 +357,7 @@ class BacktestCabinet:
                 await self._emit('backtest_flow', {
                     'module': '工部',
                     'level': 'system',
-                    'msg': f'数据获取阶段：历史K线拉取完成 source={provider_source} 用时 {used}s'
+                    'msg': f'数据获取阶段：历史K线拉取完成 source={provider_source} interval={tf} 用时 {used}s'
                 })
                 return df, ""
             except asyncio.TimeoutError:
@@ -363,7 +373,7 @@ class BacktestCabinet:
                 await self._emit('backtest_flow', {
                     'module': '工部',
                     'level': 'system',
-                    'msg': f'数据获取阶段：历史K线拉取进行中 source={provider_source} 已等待 {waited}s'
+                    'msg': f'数据获取阶段：历史K线拉取进行中 source={provider_source} interval={tf} 已等待 {waited}s'
                 })
                 if waited >= timeout_sec:
                     if not task.done():
@@ -641,7 +651,9 @@ class BacktestCabinet:
                 })
                 return
             await self._emit('backtest_flow', {'module': '工部', 'level': 'success', 'msg': f'数据源连通性检查通过: {provider_source}'})
-            df = self._cache_get(start_date, end_date, "1min", provider_source)
+            strategy_trigger_tf = {s.id: self._normalize_trigger_tf(getattr(s, "trigger_timeframe", "1min")) for s in self.strategies}
+            base_interval = "D" if strategy_trigger_tf and all(tf == "D" for tf in strategy_trigger_tf.values()) else "1min"
+            df = self._cache_get(start_date, end_date, base_interval, provider_source)
             if df.empty:
                 await self._emit('backtest_progress', {
                     'progress': 6,
@@ -649,9 +661,9 @@ class BacktestCabinet:
                     'phase_label': '拉取历史K线',
                     'current_date': f'{start_date.date()} ~ {end_date.date()}'
                 })
-                await self._emit('backtest_flow', {'module': '工部', 'level': 'system', 'msg': f'数据获取阶段：拉取历史K线 {start_date.date()}~{end_date.date()}'})
+                await self._emit('backtest_flow', {'module': '工部', 'level': 'system', 'msg': f'数据获取阶段：拉取历史K线 {start_date.date()}~{end_date.date()} interval={base_interval}'})
                 await self._yield_control(0.01)
-                df, fetch_err = await self._fetch_minute_data_with_guard(provider, start_date, end_date, provider_source)
+                df, fetch_err = await self._fetch_kline_data_with_guard(provider, start_date, end_date, provider_source, interval=base_interval)
                 if fetch_err:
                     await self._emit('backtest_flow', {
                         'module': '工部',
@@ -671,7 +683,7 @@ class BacktestCabinet:
                         await self._emit('backtest_flow', {'module': '工部', 'level': 'warning', 'msg': '数据获取阶段：主源无数据，切换 Tushare'})
                         await self._yield_control(0.01)
                         try:
-                            df, _ = await self._fetch_minute_data_with_guard(TushareProvider(token=token), start_date, end_date, 'tushare')
+                            df, _ = await self._fetch_kline_data_with_guard(TushareProvider(token=token), start_date, end_date, 'tushare', interval=base_interval)
                         except Exception:
                             df = pd.DataFrame()
                 if df.empty and enable_fallback and provider_source != 'akshare':
@@ -685,7 +697,7 @@ class BacktestCabinet:
                     await self._emit('backtest_flow', {'module': '工部', 'level': 'warning', 'msg': '数据获取阶段：Tushare 无数据，切换 Akshare'})
                     await self._yield_control(0.01)
                     try:
-                        df, _ = await self._fetch_minute_data_with_guard(AkshareProvider(), start_date, end_date, 'akshare')
+                        df, _ = await self._fetch_kline_data_with_guard(AkshareProvider(), start_date, end_date, 'akshare', interval=base_interval)
                     except Exception:
                         df = pd.DataFrame()
                 if df.empty:
@@ -709,8 +721,8 @@ class BacktestCabinet:
                     'current_date': f'{start_date.date()} ~ {end_date.date()}'
                 })
                 await self._emit('backtest_flow', {'module': '工部', 'level': 'system', 'msg': '数据获取阶段：数据清洗完成，写入缓存'})
-                self._cache_set(start_date, end_date, "1min", provider_source, df)
-                await self._persist_backtest_cache_to_db(df, "1min", provider_source)
+                self._cache_set(start_date, end_date, base_interval, provider_source, df)
+                await self._persist_backtest_cache_to_db(df, base_interval, provider_source)
             else:
                 await self._emit('backtest_progress', {
                     'progress': 12,
@@ -735,8 +747,7 @@ class BacktestCabinet:
             for strategy in self.strategies:
                 strategy.set_backtest_context(final_bar_dt=final_bar_dt)
             stage_started_at = perf_counter()
-            strategy_trigger_tf = {s.id: self._normalize_trigger_tf(getattr(s, "trigger_timeframe", "1min")) for s in self.strategies}
-            needed_timeframes = sorted(set([tf for tf in strategy_trigger_tf.values() if tf != "1min"]))
+            needed_timeframes = sorted(set([tf for tf in strategy_trigger_tf.values() if tf != base_interval]))
             tf_dt_sets = {}
             tf_row_maps = {}
             tf_date_row_maps = {}
@@ -807,7 +818,7 @@ class BacktestCabinet:
                 runnable_strategy_ids = []
                 strategy_kline_map = {}
                 for sid, tf in strategy_trigger_tf.items():
-                    if tf == "1min":
+                    if tf == base_interval:
                         runnable_strategy_ids.append(sid)
                         strategy_kline_map[sid] = kline
                     elif tf == "D":
@@ -860,7 +871,7 @@ class BacktestCabinet:
                         'macd': float(macd_series.iloc[i]),
                         'rsi': float(rsi_series.iloc[i]),
                         'time': str(kline['dt']),
-                        'kline_timeframe': '1分钟驱动',
+                        'kline_timeframe': f'{base_interval}驱动',
                         'kline_dt': str(kline['dt']),
                         'stock_code': str(self.stock_code or '').upper(),
                         'strategy_timeframes': strategy_trigger_tf,

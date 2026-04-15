@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$PublicRemote = "public",
     [string]$PrivateRemote = "private",
     [string]$PublicBranch = "main",

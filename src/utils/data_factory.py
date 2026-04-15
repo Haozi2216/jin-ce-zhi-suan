@@ -3,6 +3,7 @@ from src.utils.akshare_provider import AkshareProvider
 from src.utils.data_provider import DataProvider
 from src.utils.mysql_provider import MysqlProvider
 from src.utils.postgres_provider import PostgresProvider
+from src.utils.tdx_provider import TdxProvider
 import pandas as pd
 import tushare as ts
 
@@ -41,6 +42,8 @@ class DataFactory:
             return MysqlProvider()
         elif self.source == 'postgresql':
             return PostgresProvider()
+        elif self.source == 'tdx':
+            return TdxProvider()
             
         else:
             return DataProvider()
@@ -49,4 +52,4 @@ class DataFactory:
         return self.provider
 
 # 导出工具类，方便外部直接 import 使用
-__all__ = ['DataFactory', 'TushareProvider', 'AkshareProvider', 'MysqlProvider', 'PostgresProvider', 'DataProvider']
+__all__ = ['DataFactory', 'TushareProvider', 'AkshareProvider', 'MysqlProvider', 'PostgresProvider', 'TdxProvider', 'DataProvider']

@@ -21,6 +21,8 @@ import asyncio
 from src.utils.tushare_provider import TushareProvider
 from src.utils.akshare_provider import AkshareProvider
 from src.utils.mysql_provider import MysqlProvider
+from src.utils.postgres_provider import PostgresProvider
+from src.utils.tdx_provider import TdxProvider
 from src.utils.indicators import Indicators
 from src.utils.config_loader import ConfigLoader
 try:
@@ -46,6 +48,12 @@ class LiveCabinet:
         elif self.provider_type == 'mysql':
             self.provider = MysqlProvider()
             print("🌐 Data Source: MySQL")
+        elif self.provider_type == 'postgresql':
+            self.provider = PostgresProvider()
+            print("🌐 Data Source: PostgreSQL")
+        elif self.provider_type == 'tdx':
+            self.provider = TdxProvider()
+            print("🌐 Data Source: TDX")
         else:
             self.provider = DataProvider()
             print("🌐 Data Source: Default API")
@@ -56,12 +64,12 @@ class LiveCabinet:
             except Exception:
                 self._tushare_fallback_provider = None
         sync_enabled = bool(self.config.get("live_monitoring.realtime_sync_to_default.enabled", True))
-        sync_sources = self.config.get("live_monitoring.realtime_sync_to_default.sources", ["tushare", "akshare", "mysql", "postgresql"])
+        sync_sources = self.config.get("live_monitoring.realtime_sync_to_default.sources", ["tushare", "akshare", "mysql", "postgresql", "tdx"])
         sync_on_duplicate = str(self.config.get("live_monitoring.realtime_sync_to_default.on_duplicate", "update") or "update").strip().lower()
         if sync_on_duplicate not in {"ignore", "update", "replace"}:
             sync_on_duplicate = "update"
         if not isinstance(sync_sources, list):
-            sync_sources = ["tushare", "akshare", "mysql", "postgresql"]
+            sync_sources = ["tushare", "akshare", "mysql", "postgresql", "tdx"]
         source_allow = {str(x or "").strip().lower() for x in sync_sources if str(x or "").strip()}
         self._rt_sync_to_default_enabled = bool(sync_enabled and (self.provider_type in source_allow))
         self._rt_sync_to_default_on_duplicate = sync_on_duplicate
@@ -118,6 +126,12 @@ class LiveCabinet:
         self._direct_tf_support = {}
         self.startup_kline_freshness = {}
         self._last_kline_fetch_notice_ts = 0.0
+        notice_interval_raw = float(self.config.get("system.live_kline_fetch_notice_sec", 60) or 60)
+        self._kline_fetch_notice_interval_sec = max(5.0, min(notice_interval_raw, 600.0))
+        self._kline_log_on_change_only = bool(self.config.get("system.live_kline_log_on_change_only", True))
+        self._last_logged_kline_signature = ""
+        self._minute_close_confirm_enabled = bool(self.config.get("live_monitoring.minute_close_confirm.enabled", True))
+        self._last_seen_minute_dt = None
         warmup_retry_raw = int(self.config.get("system.live_warmup_retry_sec", 30) or 30)
         self._warmup_retry_sec = max(10, min(warmup_retry_raw, 600))
         self._summary_day = ""
@@ -323,6 +337,20 @@ class LiveCabinet:
             tfs.add(self._normalize_trigger_tf(getattr(s, "trigger_timeframe", "1min")))
         return sorted(tfs, key=lambda x: ["1min", "5min", "10min", "15min", "30min", "60min", "D"].index(x) if x in {"1min", "5min", "10min", "15min", "30min", "60min", "D"} else 99)
 
+    def _active_strategy_timeframes(self):
+        active_set = {str(x) for x in (self.active_strategy_ids or [])}
+        out = set()
+        for s in self.strategies:
+            sid = str(getattr(s, "id", "") or "")
+            if active_set and sid not in active_set:
+                continue
+            out.add(self._normalize_trigger_tf(getattr(s, "trigger_timeframe", "1min")))
+        return out
+
+    def _is_pure_daily_mode(self):
+        tfs = self._active_strategy_timeframes()
+        return bool(tfs) and all(tf == "D" for tf in tfs)
+
     def _tf_resample_rule(self, timeframe):
         tf = self._normalize_trigger_tf(timeframe)
         mapping = {
@@ -505,7 +533,7 @@ class LiveCabinet:
 
     def _announce_kline_fetching(self, force=False, timeframe="1min"):
         now_ts = time.time()
-        if (not force) and (now_ts - float(self._last_kline_fetch_notice_ts or 0.0) < 8.0):
+        if (not force) and (now_ts - float(self._last_kline_fetch_notice_ts or 0.0) < float(self._kline_fetch_notice_interval_sec or 60.0)):
             return
         self._last_kline_fetch_notice_ts = now_ts
         tf = str(timeframe or "1min")
@@ -557,6 +585,52 @@ class LiveCabinet:
         except Exception:
             pass
         return ts
+
+    def _kline_delay_log_text(self, kline_dt, now_dt=None):
+        sys_dt = self._to_naive_ts(now_dt if now_dt is not None else datetime.now())
+        kl_dt = self._to_naive_ts(kline_dt)
+        if pd.isna(sys_dt) or pd.isna(kl_dt):
+            return "🕒 K线时效: 系统时间=-- | 最新K线时间=-- | 延迟=--s"
+        delay_sec = max(0.0, float((sys_dt - kl_dt).total_seconds()))
+        return (
+            f"🕒 K线时效: 系统时间={sys_dt.strftime('%Y-%m-%d %H:%M:%S')} | "
+            f"最新K线时间={kl_dt.strftime('%Y-%m-%d %H:%M:%S')} | 延迟={delay_sec:.1f}s"
+        )
+
+    def _print_latest_kline_payload(self, bar, source="provider", raw_dt=None, normalized_dt=None, future_bar=False):
+        if not isinstance(bar, dict):
+            return
+        code = str(bar.get("code", self.stock_code) or self.stock_code).upper()
+        raw_dt_v = self._to_naive_ts(raw_dt if raw_dt is not None else bar.get("dt"))
+        normalized_dt_v = self._to_naive_ts(normalized_dt if normalized_dt is not None else raw_dt_v)
+        raw_dt_text = raw_dt_v.strftime("%Y-%m-%d %H:%M:%S") if not pd.isna(raw_dt_v) else str(raw_dt if raw_dt is not None else bar.get("dt", ""))
+        normalized_dt_text = normalized_dt_v.strftime("%Y-%m-%d %H:%M:%S") if not pd.isna(normalized_dt_v) else str(normalized_dt if normalized_dt is not None else bar.get("dt", ""))
+        open_v = float(bar.get("open", bar.get("close", 0.0)) or 0.0)
+        high_v = float(bar.get("high", bar.get("close", 0.0)) or 0.0)
+        low_v = float(bar.get("low", bar.get("close", 0.0)) or 0.0)
+        close_v = float(bar.get("close", 0.0) or 0.0)
+        vol_v = float(bar.get("vol", bar.get("volume", 0.0)) or 0.0)
+        amount_v = float(bar.get("amount", bar.get("turnover", 0.0)) or 0.0)
+        signature = (
+            f"{code}|{raw_dt_text}|{normalized_dt_text}|{open_v:.6f}|{high_v:.6f}|{low_v:.6f}|"
+            f"{close_v:.6f}|{vol_v:.6f}|{amount_v:.6f}"
+        )
+        if self._kline_log_on_change_only and signature == str(self._last_logged_kline_signature or ""):
+            return
+        self._last_logged_kline_signature = signature
+        fetch_dt = self._to_naive_ts(datetime.now())
+        fetch_time_text = fetch_dt.strftime("%Y-%m-%d %H:%M:%S") if not pd.isna(fetch_dt) else "--"
+        volume_v = float(bar.get("volume", vol_v) or vol_v)
+        turnover_v = float(bar.get("turnover", amount_v) or amount_v)
+        marker = "FUTURE_BAR" if bool(future_bar) else "OK"
+        print(
+            "📋 最新K线明细 "
+            f"source={source} fetch_time={fetch_time_text} "
+            f"code={code} flag={marker} "
+            f"open={open_v:.4f} high={high_v:.4f} low={low_v:.4f} close={close_v:.4f} "
+            f"vol={vol_v:.4f} amount={amount_v:.4f} volume={volume_v:.4f} turnover={turnover_v:.4f}"
+        )
+        print(f"   ⏱ raw_dt={raw_dt_text} | normalized_dt={normalized_dt_text}")
 
     def _prepare_required_kline(self, end_time):
         timeframes = self._required_timeframes()
@@ -610,6 +684,45 @@ class LiveCabinet:
                 row = df.sort_values("dt").iloc[-1].to_dict()
                 bar = self._build_bar_from_df_row(row)
                 if bar:
+                    return bar
+            except Exception:
+                continue
+        return None
+
+    def _pull_minute_bar_for_dt(self, target_dt):
+        target = self._to_naive_ts(target_dt)
+        if pd.isna(target):
+            return None
+        start_time = target - timedelta(minutes=3)
+        end_time = target + timedelta(minutes=1)
+        providers = [self.provider]
+        if self._tushare_fallback_provider is not None:
+            providers.append(self._tushare_fallback_provider)
+        for p in providers:
+            df = self._fetch_kline_with_provider(p, "1min", start_time, end_time)
+            if df is None or df.empty or "dt" not in df.columns:
+                continue
+            try:
+                work = self.works.clean_data(df)
+                if work is None or work.empty or "dt" not in work.columns:
+                    continue
+                work["dt"] = pd.to_datetime(work["dt"], errors="coerce")
+                work = work.dropna(subset=["dt"])
+                if work.empty:
+                    continue
+                work["dt"] = work["dt"].apply(self._to_naive_ts)
+                exact = work[work["dt"] == target]
+                row = None
+                if not exact.empty:
+                    row = exact.sort_values("dt").iloc[-1].to_dict()
+                else:
+                    cand = work[work["dt"] <= target].sort_values("dt")
+                    if not cand.empty:
+                        row = cand.iloc[-1].to_dict()
+                if row is None:
+                    continue
+                bar = self._build_bar_from_df_row(row)
+                if bar is not None:
                     return bar
             except Exception:
                 continue
@@ -791,12 +904,21 @@ class LiveCabinet:
             
         end_time = latest['dt']
         tf_data, latest_map = self._prepare_required_kline(end_time)
-        df = tf_data.get("1min")
-        if df is None or df.empty:
-            start_time = end_time - timedelta(days=5)
-            df = self.provider.fetch_minute_data(self.stock_code, start_time, end_time)
-            if (df is None or df.empty) and self._tushare_fallback_provider is not None:
-                df = self._tushare_fallback_provider.fetch_minute_data(self.stock_code, start_time, end_time)
+        pure_daily_mode = self._is_pure_daily_mode()
+        if pure_daily_mode:
+            df = tf_data.get("D")
+            if df is None or df.empty:
+                start_time = end_time - timedelta(days=self._tf_span_days("D"))
+                df = self._fetch_kline_with_provider(self.provider, "D", start_time, end_time)
+                if (df is None or df.empty) and self._tushare_fallback_provider is not None:
+                    df = self._fetch_kline_with_provider(self._tushare_fallback_provider, "D", start_time, end_time)
+        else:
+            df = tf_data.get("1min")
+            if df is None or df.empty:
+                start_time = end_time - timedelta(days=5)
+                df = self.provider.fetch_minute_data(self.stock_code, start_time, end_time)
+                if (df is None or df.empty) and self._tushare_fallback_provider is not None:
+                    df = self._tushare_fallback_provider.fetch_minute_data(self.stock_code, start_time, end_time)
         if df.empty:
             print("❌ 历史数据为空，策略无法初始化。")
             reason_code, reason_label, reason_detail = self._startup_failure_context()
@@ -822,7 +944,7 @@ class LiveCabinet:
             df["turnover"] = df["amount"]
         if "amount" not in df.columns and "turnover" in df.columns:
             df["amount"] = df["turnover"]
-        print(f"✅ 获取到 {len(df)} 条历史K线，正在回放以初始化策略状态...")
+        print(f"✅ 获取到 {len(df)} 条历史K线（{'D' if pure_daily_mode else '1min'}），正在回放以初始化策略状态...")
         active_set = {str(x) for x in (self.active_strategy_ids or [])}
         strategies_to_warm = [s for s in self.strategies if (not active_set) or (str(s.id) in active_set)]
         if not strategies_to_warm:
@@ -1221,6 +1343,8 @@ class LiveCabinet:
         if timeframe == "60min":
             return minute == 0
         if timeframe == "D":
+            if bool(getattr(self, "_minute_close_confirm_enabled", False)):
+                return hour == 14 and minute == 59
             return hour >= 15 and minute == 0
         return True
 
@@ -1300,8 +1424,25 @@ class LiveCabinet:
                     'reason_detail': reason_detail
                 })
                 raise RuntimeError(fail_msg)
-
+        raw_dt = self._to_naive_ts(bar.get('dt'))
         current_dt = self._to_naive_ts(bar.get('dt'))
+        if bool(self._minute_close_confirm_enabled):
+            seen_dt = self._to_naive_ts(self._last_seen_minute_dt)
+            if seen_dt is None or pd.isna(seen_dt):
+                self._last_seen_minute_dt = current_dt
+                print(f"⏳ 分钟收盘确认模式：等待下一分钟确认（当前: {current_dt}）", end='\r')
+                return False
+            if current_dt <= seen_dt:
+                return False
+            confirm_dt = seen_dt
+            self._last_seen_minute_dt = current_dt
+            confirmed_bar = await asyncio.to_thread(self._pull_minute_bar_for_dt, confirm_dt)
+            if confirmed_bar is None:
+                print(f"⏳ 分钟收盘确认模式：未取到已收盘分钟 {confirm_dt}，继续等待", end='\r')
+                return False
+            bar = confirmed_bar
+            raw_dt = self._to_naive_ts(bar.get('dt'))
+            current_dt = self._to_naive_ts(bar.get('dt'))
         self.last_dt = self._to_naive_ts(self.last_dt)
         if self.last_dt is not None and (not pd.isna(self.last_dt)) and current_dt <= self.last_dt:
             repaired = await asyncio.to_thread(self._pull_latest_minute_bar)
@@ -1313,13 +1454,21 @@ class LiveCabinet:
             if self.last_dt is not None and (not pd.isna(self.last_dt)) and current_dt <= self.last_dt:
                 if (datetime.now() - current_dt) > timedelta(days=1):
                     print(f"⚠️ 最新K线时间疑似过旧: {current_dt}")
-                print(f"⏳ 等待K线更新... (当前: {current_dt})", end='\r')
+                print(f"⏳ 等待K线更新... (当前: {current_dt}) | {self._kline_delay_log_text(current_dt)}", end='\r')
             return False
         self.last_dt = current_dt
         now_wall = datetime.now()
-        if current_dt is not None and current_dt > (now_wall + timedelta(minutes=1)):
+        future_bar = bool((current_dt is not None) and (not pd.isna(current_dt)) and (current_dt > (now_wall + timedelta(minutes=1))))
+        if future_bar:
             current_dt = now_wall.replace(second=0, microsecond=0)
             bar['dt'] = current_dt
+        self._print_latest_kline_payload(
+            bar,
+            source=self.provider_type,
+            raw_dt=raw_dt,
+            normalized_dt=current_dt,
+            future_bar=future_bar
+        )
         if not self._is_market_session_time(current_dt):
             return False
         if "volume" not in bar and "vol" in bar:
@@ -1358,12 +1507,22 @@ class LiveCabinet:
         await self._emit_account_snapshot(holdings_value_now)
         await self._emit_event('fund_pool', self.get_fund_pool_snapshot(include_transactions=False))
 
-        print(f"\n🆕 新K线生成: {current_dt} | Close: {bar['close']:.2f}")
+        tick_code = str(bar.get('code') or self.stock_code or '').upper()
+        tick_trace_id = f"{tick_code}-{current_dt.strftime('%Y%m%d%H%M%S')}-{int(time.time() * 1000) % 1000000:06d}"
+        audit_signals_total = 0
+        audit_risk_approved = 0
+        audit_risk_rejected = 0
+        audit_exec_success = 0
+        audit_stops_triggered = 0
+        audit_trade_exec_events = 0
+        audit_fund_before = float(fund_value_now)
+        print(f"\n🆕 新K线生成: code={tick_code} dt={current_dt} | Close: {bar['close']:.2f}")
+        print(f"   {self._kline_delay_log_text(current_dt, now_wall)}")
         
         runnable_strategy_ids = self._get_runnable_strategy_ids(current_dt)
         tf_text, name_text = self._format_tick_trigger_log(runnable_strategy_ids)
-        print(f"   ⏱ 本tick触发周期与策略: {tf_text if tf_text else '无'}")
-        print(f"   📋 本tick策略列表: {name_text if name_text else '无'}")
+        print(f"   ⏱ code={tick_code} 本tick触发周期与策略: {tf_text if tf_text else '无'}")
+        print(f"   📋 code={tick_code} 本tick策略列表: {name_text if name_text else '无'}")
         strategy_context = self._build_strategy_context(current_dt, bar, runnable_strategy_ids)
         signals = self.secretariat.generate_signals(
             bar,
@@ -1371,6 +1530,7 @@ class LiveCabinet:
             strategy_context=strategy_context
         )
         active_signals = signals
+        audit_signals_total = int(len(active_signals))
         buy_signals = len([s for s in active_signals if s.get('direction') == 'BUY'])
         sell_signals = len([s for s in active_signals if s.get('direction') == 'SELL'])
         if len(active_signals) == 0:
@@ -1428,6 +1588,7 @@ class LiveCabinet:
             approved, reason = self.chancellery.check_signal(signal, current_fund_value, current_positions, 0.0, current_drawdown=current_drawdown)
             
             if approved:
+                audit_risk_approved += 1
                 print(f"   ✅ 风控中心批准。正在执行...")
                 await self._emit_event('menxia', {
                     'msg': "风控审核通过",
@@ -1446,6 +1607,8 @@ class LiveCabinet:
                 
                 executed = self.state_affairs.execute_order(strategy_id, signal, bar)
                 if executed:
+                    audit_exec_success += 1
+                    audit_trade_exec_events += 1
                     new_qty = self.state_affairs.positions[strategy_id][signal['code']]['qty'] if signal['code'] in self.state_affairs.positions.get(strategy_id, {}) else 0
                     current_position_amount = float(new_qty) * float(bar.get('close', 0.0) or 0.0)
                     self.secretariat.update_strategy_state(strategy_id, signal['code'], new_qty)
@@ -1491,6 +1654,7 @@ class LiveCabinet:
                     
                     await self._emit_account_snapshot()
             else:
+                audit_risk_rejected += 1
                 print(f"   ❌ 风控中心驳回: {reason}")
                 await self._emit_event('menxia', {
                     'msg': f"风控驳回: {reason}",
@@ -1503,6 +1667,7 @@ class LiveCabinet:
 
         # 5. Check Stops
         triggered_stops = self.state_affairs.check_stops(bar)
+        audit_stops_triggered = int(len(triggered_stops))
         for order in triggered_stops:
             print(f"   ⚡ 触发风控止盈/止损: {order['type']} @ {order['price']:.2f}")
             await self._emit_event('menxia', {
@@ -1529,9 +1694,22 @@ class LiveCabinet:
                 'current_position_qty': int(remaining_qty),
                 'current_position_amount': float(current_position_amount)
             })
+            audit_trade_exec_events += 1
             self._persist_virtual_fund_pool()
             await self._emit_event('fund_pool', self.get_fund_pool_snapshot(include_transactions=False))
             await self._emit_account_snapshot()
+        audit_holdings_after = self.state_affairs.update_holdings_value({bar['code']: bar['close']})
+        audit_fund_after = float(self.revenue.cash) + float(audit_holdings_after)
+        print(
+            "🔎 TICK闭环审计 "
+            f"trace_id={tick_trace_id} code={tick_code} dt={current_dt.strftime('%Y-%m-%d %H:%M:%S')} "
+            f"future_bar={'1' if future_bar else '0'} api_latency_ms={int(api_latency_ms)} "
+            f"runnable={len(runnable_strategy_ids)} signals={audit_signals_total} "
+            f"approved={audit_risk_approved} rejected={audit_risk_rejected} "
+            f"exec_success={audit_exec_success} stops={audit_stops_triggered} trade_exec={audit_trade_exec_events} "
+            f"fund_before={audit_fund_before:.4f} fund_after={audit_fund_after:.4f} "
+            f"signal_consistency={float(signal_consistency):.2f}"
+        )
         await self._emit_event('live_position_lots', self._live_lot_snapshot(current_dt))
         return False
 

@@ -37,10 +37,13 @@ class TushareProvider:
         self._rt_min_recent_calls = []
         self._rt_min_block_until = 0.0
         self._rt_min_cache = {}
+        self._latest_bar_cache_ttl_sec = max(5.0, float(cfg.get("data_provider.tushare_latest_bar_cache_ttl_sec", 60) or 60))
+        self._latest_bar_cache = {}
         self._cn_tz = ZoneInfo("Asia/Shanghai") if ZoneInfo is not None else timezone(timedelta(hours=8))
         self.last_error = ""
+        self._tushare_http_url = self._resolve_tushare_http_url(cfg)
         import tushare.pro.client as client
-        client.DataApi._DataApi__http_url = "http://tushare.xyz"
+        client.DataApi._DataApi__http_url = self._tushare_http_url
         if self.token:
             ts.set_token(self.token)
             self.pro = ts.pro_api()
@@ -48,6 +51,15 @@ class TushareProvider:
             self.pro = None
             self.last_error = "tushare_token 未配置"
             print("⚠️ Warning: Tushare Token not provided. Please initialize with a valid token.")
+
+    def _resolve_tushare_http_url(self, cfg):
+        raw = cfg.get("data_provider.tushare_api_url", "http://tushare.xyz")
+        text = str(raw or "").strip()
+        # Allow users to paste values like " `http://tushare.xyz` " safely.
+        text = text.strip("`'\" ").strip()
+        if not text:
+            return "http://tushare.xyz"
+        return text
 
     def _emit_system_event(self, msg, code="", source="tushare"):
         if not self.event_callback:
@@ -112,11 +124,77 @@ class TushareProvider:
         status = "ok" if not err else f"fail err={err}"
         print(f"📡 Tushare拉取 interface={interface} code={code}{range_text} status={status} result={result_text}")
 
+    def _trace_rt_min_parse(self, code, raw_df, parsed_df):
+        if not self._is_live_console_trace_enabled():
+            return
+        now_text = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        raw_cols = []
+        raw_rows = 0
+        raw_ts_code = ""
+        raw_time = ""
+        raw_trade_time = ""
+        raw_dt = ""
+        try:
+            if isinstance(raw_df, pd.DataFrame):
+                raw_cols = [str(c) for c in list(raw_df.columns)]
+                raw_rows = int(len(raw_df))
+                if raw_rows > 0:
+                    rr = raw_df.iloc[0]
+                    raw_ts_code = str(rr.get("ts_code", "") or "")
+                    raw_time = str(rr.get("time", "") or "")
+                    raw_trade_time = str(rr.get("trade_time", "") or "")
+                    raw_dt = str(rr.get("dt", "") or "")
+        except Exception:
+            pass
+        parsed_rows = 0
+        parsed_start = ""
+        parsed_end = ""
+        try:
+            if isinstance(parsed_df, pd.DataFrame) and (not parsed_df.empty):
+                parsed_rows = int(len(parsed_df))
+                parsed_start = str(pd.to_datetime(parsed_df["dt"], errors="coerce").min())
+                parsed_end = str(pd.to_datetime(parsed_df["dt"], errors="coerce").max())
+        except Exception:
+            pass
+        print(
+            "🧪 rt_min原始解析 "
+            f"now={now_text} code={str(code).upper()} raw_rows={raw_rows} raw_cols={raw_cols} "
+            f"raw_ts_code={raw_ts_code} raw_time={raw_time} raw_trade_time={raw_trade_time} raw_dt={raw_dt} "
+            f"parsed_rows={parsed_rows} parsed_start={parsed_start} parsed_end={parsed_end}"
+        )
+
     def _is_rt_min_rate_limit_error(self, err):
         text = str(err or "").lower()
         if not text:
             return False
         return ("每分钟最多访问" in text) or ("rate limit" in text) or ("too many requests" in text) or ("频率" in text and "限制" in text)
+
+    def _is_auth_error(self, err):
+        raw = str(err or "").strip()
+        if not raw:
+            return False
+        t = raw.lower()
+        if "token" in t:
+            return True
+        if ("permission" in t) or ("unauthorized" in t) or ("forbidden" in t) or ("auth" in t):
+            return True
+        if ("权限" in raw) or ("认证" in raw) or ("授权" in raw):
+            return True
+        if ("积分" in raw) or ("点数" in raw):
+            return True
+        return False
+
+    def _parse_rt_min_time_column(self, series_like):
+        s = pd.Series(series_like).astype(str).str.strip()
+        if s.empty:
+            return pd.to_datetime(s, errors="coerce")
+        # If provider already returns full datetime text, parse directly.
+        has_full_date = s.str.contains(r"\d{4}-\d{2}-\d{2}", regex=True, na=False).any()
+        if has_full_date:
+            return pd.to_datetime(s, errors="coerce")
+        # Otherwise treat as intraday HH:MM[:SS] and attach today's date.
+        today = datetime.now().strftime("%Y-%m-%d")
+        return pd.to_datetime(today + " " + s, errors="coerce")
 
     def _cleanup_rt_min_recent_calls(self, now_mono=None):
         now_v = float(now_mono if now_mono is not None else time.monotonic())
@@ -155,6 +233,34 @@ class TushareProvider:
         self._rt_min_cache[code_u] = {
             "ts": time.monotonic(),
             "df": norm.copy()
+        }
+
+    def _get_latest_bar_cached_payload(self, code):
+        code_u = str(code).upper()
+        state = self._latest_bar_cache.get(code_u)
+        if not isinstance(state, dict):
+            return None
+        ts_mono = float(state.get("ts", 0.0) or 0.0)
+        payload = state.get("payload")
+        if not isinstance(payload, dict):
+            return None
+        if (time.monotonic() - ts_mono) > float(self._latest_bar_cache_ttl_sec):
+            return None
+        return dict(payload)
+
+    def _set_latest_bar_cached_payload(self, code, payload):
+        code_u = str(code).upper()
+        if not isinstance(payload, dict):
+            return
+        dt_val = self._to_naive_ts(payload.get("dt"))
+        if pd.isna(dt_val):
+            return
+        row = dict(payload)
+        row["code"] = str(row.get("code", code_u) or code_u).upper()
+        row["dt"] = dt_val
+        self._latest_bar_cache[code_u] = {
+            "ts": time.monotonic(),
+            "payload": row
         }
 
     def _cache_file_path(self, code, interval="1min"):
@@ -420,6 +526,7 @@ class TushareProvider:
         allowed, quota_msg = self._consume_rt_min_quota()
         if not allowed:
             if not cached.empty:
+                self.last_error = f"{quota_msg} use_cache_ttl={int(self._rt_min_cache_ttl_sec)}s"
                 self._trace_fetch("rt_min_cache", code, start_time=start_time, end_time=end_time, result=cached, err=quota_msg)
                 return cached
             self.last_error = quota_msg
@@ -435,6 +542,10 @@ class TushareProvider:
                     self.last_error = f"rt_min_rate_limited use_cache_ttl={int(self._rt_min_cache_ttl_sec)}s"
                     self._trace_fetch("rt_min_cache", code, start_time=start_time, end_time=end_time, result=cached, err=err_text)
                     return cached
+            if self._is_auth_error(err_text):
+                self.last_error = err_text
+            else:
+                self.last_error = f"rt_min_failed code={code} err={err_text}"
             self._trace_fetch("rt_min", code, start_time=start_time, end_time=end_time, result=pd.DataFrame(), err=err_text)
             return pd.DataFrame()
         if df is None or df.empty:
@@ -443,10 +554,10 @@ class TushareProvider:
                 return cached
             self._trace_fetch("rt_min", code, start_time=start_time, end_time=end_time, result=pd.DataFrame(), err="empty")
             return pd.DataFrame()
+        raw_df = df.copy()
         work = df.copy()
         if "time" in work.columns and "dt" not in work.columns:
-            today = datetime.now().strftime("%Y-%m-%d")
-            work["dt"] = pd.to_datetime(today + " " + work["time"].astype(str), errors="coerce")
+            work["dt"] = self._parse_rt_min_time_column(work["time"])
         elif "trade_time" in work.columns and "dt" not in work.columns:
             work["dt"] = pd.to_datetime(work["trade_time"], errors="coerce")
         if "ts_code" in work.columns and "code" not in work.columns:
@@ -473,6 +584,7 @@ class TushareProvider:
         if et is not None and (not pd.isna(et)):
             work = work[work["dt"] <= et]
         out = work.reset_index(drop=True)
+        self._trace_rt_min_parse(code=code, raw_df=raw_df, parsed_df=out)
         self._set_rt_min_cached_df(code, out)
         self._trace_fetch("rt_min", code, start_time=start_time, end_time=end_time, result=out)
         return out
@@ -480,7 +592,7 @@ class TushareProvider:
     def set_token(self, token):
         self.token = token
         import tushare.pro.client as client
-        client.DataApi._DataApi__http_url = "http://tushare.xyz"
+        client.DataApi._DataApi__http_url = self._tushare_http_url
         ts.set_token(self.token)
         self.pro = ts.pro_api()
         self.last_error = ""
@@ -490,9 +602,13 @@ class TushareProvider:
         Get the latest real-time quote for a stock.
         Returns a dict in the standard format.
         """
+        cached_payload = self._get_latest_bar_cached_payload(code)
+        if cached_payload is not None:
+            return cached_payload
         if self._replay_enabled:
             replay_bar = self._get_replay_bar(code)
             if replay_bar is not None:
+                self._set_latest_bar_cached_payload(code, replay_bar)
                 return replay_bar
         try:
             try:
@@ -513,13 +629,35 @@ class TushareProvider:
                         'vol': float(row.get('vol', 0.0) or 0.0),
                         'amount': float(row.get('amount', 0.0) or 0.0)
                     }
-                    self._append_rt_today_bar(code, payload)
-                    self.last_error = ""
-                    return payload
+                    now_dt = self._to_naive_ts(datetime.now())
+                    # In market session, avoid returning stale cached minute bars.
+                    age_sec = None
+                    if (not pd.isna(now_dt)) and (not pd.isna(dt)):
+                        try:
+                            age_sec = float((now_dt - dt).total_seconds())
+                        except Exception:
+                            age_sec = None
+                    if (
+                        age_sec is not None
+                        and age_sec > 90.0
+                        and self._is_cn_trading_minutes(now_dt)
+                    ):
+                        self.last_error = f"rt_min_stale age={age_sec:.1f}s"
+                    else:
+                        self._append_rt_today_bar(code, payload)
+                        self._set_latest_bar_cached_payload(code, payload)
+                        self.last_error = ""
+                        return payload
             except Exception as e_rt:
-                self.last_error = f"rt_min_failed code={code} err={e_rt}"
+                err_text = str(e_rt)
+                if self._is_auth_error(err_text):
+                    self.last_error = err_text
+                else:
+                    self.last_error = f"rt_min_failed code={code} err={err_text}"
                 self._trace_fetch("rt_min", code, result={}, err=str(e_rt))
-            df = ts.get_realtime_quotes(code)
+            # ts.get_realtime_quotes expects code without .SZ or .SH, e.g. '300274'
+            rt_code = str(code).split(".")[0]
+            df = ts.get_realtime_quotes(rt_code)    
             if df is None or df.empty:
                 end_date = datetime.now().strftime("%Y%m%d")
                 start_date = (datetime.now() - timedelta(days=10)).strftime("%Y%m%d")
@@ -536,6 +674,7 @@ class TushareProvider:
                         'vol': float(row['vol']) * 100,
                         'amount': float(row['amount']) * 1000
                     }
+                    self._set_latest_bar_cached_payload(code, payload)
                     return payload
                 return None
             if len(df.index) <= 0:
@@ -563,10 +702,15 @@ class TushareProvider:
                 'amount': float(row.get('amount', 0.0) or 0.0)
             }
             self._append_rt_today_bar(code, payload)
+            self._set_latest_bar_cached_payload(code, payload)
             self.last_error = ""
             return payload
         except Exception as e:
-            self.last_error = f"get_latest_bar_failed code={code} err={e}"
+            err_text = str(e)
+            if self._is_auth_error(err_text):
+                self.last_error = err_text
+            else:
+                self.last_error = f"get_latest_bar_failed code={code} err={err_text}"
             try:
                 end_date = datetime.now().strftime("%Y%m%d")
                 start_date = (datetime.now() - timedelta(days=10)).strftime("%Y%m%d")
@@ -583,6 +727,7 @@ class TushareProvider:
                         'vol': float(row['vol']) * 100,
                         'amount': float(row['amount']) * 1000
                     }
+                    self._set_latest_bar_cached_payload(code, payload)
                     self.last_error = ""
                     return payload
             except Exception as e_daily:
@@ -634,7 +779,11 @@ class TushareProvider:
                     hist_df = pd.concat([hist_cached, df_hist_remote], ignore_index=True) if not hist_cached.empty else df_hist_remote
                     hist_df = self._normalize_minutes_df(hist_df)
                 except Exception as e:
-                    self.last_error = f"fetch_minute_data_failed code={code} range={start_str}->{end_str} err={e}"
+                    err_text = str(e)
+                    if self._is_auth_error(err_text):
+                        self.last_error = err_text
+                    else:
+                        self.last_error = f"fetch_minute_data_failed code={code} range={start_str}->{end_str} err={err_text}"
                     self._trace_fetch("stk_mins", code, start_time=start_str, end_time=end_str, result=pd.DataFrame(), err=str(e))
                     hist_df = hist_cached if not hist_cached.empty else pd.DataFrame()
         today_df = pd.DataFrame()
@@ -674,7 +823,11 @@ class TushareProvider:
             self._trace_fetch("stk_mins", code, start_time=start_str, end_time=end_str, result=out, err="empty" if out.empty else "")
             return out
         except Exception as e:
-            self.last_error = f"_fetch_stk_mins_failed code={code} freq={freq} err={e}"
+            err_text = str(e)
+            if self._is_auth_error(err_text):
+                self.last_error = err_text
+            else:
+                self.last_error = f"_fetch_stk_mins_failed code={code} freq={freq} err={err_text}"
             self._trace_fetch("stk_mins", code, start_time=start_str, end_time=end_str, result=pd.DataFrame(), err=str(e))
             return pd.DataFrame()
 
@@ -734,5 +887,28 @@ class TushareProvider:
             work = work.sort_values("dt").drop_duplicates(subset=["dt"]).reset_index(drop=True)
             return work[["code", "dt", "open", "high", "low", "close", "vol", "amount"]]
         except Exception as e:
-            self.last_error = f"fetch_daily_data_failed code={code} range={start_str}->{end_str} err={e}"
+            err_text = str(e)
+            if self._is_auth_error(err_text):
+                self.last_error = err_text
+            else:
+                self.last_error = f"fetch_daily_data_failed code={code} range={start_str}->{end_str} err={err_text}"
             return pd.DataFrame()
+
+    def check_connectivity(self, code):
+        if not self.pro:
+            return False, "tushare_token 未配置"
+        now = datetime.now()
+        start_time = now - timedelta(days=3)
+        try:
+            _ = self.pro.stk_mins(
+                ts_code=str(code).upper(),
+                freq='1min',
+                start_date=start_time.strftime("%Y-%m-%d %H:%M:%S"),
+                end_date=now.strftime("%Y-%m-%d %H:%M:%S")
+            )
+            self.last_error = ""
+            return True, "ok"
+        except Exception as e:
+            err_text = str(e)
+            self.last_error = err_text
+            return False, err_text
