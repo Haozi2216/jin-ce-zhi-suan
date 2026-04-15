@@ -5103,7 +5103,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     { path: 'fundamental_adapter.apply_in_backtest', label: '回测阶段启用', type: 'boolean' },
                     { path: 'fundamental_adapter.apply_in_live', label: '实盘阶段启用', type: 'boolean' },
                     { path: 'fundamental_adapter.prefetch_on_backtest_start', label: '回测启动前自动预热', type: 'boolean' },
-                    { path: 'fundamental_adapter.provider', label: '提供方', type: 'select', options: [{ value: 'tushare', label: 'tushare' }] },
+                    { path: 'fundamental_adapter.provider', label: '提供方', type: 'select', options: [{ value: 'tushare', label: 'tushare' }, { value: 'tdx', label: 'tdx' }] },
                     { path: 'fundamental_adapter.cache_ttl_sec', label: '缓存TTL(秒)', type: 'number', min: 60, max: 604800, step: 60, slider: true },
                     { path: 'fundamental_adapter.min_refresh_interval_sec', label: '最小刷新间隔(秒)', type: 'number', min: 30, max: 43200, step: 30, slider: true },
                     { path: 'fundamental_adapter.disk_persist_enabled', label: '开启落盘缓存', type: 'boolean', desc: '开启后将每次抓取结果写入项目目录，便于人工核对与复盘。' },

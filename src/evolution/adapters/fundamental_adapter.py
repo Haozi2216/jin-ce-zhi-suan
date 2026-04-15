@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 import tushare as ts
 
 from src.utils.config_loader import ConfigLoader
+from src.utils.tdx_provider import TdxProvider
 
 
 FUNDAMENTAL_INTERFACE_CATALOG: List[Dict[str, Any]] = [
@@ -489,6 +490,64 @@ class FundamentalAdapterManager:
         except Exception as e:
             return self._build_error_payload(key, e)
 
+    def _to_float_or_none(self, value: Any) -> Optional[float]:
+        """Convert scalar-like value to float, keep None when unavailable."""
+        try:
+            if value is None:
+                return None
+            fv = float(value)
+            if math.isfinite(fv):
+                return fv
+            return None
+        except Exception:
+            return None
+
+    def _build_tdx_summary(self, ts_code: str, latest_bar: Dict[str, Any], daily_rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Build a TDX-compatible summary while preserving existing key structure."""
+        market = ""
+        code_text = str(ts_code or "").upper()
+        if code_text.endswith(".SH"):
+            market = "SH"
+        elif code_text.endswith(".SZ"):
+            market = "SZ"
+        close_latest = self._to_float_or_none((latest_bar or {}).get("close"))
+        close_prev = None
+        if len(daily_rows) >= 2:
+            close_prev = self._to_float_or_none(daily_rows[-2].get("close"))
+        pct_1d = None
+        if close_latest is not None and close_prev not in (None, 0):
+            try:
+                pct_1d = ((close_latest - close_prev) / close_prev) * 100.0
+            except Exception:
+                pct_1d = None
+        return {
+            "company_profile": {
+                # TDX 基础行情链路不直接提供公司档案，保留字段兼容上层展示。
+                "name": None,
+                "industry": None,
+                "market": market or None,
+                "list_date": None,
+            },
+            "valuation": {
+                # 保留 Tushare 同名字段，避免前端/下游读取断裂；TDX 无法直接提供时返回 None。
+                "pe_ttm": None,
+                "pb": None,
+                "ps_ttm": None,
+                "dv_ttm": None,
+                "turnover_rate": None,
+                "total_mv": None,
+                "latest_close": close_latest,
+                "change_pct_1d": pct_1d,
+            },
+            "financial_quality": {
+                "roe": None,
+                "roa": None,
+                "grossprofit_margin": None,
+                "debt_to_assets": None,
+                "ocfps": None,
+            },
+        }
+
     def _build_summary(self, outputs: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
         valuation = {}
         db = outputs.get("daily_basic", {})
@@ -536,7 +595,7 @@ class FundamentalAdapterManager:
         if not self._enabled(context):
             return {"status": "disabled", "msg": "fundamental adapter disabled for current context"}
         provider = self._provider_name()
-        if provider != "tushare":
+        if provider not in {"tushare", "tdx"}:
             return {"status": "error", "msg": f"unsupported provider: {provider}"}
 
         cache_key = f"{context}|{ts_code}"
@@ -576,34 +635,85 @@ class FundamentalAdapterManager:
             out["cache"] = {"hit": True, "stale": True, "ttl_sec": ttl}
             return out
 
-        cfg = ConfigLoader.reload()
-        token = str(cfg.get("data_provider.tushare_token", "") or "").strip()
-        if not token:
-            return {"status": "error", "msg": "tushare_token 未配置"}
-
-        ts.set_token(token)
-        pro = ts.pro_api()
-        selected = self._selected_interfaces()
-        enabled_keys = [k for k, v in selected.items() if bool(v)]
-        if not enabled_keys:
-            return {"status": "disabled", "msg": "未勾选任何 Tushare 基本面接口"}
-
-        end_date = datetime.now().strftime("%Y%m%d")
-        start_date = (datetime.now() - timedelta(days=480)).strftime("%Y%m%d")
         outputs: Dict[str, Dict[str, Any]] = {}
         warnings: List[str] = []
-        for key in enabled_keys:
-            ret = self._safe_call(pro, key=key, ts_code=ts_code, start_date=start_date, end_date=end_date)
-            outputs[key] = ret
-            if ret.get("status") == "error":
-                raw = str(ret.get("raw_error", "") or "")
-                base = f"{key}: {ret.get('msg', '')}"
-                warnings.append(f"{base} | raw={raw}" if raw else base)
+        enabled_keys: List[str] = []
+        summary: Dict[str, Any] = {}
 
-        summary = self._build_summary(outputs)
+        if provider == "tushare":
+            cfg = ConfigLoader.reload()
+            token = str(cfg.get("data_provider.tushare_token", "") or "").strip()
+            if not token:
+                return {"status": "error", "msg": "tushare_token 未配置"}
+            ts.set_token(token)
+            pro = ts.pro_api()
+            selected = self._selected_interfaces()
+            enabled_keys = [k for k, v in selected.items() if bool(v)]
+            if not enabled_keys:
+                return {"status": "disabled", "msg": "未勾选任何 Tushare 基本面接口"}
+            end_date = datetime.now().strftime("%Y%m%d")
+            start_date = (datetime.now() - timedelta(days=480)).strftime("%Y%m%d")
+            for key in enabled_keys:
+                ret = self._safe_call(pro, key=key, ts_code=ts_code, start_date=start_date, end_date=end_date)
+                outputs[key] = ret
+                if ret.get("status") == "error":
+                    raw = str(ret.get("raw_error", "") or "")
+                    base = f"{key}: {ret.get('msg', '')}"
+                    warnings.append(f"{base} | raw={raw}" if raw else base)
+            summary = self._build_summary(outputs)
+        else:
+            # TDX 目前仅补充行情侧“基本面近似信息”（最新价、近日日线变化等）。
+            # 返回结构保持与 Tushare 分支一致，避免上游读取逻辑发生回归。
+            enabled_keys = ["tdx_latest_bar", "tdx_daily_bars"]
+            tdx = TdxProvider()
+            now_dt = datetime.now().replace(second=0, microsecond=0)
+            st_dt = now_dt - timedelta(days=480)
+            latest_bar = tdx.get_latest_bar(ts_code)
+            if isinstance(latest_bar, dict) and latest_bar:
+                outputs["tdx_latest_bar"] = {
+                    "status": "success",
+                    "rows": 1,
+                    "sample": {str(k): latest_bar.get(k) for k in latest_bar.keys()},
+                    "records": [{str(k): latest_bar.get(k) for k in latest_bar.keys()}],
+                }
+            else:
+                msg = str(tdx.last_error or "TDX latest bar unavailable")
+                outputs["tdx_latest_bar"] = {
+                    "status": "error",
+                    "rows": 0,
+                    "msg": msg,
+                    "reason_type": "tdx_data_unavailable",
+                    "raw_error": msg,
+                }
+                warnings.append(f"tdx_latest_bar: {msg}")
+            daily_df = tdx.fetch_kline_data(ts_code, st_dt, now_dt, interval="D")
+            daily_records = self._pick_all_rows(daily_df)
+            if daily_records:
+                outputs["tdx_daily_bars"] = {
+                    "status": "success",
+                    "rows": int(len(daily_records)),
+                    "sample": dict(daily_records[-1]),
+                    "records": daily_records,
+                }
+            else:
+                msg = str(tdx.last_error or "TDX daily bars unavailable")
+                outputs["tdx_daily_bars"] = {
+                    "status": "error",
+                    "rows": 0,
+                    "msg": msg,
+                    "reason_type": "tdx_data_unavailable",
+                    "raw_error": msg,
+                }
+                warnings.append(f"tdx_daily_bars: {msg}")
+            summary = self._build_tdx_summary(
+                ts_code=ts_code,
+                latest_bar=outputs.get("tdx_latest_bar", {}).get("sample", {}),
+                daily_rows=daily_records,
+            )
+
         payload: Dict[str, Any] = {
             "status": "success" if outputs else "empty",
-            "provider": "tushare",
+            "provider": provider,
             "context": str(context),
             "stock_code": str(stock_code),
             "ts_code": ts_code,
