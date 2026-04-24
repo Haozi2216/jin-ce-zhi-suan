@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>金策智算 智能交易决策控制台</title>
+    <link rel="icon" href="/logo.png" type="image/png">
     
     <script>
         window.__frontendStaticAssetSkipAll = false;
@@ -1116,22 +1117,32 @@
             </div>
         </div>
     </div>
-    <div id="evolution-board-modal" class="hidden fixed inset-0 bg-black/70 z-[147] flex items-center justify-center p-6">
-        <div class="w-[980px] max-w-[96vw] h-[90vh] bg-slate-900 border border-slate-700 rounded-lg shadow-2xl flex flex-col overflow-hidden">
+    <div id="evolution-board-modal" class="hidden fixed inset-0 bg-black/70 z-[147] flex items-center justify-center p-3">
+        <div class="w-[98vw] max-w-[98vw] h-[96vh] bg-slate-900 border border-slate-700 rounded-lg shadow-2xl flex flex-col overflow-hidden">
             <div class="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
                 <div class="text-white font-bold"><i class="fa-solid fa-dna mr-2 text-cyan-300"></i>Evolution 策略进化看板</div>
                 <button onclick="closeEvolutionBoardModal()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
             </div>
             <div class="px-4 py-2 text-xs text-slate-400 border-b border-slate-700">策略进化运行看板（起点配置 / 过程日志 / 结果摘要）。</div>
+            <div class="px-4 py-2 border-b border-slate-700 bg-slate-950/40">
+                <div class="flex flex-wrap items-center gap-2 text-[11px] font-mono">
+                    <button type="button" id="evolution-platform-tab-runtime" onclick="switchEvolutionPlatformTab('runtime')" class="px-3 py-1 rounded border border-cyan-500 bg-cyan-700 text-white">运行概览</button>
+                    <button type="button" id="evolution-platform-tab-family" onclick="switchEvolutionPlatformTab('family')" class="px-3 py-1 rounded border border-slate-600 bg-slate-800 text-slate-200">Family</button>
+                    <button type="button" id="evolution-platform-tab-runs" onclick="switchEvolutionPlatformTab('runs')" class="px-3 py-1 rounded border border-slate-600 bg-slate-800 text-slate-200">运行记录</button>
+                    <div id="evolution-platform-refresh-meta" class="ml-auto text-slate-500">文件页：待刷新</div>
+                </div>
+            </div>
             <div id="ops-evolution-body" class="flex-1 overflow-y-auto p-4 space-y-4">
+                <div id="evolution-platform-panel-runtime" class="space-y-4">
                 <div class="bg-gradient-to-r from-cyan-900/40 to-slate-900 border border-cyan-800/60 rounded-lg px-3 py-2 flex items-center justify-between gap-3">
                     <div>
                         <div class="text-sm font-bold text-white"><i class="fa-solid fa-dna mr-2 text-cyan-300"></i>Evolution 策略进化看板</div>
                         <div id="evolution-status-pill" class="text-[11px] text-slate-300 font-mono mt-1">未启动</div>
                     </div>
-                    <div class="grid grid-cols-3 gap-2 min-w-[330px]">
+                    <div class="grid grid-cols-4 gap-2 min-w-[440px]">
                         <button id="evolution-start-btn" onclick="startEvolutionRun()" class="bg-emerald-700 hover:bg-emerald-600 text-white px-3 py-1.5 rounded border border-emerald-500 w-full"><span id="evolution-start-btn-text">启动</span></button>
                         <button id="evolution-stop-btn" onclick="stopEvolutionRun()" class="bg-rose-700 hover:bg-rose-600 text-white px-3 py-1.5 rounded border border-rose-500 w-full"><span id="evolution-stop-btn-text">停止</span></button>
+                        <button id="evolution-apply-style-btn" type="button" onclick="applyEvolutionStyleRuntime()" class="bg-cyan-700 hover:bg-cyan-600 text-white px-3 py-1.5 rounded border border-cyan-500 w-full"><span id="evolution-apply-style-btn-text">应用风格</span></button>
                         <button id="evolution-reset-btn" type="button" onclick="resetEvolutionBoardUi()" class="bg-slate-700 hover:bg-slate-600 text-white px-3 py-1.5 rounded border border-slate-500 w-full"><span id="evolution-reset-btn-text">重置</span></button>
                     </div>
                 </div>
@@ -1220,6 +1231,35 @@
                                 <div id="evolution-threshold-recommendation" class="mt-1 text-[11px] text-slate-400 font-mono break-words">分布推荐：--</div>
                             </div>
                             <div id="evolution-effective-profile" class="text-[11px] text-slate-400 font-mono break-words">有效配置：--</div>
+                            <div class="bg-slate-800/40 border border-slate-700 rounded p-2">
+                                <div class="text-slate-400 mb-1 text-[11px]">参数热更新审计（最近）</div>
+                                <div id="evolution-profile-updates-wrap" class="h-16 overflow-auto pr-1 text-[10px] font-mono text-slate-300 space-y-1">
+                                    <div class="text-slate-500">暂无</div>
+                                </div>
+                            </div>
+                            <div class="bg-slate-800/40 border border-slate-700 rounded p-2">
+                                <div class="flex items-center justify-between mb-1">
+                                    <div class="text-slate-400 text-[11px]">并发状态监控</div>
+                                    <div id="evolution-concurrency-status" class="text-[10px] font-mono px-2 py-0.5 rounded bg-green-600/20 text-green-300 border border-green-600/50">正常</div>
+                                </div>
+                                <div id="evolution-concurrent-operations" class="h-12 overflow-auto pr-1 text-[10px] font-mono text-slate-300 space-y-1 mb-2">
+                                    <div class="text-slate-500">当前无操作</div>
+                                </div>
+                                <div class="grid grid-cols-2 gap-2 text-[10px] font-mono">
+                                    <div class="bg-slate-900/60 rounded px-2 py-1">
+                                        <div class="text-slate-400">启动权限</div>
+                                        <div id="evolution-start-permission" class="text-green-300">✓</div>
+                                    </div>
+                                    <div class="bg-slate-900/60 rounded px-2 py-1">
+                                        <div class="text-slate-400">停止权限</div>
+                                        <div id="evolution-stop-permission" class="text-green-300">✓</div>
+                                    </div>
+                                </div>
+                                <div id="evolution-concurrency-conflict" class="hidden mt-2 p-2 rounded bg-red-600/20 border border-red-600/50">
+                                    <div class="text-red-300 text-[10px] font-mono">⚠️ 操作冲突</div>
+                                    <div id="evolution-conflict-message" class="text-red-200 text-[10px] font-mono mt-1"></div>
+                                </div>
+                            </div>
                         </div>
                     </div>
                     <div class="xl:col-span-7 space-y-3">
@@ -1290,6 +1330,139 @@
                         <div class="bg-slate-800/50 border border-slate-700 rounded-lg p-3">
                             <div class="text-slate-300 mb-2 font-semibold">Top策略(score)</div>
                             <div id="evolution-top-wrap" class="h-32 overflow-auto pr-1 text-[11px] font-mono text-slate-200 space-y-1"></div>
+                        </div>
+                        <div class="bg-slate-800/50 border border-slate-700 rounded-lg p-3">
+                            <div class="text-slate-300 mb-2 font-semibold">策略谱系分布</div>
+                            <div id="evolution-family-stats-meta" class="text-[10px] text-slate-400 font-mono mb-1">权重：--</div>
+                            <div id="evolution-family-stats-trend" class="text-[10px] text-slate-500 font-mono mb-1">趋势：--</div>
+                            <div class="flex items-center gap-2 mb-1 text-[10px] font-mono">
+                                <label class="text-slate-400" for="evolution-family-alert-preset">预设</label>
+                                <select id="evolution-family-alert-preset" class="bg-slate-900 border border-slate-700 rounded px-1 py-0.5 text-slate-200">
+                                    <option value="steady">稳健</option>
+                                    <option value="balanced" selected>平衡</option>
+                                    <option value="aggressive">进攻</option>
+                                </select>
+                                <label class="text-slate-400" for="evolution-family-alert-threshold">告警阈值</label>
+                                <select id="evolution-family-alert-threshold" class="bg-slate-900 border border-slate-700 rounded px-1 py-0.5 text-slate-200">
+                                    <option value="0.12">0.12</option>
+                                    <option value="0.18" selected>0.18</option>
+                                    <option value="0.25">0.25</option>
+                                </select>
+                            </div>
+                            <div id="evolution-family-style-hint" class="text-[10px] text-cyan-300 font-mono mb-1">风格：--</div>
+                            <div id="evolution-family-stats-alert" class="text-[10px] text-amber-300 font-mono mb-1">波动告警：--</div>
+                            <svg id="evolution-family-stats-sparkline" viewBox="0 0 180 28" class="w-full h-7 mb-1 rounded bg-slate-900/60 border border-slate-700">
+                                <path id="evolution-family-spark-trend" d="" stroke="#22d3ee" stroke-width="1.5" fill="none"></path>
+                                <path id="evolution-family-spark-mean" d="" stroke="#a78bfa" stroke-width="1.5" fill="none"></path>
+                            </svg>
+                            <div id="evolution-family-runtime-summary" class="text-[11px] text-slate-300 font-mono">详细 CRUD 与分页请切到策略谱系页。</div>
+                        </div>
+                        <div class="bg-slate-800/50 border border-slate-700 rounded-lg p-3 space-y-2">
+                            <div class="flex items-center justify-between gap-2">
+                                <div class="text-slate-300 font-semibold">进化运行记录</div>
+                                <div class="text-[11px] text-slate-400 font-mono">详细 CRUD 与分页请切到运行记录页</div>
+                            </div>
+                            <div id="evolution-runs-runtime-summary" class="h-24 overflow-auto pr-1 text-[11px] font-mono text-slate-200 space-y-1">
+                                <div class="text-slate-500">暂无</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                </div>
+                <div id="evolution-platform-panel-family" class="hidden space-y-3">
+                    <div class="bg-slate-800/50 border border-slate-700 rounded-lg p-3 space-y-3">
+                        <div class="flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                                <div class="text-slate-300 font-semibold">策略谱系记录</div>
+                                <div class="text-[11px] text-slate-400 mt-1">说明：策略谱系用于给一批相近来源、同一演化方向或同一谱系的策略记录打标签，便于筛选、统计和回溯。</div>
+                            </div>
+                            <div class="flex items-center gap-2 text-[11px]">
+                                <button id="evolution-family-create-btn" type="button" onclick="openEvolutionFamilyEditor()" class="bg-cyan-700 hover:bg-cyan-600 text-white px-3 py-1.5 rounded border border-cyan-500">新增</button>
+                                <button id="evolution-family-refresh-btn" type="button" onclick="loadEvolutionFamilyPage(1)" class="bg-slate-700 hover:bg-slate-600 text-white px-3 py-1.5 rounded border border-slate-500">刷新</button>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-3 text-[11px]">
+                            <label class="space-y-1 text-slate-300">
+                                <span class="text-slate-400">谱系名称</span>
+                                <input id="evolution-family-filter-family" type="text" placeholder="输入策略谱系名称" class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-slate-100 font-mono" />
+                            </label>
+                            <label class="space-y-1 text-slate-300">
+                                <span class="text-slate-400">开始时间</span>
+                                <input id="evolution-family-filter-start-time" type="datetime-local" class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-slate-100 font-mono" />
+                            </label>
+                            <label class="space-y-1 text-slate-300">
+                                <span class="text-slate-400">结束时间</span>
+                                <input id="evolution-family-filter-end-time" type="datetime-local" class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-slate-100 font-mono" />
+                            </label>
+                        </div>
+                        <div class="flex items-center gap-2 text-[11px]">
+                            <button id="evolution-family-search-btn" type="button" onclick="loadEvolutionFamilyPage(1)" class="bg-cyan-700 hover:bg-cyan-600 text-white px-3 py-1.5 rounded border border-cyan-500">查询</button>
+                            <button id="evolution-family-reset-btn" type="button" onclick="resetEvolutionFamilyFilters()" class="bg-slate-700 hover:bg-slate-600 text-white px-3 py-1.5 rounded border border-slate-500">重置筛选</button>
+                            <div id="evolution-family-page-meta" class="text-slate-400 font-mono">记录：--</div>
+                        </div>
+                        <div id="evolution-family-stats-wrap" class="min-h-[320px] overflow-auto pr-1 text-[11px] font-mono text-slate-200 space-y-2">
+                            <div class="text-slate-500">暂无</div>
+                        </div>
+                        <div class="flex items-center justify-between text-[11px]">
+                            <button id="evolution-family-prev-btn" type="button" onclick="loadEvolutionFamilyPage(evolutionFamilyPage - 1)" class="bg-slate-700 hover:bg-slate-600 text-white px-2 py-1 rounded border border-slate-500">上一页</button>
+                            <div id="evolution-family-page-text" class="text-slate-300 font-mono">第 -- / -- 页</div>
+                            <button id="evolution-family-next-btn" type="button" onclick="loadEvolutionFamilyPage(evolutionFamilyPage + 1)" class="bg-slate-700 hover:bg-slate-600 text-white px-2 py-1 rounded border border-slate-500">下一页</button>
+                        </div>
+                    </div>
+                </div>
+                <div id="evolution-platform-panel-runs" class="hidden space-y-3">
+                    <div class="bg-slate-800/50 border border-slate-700 rounded-lg p-3 space-y-2">
+                        <div class="flex items-center justify-between gap-2">
+                            <div class="text-slate-300 font-semibold">进化运行记录（文件）</div>
+                            <div class="flex items-center gap-2 text-[11px]">
+                                <button id="evolution-runs-create-btn" type="button" onclick="openEvolutionRunEditor()" class="bg-cyan-700 hover:bg-cyan-600 text-white px-3 py-1.5 rounded border border-cyan-500">新增</button>
+                                <button id="evolution-runs-file-refresh-btn" type="button" onclick="searchEvolutionRuns(1)" class="bg-slate-700 hover:bg-slate-600 text-white px-3 py-1.5 rounded border border-slate-500">刷新</button>
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-4 gap-3 text-[11px]">
+                            <label class="space-y-1 text-slate-300">
+                                <span class="text-slate-400">运行ID</span>
+                                <input id="evolution-runs-run-id" type="text" placeholder="输入运行ID" class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-slate-100 font-mono" />
+                            </label>
+                            <label class="space-y-1 text-slate-300">
+                                <span class="text-slate-400">子策略基因ID</span>
+                                <input id="evolution-runs-gene-id" type="text" placeholder="输入子策略基因ID" class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-slate-100 font-mono" />
+                            </label>
+                            <label class="space-y-1 text-slate-300">
+                                <span class="text-slate-400">父策略ID</span>
+                                <input id="evolution-runs-parent-id" type="text" placeholder="输入父策略ID" class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-slate-100 font-mono" />
+                            </label>
+                            <label class="space-y-1 text-slate-300">
+                                <span class="text-slate-400">运行状态</span>
+                                <select id="evolution-runs-status" class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-slate-100 font-mono">
+                                    <option value="">全部状态</option>
+                                    <option value="ok">成功</option>
+                                    <option value="rejected">已拒绝</option>
+                                    <option value="error">异常</option>
+                                    <option value="running">运行中</option>
+                                </select>
+                            </label>
+                            <label class="space-y-1 text-slate-300 md:col-span-2">
+                                <span class="text-slate-400">开始时间</span>
+                                <input id="evolution-runs-start-time" type="datetime-local" class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-slate-100 font-mono" />
+                            </label>
+                            <label class="space-y-1 text-slate-300 md:col-span-2">
+                                <span class="text-slate-400">结束时间</span>
+                                <input id="evolution-runs-end-time" type="datetime-local" class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-slate-100 font-mono" />
+                            </label>
+                        </div>
+                        <div class="flex items-center gap-2 text-[11px]">
+                            <button id="evolution-runs-search-btn" type="button" onclick="searchEvolutionRuns(1)" class="bg-cyan-700 hover:bg-cyan-600 text-white px-3 py-1.5 rounded border border-cyan-500">查询</button>
+                            <button id="evolution-runs-reset-btn" type="button" onclick="resetEvolutionRunsFilters()" class="bg-slate-700 hover:bg-slate-600 text-white px-3 py-1.5 rounded border border-slate-500">重置筛选</button>
+                            <div id="evolution-runs-meta" class="text-slate-400 font-mono">记录：--</div>
+                        </div>
+                        <div id="evolution-runs-wrap" class="min-h-[320px] overflow-auto pr-1 text-[11px] font-mono text-slate-200 space-y-2">
+                            <div class="text-slate-500">暂无</div>
+                        </div>
+                        <div class="flex items-center justify-between text-[11px]">
+                            <button id="evolution-runs-prev-btn" type="button" onclick="searchEvolutionRuns(evolutionRunsPage - 1)" class="bg-slate-700 hover:bg-slate-600 text-white px-2 py-1 rounded border border-slate-500">上一页</button>
+                            <div id="evolution-runs-page-text" class="text-slate-300 font-mono">第 -- / -- 页</div>
+                            <button id="evolution-runs-next-btn" type="button" onclick="searchEvolutionRuns(evolutionRunsPage + 1)" class="bg-slate-700 hover:bg-slate-600 text-white px-2 py-1 rounded border border-slate-500">下一页</button>
                         </div>
                     </div>
                 </div>
@@ -1759,6 +1932,7 @@
                         <option value="akshare">AKShare</option>
                         <option value="mysql">MySQL</option>
                         <option value="postgresql">PostgreSQL</option>
+                        <option value="duckdb">DuckDB</option>
                         <option value="tdx">通达信TDX</option>
                     </select>
                 </div>
@@ -2105,8 +2279,8 @@
         </div>
     </div>
 
-    <div id="evolution-top-detail-modal" class="hidden fixed inset-0 bg-black/80 z-[157] items-center justify-center p-4">
-        <div class="w-[980px] max-w-[98vw] h-[86vh] bg-slate-900 border border-cyan-700/60 rounded-lg shadow-2xl overflow-hidden flex flex-col">
+    <div id="evolution-top-detail-modal" class="hidden fixed inset-0 bg-black/80 z-[157] items-center justify-center p-3">
+        <div class="w-[98vw] max-w-[98vw] h-[94vh] bg-slate-900 border border-cyan-700/60 rounded-lg shadow-2xl overflow-hidden flex flex-col">
             <div class="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
                 <div class="text-white font-semibold text-sm">Top策略详情</div>
                 <button onclick="closeEvolutionTopDetail()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
@@ -2120,6 +2294,29 @@
                 <div class="bg-slate-950 border border-slate-700 rounded p-2 overflow-auto">
                     <div class="text-xs text-slate-300 mb-2">策略代码</div>
                     <pre id="evolution-top-detail-code" class="text-[11px] text-cyan-200 font-mono whitespace-pre-wrap break-words">--</pre>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div id="evolution-run-detail-modal" class="hidden fixed inset-0 bg-black/80 z-[158] items-center justify-center p-3">
+        <div class="w-[98vw] max-w-[98vw] h-[94vh] bg-slate-900 border border-slate-700 rounded-lg shadow-2xl flex flex-col overflow-hidden">
+            <div class="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
+                <div class="text-white font-bold"><i class="fa-solid fa-list-check mr-2 text-cyan-300"></i>Evolution 运行记录详情</div>
+                <button onclick="closeEvolutionRunDetail()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div id="evolution-run-detail-meta" class="px-4 py-2 text-[11px] text-slate-300 border-b border-slate-700 font-mono">--</div>
+            <div class="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-3 p-4 overflow-y-auto">
+                <div class="bg-slate-800/50 border border-slate-700 rounded p-3">
+                    <div class="text-slate-300 mb-2 font-semibold">metrics</div>
+                    <pre id="evolution-run-detail-metrics" class="text-[11px] text-slate-200 font-mono whitespace-pre-wrap break-words">--</pre>
+                </div>
+                <div class="bg-slate-800/50 border border-slate-700 rounded p-3">
+                    <div class="text-slate-300 mb-2 font-semibold">profile</div>
+                    <pre id="evolution-run-detail-profile" class="text-[11px] text-cyan-200 font-mono whitespace-pre-wrap break-words">--</pre>
+                </div>
+                <div class="bg-slate-800/50 border border-slate-700 rounded p-3">
+                    <div class="text-slate-300 mb-2 font-semibold">lineage</div>
+                    <pre id="evolution-run-detail-lineage" class="text-[11px] text-amber-200 font-mono whitespace-pre-wrap break-words">--</pre>
                 </div>
             </div>
         </div>
@@ -2202,14 +2399,35 @@
         const DEFAULT_ARCHIVE_TASKS_CSV = 'data/batch_tasks/archive/批量回测任务.archive.csv';
         let evolutionLastState = null;
         let evolutionLastActivity = null;
+        let evolutionPlatformTab = 'runtime';
         let evolutionHistoryRows = [];
         let evolutionTopRows = [];
+        let evolutionFamilyStatsRows = [];
+        let evolutionProfileUpdateRows = [];
+        let evolutionFamilyStatsEnabled = false;
+        let evolutionFamilyStatsError = '';
+        let evolutionFamilyWeightsSnapshot = null;
+        let evolutionFamilyAlertThresholdOverride = '';
+        let evolutionFamilyAlertPreset = 'balanced';
+        let evolutionFamilyPage = 1;
+        let evolutionFamilyPageSize = 10;
+        let evolutionFamilyTotal = 0;
+        let evolutionFamilyFilters = { family: '', start_time: '', end_time: '' };
+        let evolutionRunRows = [];
+        let evolutionRunsTotal = 0;
+        let evolutionRunsPage = 1;
+        let evolutionRunsPageSize = 20;
+        let evolutionRunsLastEnabled = false;
+        let evolutionRunsDebounceTimer = null;
+        let evolutionRunsLastRequestSeq = 0;
         let evolutionLogRows = [];
         let evolutionLastRunning = null;
         let evolutionStartPending = false;
         let evolutionStopPending = false;
+        let evolutionProfileUpdatePending = false;
         let evolutionStopConfirmUntil = 0;
         let evolutionStopConfirmTimer = null;
+        let evolutionConcurrencyTimer = null;
         let liveRunning = false;
         let liveEnabled = window.__LIVE_ENABLED__ === true;
         let liveActionPending = false;
@@ -2378,6 +2596,8 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
         const DISCLAIMER_ACCEPT_KEY = 'jince-disclaimer-accepted-v1';
         const DISCLAIMER_FORCE_RECHECK_KEY = 'jince-disclaimer-force-recheck-v1';
         const DISCLAIMER_LAST_BOOT_KEY = 'jince-disclaimer-last-boot-v1';
+        const EVOLUTION_FAMILY_ALERT_THRESHOLD_KEY = 'jince-evolution-family-alert-threshold-v1';
+        const EVOLUTION_FAMILY_ALERT_PRESET_KEY = 'jince-evolution-family-alert-preset-v1';
         const DISCLAIMER_ACCEPT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
         let currentServerBootId = '';
         const STRATEGY_GUIDE = {
@@ -2611,8 +2831,23 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
 
         function enqueueIncomingEvent(payload) {
             if (!payload || typeof payload !== 'object') return;
-            if (backtestStreamClosed && BACKTEST_STREAM_TYPES.has(String(payload.type || ''))) return;
-            handleEvent(payload);
+            const type = String(payload.type || '');
+            if (backtestStreamClosed && BACKTEST_STREAM_TYPES.has(type)) return;
+            if (RENDER_CRITICAL_TYPES.has(type)) {
+                renderHighQueue.push(payload);
+                ensureRenderLoop();
+                return;
+            }
+            if (RENDER_COALESCE_TYPES.has(type)) {
+                renderCoalesceMap.set(type, payload);
+                ensureRenderLoop();
+                return;
+            }
+            if (renderNormalQueue.length >= RENDER_QUEUE_MAX) {
+                renderNormalQueue.shift();
+            }
+            renderNormalQueue.push(payload);
+            ensureRenderLoop();
         }
 
         function closeBacktestStream() {
@@ -2634,6 +2869,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     renderCoalesceMap.delete(k);
                 }
             }
+            BT_STATE.lastFlowAt = Date.now();
         }
 
         async function loadLatestStrategyScores() {
@@ -2656,7 +2892,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 updateDebugPanel();
                 loadStrategyManager();
                 syncStatus();
-                refreshEvolutionDashboard({ withHistory: true, withTop: true });
+                refreshEvolutionDashboard({ withHistory: true, withTop: true, withFamilyStats: true, withProfileUpdates: true });
                 wsHeartbeatTimer = setInterval(() => {
                     if (!ws || ws.readyState !== WebSocket.OPEN) return;
                     if (Date.now() - wsLastPongAt > WS_STALE_TIMEOUT_MS) {
@@ -2871,11 +3107,18 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     break;
                 case 'backtest_result':
                     closeBacktestStream();
+                    renderHighQueue.length = 0;
+                    renderNormalQueue.length = 0;
+                    renderCoalesceMap.clear();
                     showBacktestResults(data);
                     setBacktestButtonState(BACKTEST_BTN_STATE.idle);
                     refreshKlineModalImage(true);
                     break;
                 case 'backtest_failed':
+                    closeBacktestStream();
+                    renderHighQueue.length = 0;
+                    renderNormalQueue.length = 0;
+                    renderCoalesceMap.clear();
                     handleBacktestFailure(data?.msg || '回测失败');
                     break;
                 case 'backtest_strategy_report':
@@ -3392,6 +3635,90 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 if (endInput && typeof payload.endDate === 'string') endInput.value = payload.endDate;
                 const capInput = document.getElementById('bt-capital-input');
                 if (capInput && typeof payload.capital === 'string' && payload.capital !== '') capInput.value = payload.capital;
+            } catch (_) {}
+        }
+
+        function persistEvolutionFamilyAlertThresholdPreference(value) {
+            // Persist family-alert threshold so dashboard refresh keeps user preference.
+            try {
+                const v = String(value || '').trim();
+                if (!v) {
+                    localStorage.removeItem(EVOLUTION_FAMILY_ALERT_THRESHOLD_KEY);
+                    return;
+                }
+                localStorage.setItem(EVOLUTION_FAMILY_ALERT_THRESHOLD_KEY, v);
+            } catch (_) {}
+        }
+
+        function evolutionPresetToThreshold(preset) {
+            // Map user-friendly preset to threshold value.
+            const p = String(preset || '').trim().toLowerCase();
+            if (p === 'steady') return '0.12';
+            if (p === 'aggressive') return '0.25';
+            return '0.18';
+        }
+
+        function evolutionThresholdToPreset(threshold) {
+            // Reverse map threshold value to preset key.
+            const t = String(threshold || '').trim();
+            if (t === '0.12') return 'steady';
+            if (t === '0.25') return 'aggressive';
+            return 'balanced';
+        }
+
+        function evolutionPresetStyleMeta(preset) {
+            // Risk-style hint for operator and suggested adaptive blend ratio.
+            const p = String(preset || '').trim().toLowerCase();
+            if (p === 'steady') return { name: '稳健', blend: 0.20 };
+            if (p === 'aggressive') return { name: '进攻', blend: 0.55 };
+            return { name: '平衡', blend: 0.35 };
+        }
+
+        function persistEvolutionFamilyAlertPresetPreference(preset) {
+            // Persist selected preset so next boot restores user risk profile.
+            try {
+                const p = String(preset || '').trim().toLowerCase();
+                if (!p) {
+                    localStorage.removeItem(EVOLUTION_FAMILY_ALERT_PRESET_KEY);
+                    return;
+                }
+                localStorage.setItem(EVOLUTION_FAMILY_ALERT_PRESET_KEY, p);
+            } catch (_) {}
+        }
+
+        function loadEvolutionFamilyAlertPresetPreference() {
+            // Restore alert preset and sync threshold control/value.
+            try {
+                const raw = String(localStorage.getItem(EVOLUTION_FAMILY_ALERT_PRESET_KEY) || '').trim().toLowerCase();
+                if (!raw) return;
+                const presetSel = document.getElementById('evolution-family-alert-preset');
+                const thresholdSel = document.getElementById('evolution-family-alert-threshold');
+                if (!presetSel || !thresholdSel) return;
+                const presetValues = Array.from(presetSel.options || []).map((x) => String(x.value || '').trim().toLowerCase());
+                if (!presetValues.includes(raw)) return;
+                presetSel.value = raw;
+                evolutionFamilyAlertPreset = raw;
+                const threshold = evolutionPresetToThreshold(raw);
+                thresholdSel.value = threshold;
+                evolutionFamilyAlertThresholdOverride = threshold;
+            } catch (_) {}
+        }
+
+        function loadEvolutionFamilyAlertThresholdPreference() {
+            // Restore persisted family-alert threshold into UI and runtime override.
+            try {
+                const raw = String(localStorage.getItem(EVOLUTION_FAMILY_ALERT_THRESHOLD_KEY) || '').trim();
+                if (!raw) return;
+                const thresholdSel = document.getElementById('evolution-family-alert-threshold');
+                if (!thresholdSel) return;
+                const optValues = Array.from(thresholdSel.options || []).map((x) => String(x.value || '').trim());
+                if (!optValues.includes(raw)) return;
+                thresholdSel.value = raw;
+                evolutionFamilyAlertThresholdOverride = raw;
+                const preset = evolutionThresholdToPreset(raw);
+                const presetSel = document.getElementById('evolution-family-alert-preset');
+                if (presetSel) presetSel.value = preset;
+                evolutionFamilyAlertPreset = preset;
             } catch (_) {}
         }
 
@@ -5042,10 +5369,10 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 title: '工部数据源',
                 subtitle: '主数据源与回退策略',
                 fields: [
-                    { path: 'data_provider.source', label: '主数据源', type: 'select', options: [{ value: 'default', label: 'default' }, { value: 'akshare', label: 'akshare' }, { value: 'tushare', label: 'tushare' }, { value: 'mysql', label: 'mysql' }, { value: 'postgresql', label: 'postgresql' }, { value: 'tdx', label: 'tdx' }] },
+                    { path: 'data_provider.source', label: '主数据源', type: 'select', options: [{ value: 'default', label: 'default' }, { value: 'akshare', label: 'akshare' }, { value: 'tushare', label: 'tushare' }, { value: 'mysql', label: 'mysql' }, { value: 'postgresql', label: 'postgresql' }, { value: 'duckdb', label: 'duckdb' }, { value: 'tdx', label: 'tdx' }] },
                     { path: 'data_provider.enable_fallback', label: '启用数据回退', type: 'boolean' },
                     { path: 'live_monitoring.minute_close_confirm.enabled', label: '分钟收盘确认触发', type: 'boolean', desc: '开启后实盘信号在下一分钟到来时，按上一分钟已收盘K线触发，减少分钟内抖动误触发。' },
-                    { path: 'data_provider.backtest_cache_db_source', label: '回测缓存落库源', type: 'select', options: [{ value: '', label: '关闭' }, { value: 'mysql', label: 'mysql' }, { value: 'postgresql', label: 'postgresql' }] },
+                    { path: 'data_provider.backtest_cache_db_source', label: '回测缓存落库源', type: 'select', options: [{ value: '', label: '关闭' }, { value: 'mysql', label: 'mysql' }, { value: 'postgresql', label: 'postgresql' }, { value: 'duckdb', label: 'duckdb' }] },
                     { path: 'data_provider.tushare_api_url', label: 'Tushare接口地址', type: 'text' },
                     { path: 'data_provider.tushare_token', label: 'Tushare令牌', type: 'password', secret: true },
                     { path: 'data_provider.tdxdir', label: 'TDX数据目录(vipdoc上级)', type: 'text' },
@@ -5057,6 +5384,15 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     { path: 'data_provider.tdx_max_bars', label: 'TDX最大拉取条数', type: 'number', min: 500, max: 100000, step: 500 },
                     { path: 'data_provider.default_api_key', label: '默认数据服务密钥', type: 'password', secret: true },
                     { path: 'data_provider.default_api_url', label: '默认数据服务地址', type: 'text' },
+                    { path: 'data_provider.duckdb_path', label: 'DuckDB文件路径', type: 'text' },
+                    { path: 'data_provider.duckdb_query_page_size', label: 'DuckDB分页批量', type: 'number', min: 1000, max: 1000000, step: 1000 },
+                    { path: 'data_provider.duckdb_table_1min', label: 'DuckDB 1分钟表', type: 'text' },
+                    { path: 'data_provider.duckdb_table_5min', label: 'DuckDB 5分钟表', type: 'text' },
+                    { path: 'data_provider.duckdb_table_10min', label: 'DuckDB 10分钟表', type: 'text' },
+                    { path: 'data_provider.duckdb_table_15min', label: 'DuckDB 15分钟表', type: 'text' },
+                    { path: 'data_provider.duckdb_table_30min', label: 'DuckDB 30分钟表', type: 'text' },
+                    { path: 'data_provider.duckdb_table_60min', label: 'DuckDB 60分钟表', type: 'text' },
+                    { path: 'data_provider.duckdb_table_day', label: 'DuckDB 日线表', type: 'text' },
                     { path: 'data_provider.mysql_host', label: 'MySQL主机', type: 'text' },
                     { path: 'data_provider.mysql_port', label: 'MySQL端口', type: 'number', min: 1, max: 65535, step: 1 },
                     { path: 'data_provider.mysql_user', label: 'MySQL用户', type: 'text' },
@@ -5143,7 +5479,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 subtitle: '历史增量同步写入模式',
                 fields: [
                     { path: 'history_sync.write_mode', label: '写入模式', type: 'select', options: [{ value: 'api', label: 'api（写default_api_url）' }, { value: 'direct_db', label: 'direct_db（直连数据库）' }] },
-                    { path: 'history_sync.direct_db_source', label: '直连数据库源', type: 'select', options: [{ value: 'mysql', label: 'mysql' }, { value: 'postgresql', label: 'postgresql' }] },
+                    { path: 'history_sync.direct_db_source', label: '直连数据库源', type: 'select', options: [{ value: 'mysql', label: 'mysql' }, { value: 'postgresql', label: 'postgresql' }, { value: 'duckdb', label: 'duckdb' }] },
                     { path: 'history_sync.time_mode', label: '时间模式', type: 'select', options: [{ value: 'lookback', label: 'lookback（最近N天）' }, { value: 'custom', label: 'custom（自定义区间）' }] },
                     { path: 'history_sync.lookback_days', label: '默认回看天数', type: 'number', min: 1, max: 3650, step: 1, slider: true },
                     { path: 'history_sync.custom_start_time', label: '自定义开始时间', type: 'text', placeholder: '例如：2026-03-01 09:30:00', desc: '格式：YYYY-MM-DD HH:MM:SS；time_mode=custom时生效' },
@@ -5993,11 +6329,20 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 modal.classList.remove('hidden');
                 modal.classList.add('flex');
             }
+            switchEvolutionPlatformTab(evolutionPlatformTab || 'runtime');
             renderEvolutionSeedSourceUi();
-            refreshEvolutionDashboard({ withHistory: true, withTop: true });
+            refreshEvolutionDashboard({ withHistory: true, withTop: true, withRuns: true, withFamilyStats: true, withProfileUpdates: true, withConcurrency: true });
             setEvolutionStatusText('已打开策略进化看板', 'success');
             const startBtn = document.getElementById('evolution-start-btn');
             if (startBtn && typeof startBtn.focus === 'function') startBtn.focus();
+
+            // 启动并发状态定时更新
+            if (evolutionConcurrencyTimer) clearInterval(evolutionConcurrencyTimer);
+            evolutionConcurrencyTimer = setInterval(() => {
+                if (isEvolutionBoardModalOpen()) {
+                    refreshEvolutionDashboard({ withConcurrency: true, withTimingLog: false });
+                }
+            }, 5000); // 每5秒更新一次并发状态
         }
 
         function closeEvolutionBoardModal() {
@@ -6005,6 +6350,18 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             if (!modal) return;
             modal.classList.add('hidden');
             modal.classList.remove('flex');
+            
+            // 清理并发状态定时器
+            if (evolutionConcurrencyTimer) {
+                clearInterval(evolutionConcurrencyTimer);
+                evolutionConcurrencyTimer = null;
+            }
+        }
+
+        function isEvolutionBoardModalOpen() {
+            // Utility helper to avoid unnecessary dashboard API polling when modal is closed.
+            const modal = document.getElementById('evolution-board-modal');
+            return !!(modal && !modal.classList.contains('hidden'));
         }
 
         function toggleOpsHubSection(bodyId) {
@@ -10928,15 +11285,18 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             const running = runningOverride === null ? !!(evolutionLastState && evolutionLastState.running) : !!runningOverride;
             const startBtn = document.getElementById('evolution-start-btn');
             const stopBtn = document.getElementById('evolution-stop-btn');
+            const applyBtn = document.getElementById('evolution-apply-style-btn');
             const resetBtn = document.getElementById('evolution-reset-btn');
             const startText = document.getElementById('evolution-start-btn-text');
             const stopText = document.getElementById('evolution-stop-btn-text');
+            const applyText = document.getElementById('evolution-apply-style-btn-text');
             const resetText = document.getElementById('evolution-reset-btn-text');
             if (!running && evolutionStopConfirmUntil > 0) resetEvolutionStopConfirmState(false);
             const confirmingStop = running && evolutionStopConfirmUntil > Date.now() && !evolutionStopPending;
             const startDisabled = running || evolutionStartPending || evolutionStopPending;
             const stopDisabled = !running || evolutionStartPending || evolutionStopPending;
-            const resetDisabled = running || evolutionStartPending || evolutionStopPending;
+            const applyDisabled = !running || evolutionStartPending || evolutionStopPending || evolutionProfileUpdatePending;
+            const resetDisabled = running || evolutionStartPending || evolutionStopPending || evolutionProfileUpdatePending;
             if (startBtn) {
                 startBtn.disabled = startDisabled;
                 startBtn.classList.toggle('opacity-70', startDisabled);
@@ -10960,12 +11320,19 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 resetBtn.classList.toggle('opacity-70', resetDisabled);
                 resetBtn.classList.toggle('cursor-not-allowed', resetDisabled);
             }
+            if (applyBtn) {
+                applyBtn.disabled = applyDisabled;
+                applyBtn.classList.toggle('opacity-70', applyDisabled);
+                applyBtn.classList.toggle('cursor-not-allowed', applyDisabled);
+                applyBtn.classList.toggle('animate-pulse', evolutionProfileUpdatePending);
+            }
             if (startText) startText.innerText = evolutionStartPending ? '启动中...' : '启动';
             if (stopText) {
                 if (evolutionStopPending) stopText.innerText = '停止中...';
                 else if (confirmingStop) stopText.innerText = '再次点击确认';
                 else stopText.innerText = '停止';
             }
+            if (applyText) applyText.innerText = evolutionProfileUpdatePending ? '应用中...' : '应用风格';
             if (resetText) resetText.innerText = '重置';
         }
 
@@ -10982,12 +11349,29 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             evolutionLastActivity = null;
             evolutionHistoryRows = [];
             evolutionTopRows = [];
+            evolutionFamilyStatsRows = [];
+            evolutionProfileUpdateRows = [];
+            evolutionFamilyStatsEnabled = false;
+            evolutionFamilyStatsError = '';
+            evolutionFamilyWeightsSnapshot = null;
+            evolutionFamilyAlertPreset = 'balanced';
+            evolutionFamilyAlertThresholdOverride = '';
+            evolutionFamilyPage = 1;
+            evolutionFamilyTotal = 0;
+            evolutionFamilyFilters = { family: '', start_time: '', end_time: '' };
+            persistEvolutionFamilyAlertPresetPreference('');
+            persistEvolutionFamilyAlertThresholdPreference('');
+            evolutionRunRows = [];
+            evolutionRunsTotal = 0;
+            evolutionRunsPage = 1;
+            evolutionRunsLastEnabled = false;
             evolutionLogRows = [];
             evolutionLastRunning = null;
             evolutionSeedTempSelectedIds = [];
             evolutionSeedAllowTopFallback = false;
             evolutionStartPending = false;
             evolutionStopPending = false;
+            evolutionProfileUpdatePending = false;
             resetEvolutionStopConfirmState(false);
             const defaults = {
                 'evolution-interval': '1',
@@ -11001,7 +11385,18 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 'evolution-seed-search': '',
                 'evolution-seed-strategy-id': '',
                 'evolution-seed-strategy-ids': '',
-                'evolution-persist-score-threshold': ''
+                'evolution-persist-score-threshold': '',
+                'evolution-runs-run-id': '',
+                'evolution-runs-gene-id': '',
+                'evolution-runs-parent-id': '',
+                'evolution-runs-status': '',
+                'evolution-runs-start-time': '',
+                'evolution-runs-end-time': '',
+                'evolution-family-filter-family': '',
+                'evolution-family-filter-start-time': '',
+                'evolution-family-filter-end-time': '',
+                'evolution-family-alert-preset': 'balanced',
+                'evolution-family-alert-threshold': '0.18',
             };
             Object.entries(defaults).forEach(([id, value]) => {
                 const el = document.getElementById(id);
@@ -11019,6 +11414,11 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             const conclusionEl = document.getElementById('evolution-conclusion-wrap');
             const historyEl = document.getElementById('evolution-history-wrap');
             const topEl = document.getElementById('evolution-top-wrap');
+            const familyEl = document.getElementById('evolution-family-stats-wrap');
+            const profileUpdatesEl = document.getElementById('evolution-profile-updates-wrap');
+            const runEl = document.getElementById('evolution-runs-wrap');
+            const runMetaEl = document.getElementById('evolution-runs-meta');
+            const runPageEl = document.getElementById('evolution-runs-page-text');
             const logEl = document.getElementById('evolution-log-wrap');
             const progressLabelEl = document.getElementById('evolution-progress-label');
             const progressTextEl = document.getElementById('evolution-progress-text');
@@ -11043,6 +11443,19 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             if (conclusionEl) conclusionEl.innerText = '暂无';
             if (historyEl) historyEl.innerHTML = '<div class="text-slate-500">暂无</div>';
             if (topEl) topEl.innerHTML = '<div class="text-slate-500">暂无</div>';
+            if (familyEl) familyEl.innerHTML = '<div class="text-slate-500">暂无</div>';
+            if (profileUpdatesEl) profileUpdatesEl.innerHTML = '<div class="text-slate-500">暂无</div>';
+            if (runEl) runEl.innerHTML = '<div class="text-slate-500">暂无</div>';
+            const familyRuntimeEl = document.getElementById('evolution-family-runtime-summary');
+            const runsRuntimeEl = document.getElementById('evolution-runs-runtime-summary');
+            const familyPageEl = document.getElementById('evolution-family-page-text');
+            const familyMetaEl = document.getElementById('evolution-family-page-meta');
+            if (familyRuntimeEl) familyRuntimeEl.innerHTML = '<div class="text-slate-500">暂无</div>';
+            if (runsRuntimeEl) runsRuntimeEl.innerHTML = '<div class="text-slate-500">暂无</div>';
+            if (familyPageEl) familyPageEl.innerText = '第 -- / -- 页';
+            if (familyMetaEl) familyMetaEl.innerText = '记录：--';
+            if (runMetaEl) runMetaEl.innerText = '记录：--';
+            if (runPageEl) runPageEl.innerText = '第 -- / -- 页';
             if (logEl) logEl.innerHTML = '<div class="text-slate-500">暂无</div>';
             if (progressLabelEl) progressLabelEl.innerText = '阶段：待命';
             if (progressTextEl) progressTextEl.innerText = '--%';
@@ -11056,6 +11469,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             renderEvolutionEffectiveProfile({});
             renderEvolutionSeedSourceUi();
             renderEvolutionThresholdRecommendation();
+            renderEvolutionRunsPager();
             updateEvolutionActionButtons(false);
             setEvolutionStatusText('已重置当前看板界面数据（仅前端显示）', 'warning');
             logMessage('策略中心', '策略进化看板已重置（仅前端显示）', 'warning');
@@ -11143,7 +11557,9 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             const tfs = Array.isArray(p.timeframes) && p.timeframes.length ? p.timeframes.join(',') : '-';
             const persistEnabled = p.persist_enabled === true ? '开' : (p.persist_enabled === false ? '关' : '-');
             const threshold = Number.isFinite(Number(p.persist_score_threshold)) ? Number(p.persist_score_threshold).toFixed(3) : '--';
-            el.innerText = `有效配置：seed=${seedOne} | seed_pool=${seedMany} | include_builtin=${String(p.seed_include_builtin)} | only_enabled=${String(p.seed_only_enabled)} | stocks=${targets} | tfs=${tfs} | persist=${persistEnabled}@${threshold}`;
+            const familyPreset = String(p.family_alert_preset || '-').trim() || '-';
+            const familyBlend = Number.isFinite(Number(p.family_adaptive_blend_ratio)) ? Number(p.family_adaptive_blend_ratio).toFixed(2) : '--';
+            el.innerText = `有效配置：seed=${seedOne} | seed_pool=${seedMany} | include_builtin=${String(p.seed_include_builtin)} | only_enabled=${String(p.seed_only_enabled)} | stocks=${targets} | tfs=${tfs} | persist=${persistEnabled}@${threshold} | family=${familyPreset}@blend=${familyBlend}`;
         }
 
         function renderEvolutionSummary(rows) {
@@ -11285,6 +11701,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             const timeframes = evolutionParseListInput(document.getElementById('evolution-timeframes')?.value || '');
             const persistEnabled = evolutionParseOptionalBoolean('evolution-persist-enabled');
             const persistThresholdRaw = Number(document.getElementById('evolution-persist-score-threshold')?.value);
+            const styleMeta = evolutionPresetStyleMeta(evolutionFamilyAlertPreset);
             if (seedSource === 'manual') {
                 if (seedId) payload.seed_strategy_id = seedId;
                 if (seedIds.length) payload.seed_strategy_ids = seedIds;
@@ -11298,6 +11715,8 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             if (timeframes.length) payload.timeframes = timeframes;
             if (persistEnabled !== null) payload.persist_enabled = persistEnabled;
             if (Number.isFinite(persistThresholdRaw)) payload.persist_score_threshold = persistThresholdRaw;
+            payload.family_alert_preset = evolutionFamilyAlertPreset;
+            payload.family_adaptive_blend_ratio = Number(styleMeta?.blend || 0.35);
             evolutionStartPending = true;
             updateEvolutionActionButtons();
             renderEvolutionActivity({
@@ -11317,12 +11736,17 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 }, 20000);
                 const elapsed = Date.now() - startedAt;
                 if (!res.ok || data.status !== 'success') {
+                    // 检查是否是并发冲突
+                    if (data.state && data.state.concurrency_conflict) {
+                        showConcurrencyConflict(data.state.error || '并发冲突，请稍后重试');
+                        return;
+                    }
                     throw new Error(data.msg || '启动失败');
                 }
                 appendEvolutionLog(`已启动策略进化任务（请求耗时 ${elapsed}ms）`, 'success');
                 logMessage('策略中心', 'Evolution 已启动', 'success');
                 renderEvolutionStatus(data.state || {});
-                refreshEvolutionDashboard({ withHistory: true, withTop: true, withTimingLog: true });
+                refreshEvolutionDashboard({ withHistory: true, withTop: true, withFamilyStats: true, withProfileUpdates: true, withTimingLog: true, withConcurrency: true });
             } catch (e) {
                 const text = `Evolution 启动失败：${e.message || e}`;
                 appendEvolutionLog(text, 'danger');
@@ -11330,6 +11754,56 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 logMessage('策略中心', text, 'danger');
             } finally {
                 evolutionStartPending = false;
+                updateEvolutionActionButtons();
+            }
+        }
+
+        async function applyEvolutionStyleRuntime() {
+            triggerEvolutionButtonFx('evolution-apply-style-btn', 'cyan');
+            const running = !!(evolutionLastState && evolutionLastState.running);
+            if (!running) {
+                setEvolutionStatusText('当前未运行，风格热更新仅在运行中可用', 'warning');
+                return;
+            }
+            if (evolutionStartPending || evolutionStopPending || evolutionProfileUpdatePending) {
+                setEvolutionStatusText('当前有操作处理中，请稍候', 'warning');
+                return;
+            }
+            const styleMeta = evolutionPresetStyleMeta(evolutionFamilyAlertPreset);
+            const payload = {
+                family_alert_preset: evolutionFamilyAlertPreset,
+                family_adaptive_blend_ratio: Number(styleMeta?.blend || 0.35),
+                updated_by: 'dashboard',
+                source: 'ui_apply_style',
+            };
+            evolutionProfileUpdatePending = true;
+            updateEvolutionActionButtons();
+            appendEvolutionLog(
+                `应用风格热更新：preset=${evolutionFamilyAlertPreset} blend=${payload.family_adaptive_blend_ratio}`,
+                'info',
+            );
+            try {
+                const { res, data } = await fetchJsonWithTimeout('/api/evolution/profile/update', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                }, 12000);
+                if (!res.ok || data.status !== 'success') {
+                    throw new Error(data.msg || '风格热更新失败');
+                }
+                renderEvolutionStatus(data.state || {});
+                setEvolutionStatusText(
+                    `风格参数已应用：${evolutionFamilyAlertPreset} / blend=${payload.family_adaptive_blend_ratio}`,
+                    'success',
+                );
+                appendEvolutionLog('风格热更新成功，后续轮次将按新参数执行', 'success');
+                refreshEvolutionDashboard({ withHistory: false, withTop: false, withRuns: false, withFamilyStats: true, withProfileUpdates: true });
+            } catch (e) {
+                const text = `风格热更新失败：${e.message || e}`;
+                setEvolutionStatusText(text, 'danger');
+                appendEvolutionLog(text, 'danger');
+            } finally {
+                evolutionProfileUpdatePending = false;
                 updateEvolutionActionButtons();
             }
         }
@@ -11356,12 +11830,17 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             try {
                 const { res, data } = await fetchJsonWithTimeout('/api/evolution/stop', { method: 'POST' }, 20000);
                 if (!res.ok || data.status !== 'success') {
+                    // 检查是否是并发冲突
+                    if (data.state && data.state.concurrency_conflict) {
+                        showConcurrencyConflict(data.state.error || '并发冲突，请稍后重试');
+                        return;
+                    }
                     throw new Error(data.msg || '停止失败');
                 }
                 appendEvolutionLog('已停止策略进化任务', 'warning');
                 logMessage('策略中心', 'Evolution 已停止', 'warning');
                 renderEvolutionStatus(data.state || {});
-                refreshEvolutionDashboard({ withHistory: true, withTop: true });
+                refreshEvolutionDashboard({ withHistory: true, withTop: true, withFamilyStats: true, withProfileUpdates: true, withConcurrency: true });
             } catch (e) {
                 const text = `Evolution 停止失败：${e.message || e}`;
                 appendEvolutionLog(text, 'danger');
@@ -11388,7 +11867,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             if (key === 'ok') return { text: '数据状态：正常', cls: 'text-emerald-300' };
             if (key === 'warning') return { text: '数据状态：异常告警', cls: 'text-amber-300' };
             if (key === 'error') return { text: '数据状态：异常', cls: 'text-rose-300' };
-            if (key === 'checking') return { text: '数据状态：校验中', cls: 'text-cyan-300' };
+            if (key === 'checking') return { text: '数据状态：处理中', cls: 'text-cyan-300' };
             return { text: '数据状态：待命', cls: 'text-slate-300' };
         }
 
@@ -11670,6 +12149,254 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             }).join('');
         }
 
+        function renderEvolutionProfileUpdates(rows) {
+            // Render runtime profile hot-update audit rows.
+            const wrap = document.getElementById('evolution-profile-updates-wrap');
+            if (!wrap) return;
+            const arr = Array.isArray(rows) ? rows.slice() : [];
+            evolutionProfileUpdateRows = arr.slice();
+            if (!arr.length) {
+                wrap.innerHTML = '<div class="text-slate-500">暂无</div>';
+                return;
+            }
+            wrap.innerHTML = arr.slice(-20).reverse().map((row) => {
+                const tm = String(row?.time || '--');
+                const by = String(row?.updated_by || '--');
+                const source = String(row?.source || '--');
+                const patch = row?.patch && typeof row.patch === 'object' ? row.patch : {};
+                const preset = String(patch?.family_alert_preset || '-');
+                const blend = Number.isFinite(Number(patch?.family_adaptive_blend_ratio))
+                    ? Number(patch.family_adaptive_blend_ratio).toFixed(2)
+                    : '--';
+                return `<div>[${evolutionEscapeHtml(tm)}] by=${evolutionEscapeHtml(by)} src=${evolutionEscapeHtml(source)} family=${evolutionEscapeHtml(preset)} blend=${evolutionEscapeHtml(blend)}</div>`;
+            }).join('');
+        }
+
+        function renderEvolutionConcurrencyStatus(concurrencyData) {
+            // 渲染并发状态监控面板
+            const statusEl = document.getElementById('evolution-concurrency-status');
+            const operationsEl = document.getElementById('evolution-concurrent-operations');
+            const startPermissionEl = document.getElementById('evolution-start-permission');
+            const stopPermissionEl = document.getElementById('evolution-stop-permission');
+            const conflictEl = document.getElementById('evolution-concurrency-conflict');
+            const conflictMessageEl = document.getElementById('evolution-conflict-message');
+            
+            if (!statusEl || !operationsEl || !startPermissionEl || !stopPermissionEl) return;
+            
+            // 更新状态指示器
+            const currentOps = concurrencyData.current_operations || {};
+            const stats = concurrencyData.statistics || {};
+            const hasConflicts = stats.conflicts_prevented > 0;
+            
+            if (Object.keys(currentOps).length > 0) {
+                statusEl.textContent = '运行中';
+                statusEl.className = 'text-[10px] font-mono px-2 py-0.5 rounded bg-amber-600/20 text-amber-300 border border-amber-600/50';
+            } else {
+                statusEl.textContent = '正常';
+                statusEl.className = 'text-[10px] font-mono px-2 py-0.5 rounded bg-green-600/20 text-green-300 border border-green-600/50';
+            }
+            
+            // 渲染当前操作
+            if (Object.keys(currentOps).length === 0) {
+                operationsEl.innerHTML = '<div class="text-slate-500">当前无操作</div>';
+            } else {
+                const operationRows = Object.entries(currentOps).map(([key, op]) => {
+                    const type = String(op.type || '--');
+                    const operator = String(op.operator_id || '--');
+                    const duration = Number.isFinite(op.duration) ? op.duration.toFixed(1) : '--';
+                    const remaining = Number.isFinite(op.remaining_timeout) ? op.remaining_timeout.toFixed(1) : '--';
+                    return `<div class="text-cyan-300">${type} by ${operator} (${duration}s, 剩余${remaining}s)</div>`;
+                });
+                operationsEl.innerHTML = operationRows.join('');
+            }
+            
+            // 更新权限状态
+            const isStartAllowed = concurrencyData.is_start_allowed !== false;
+            const isStopAllowed = concurrencyData.is_stop_allowed !== false;
+            
+            if (isStartAllowed) {
+                startPermissionEl.textContent = '✓';
+                startPermissionEl.className = 'text-green-300';
+            } else {
+                startPermissionEl.textContent = '✗';
+                startPermissionEl.className = 'text-red-300';
+            }
+            
+            if (isStopAllowed) {
+                stopPermissionEl.textContent = '✓';
+                stopPermissionEl.className = 'text-green-300';
+            } else {
+                stopPermissionEl.textContent = '✗';
+                stopPermissionEl.className = 'text-red-300';
+            }
+            
+            // 隐藏冲突提示（如果有）
+            if (conflictEl) {
+                conflictEl.classList.add('hidden');
+            }
+        }
+
+        function showConcurrencyConflict(message) {
+            // 显示并发冲突提示
+            const conflictEl = document.getElementById('evolution-concurrency-conflict');
+            const conflictMessageEl = document.getElementById('evolution-conflict-message');
+            
+            if (!conflictEl || !conflictMessageEl) return;
+            
+            conflictMessageEl.textContent = message;
+            conflictEl.classList.remove('hidden');
+            
+            // 3秒后自动隐藏
+            setTimeout(() => {
+                if (conflictEl) {
+                    conflictEl.classList.add('hidden');
+                }
+            }, 3000);
+            
+            // 同时在状态文本中显示
+            setEvolutionStatusText(`操作冲突：${message}`, 'warning');
+        }
+
+        function renderEvolutionFamilyStats(rows, enabled, errorText = '', familyWeights = null) {
+            // Render aggregated strategy-family distribution rows.
+            const wrap = document.getElementById('evolution-family-stats-wrap');
+            const meta = document.getElementById('evolution-family-stats-meta');
+            const trendEl = document.getElementById('evolution-family-stats-trend');
+            const styleHintEl = document.getElementById('evolution-family-style-hint');
+            const alertEl = document.getElementById('evolution-family-stats-alert');
+            const thresholdSel = document.getElementById('evolution-family-alert-threshold');
+            const sparkTrend = document.getElementById('evolution-family-spark-trend');
+            const sparkMean = document.getElementById('evolution-family-spark-mean');
+            const runtimeSummary = document.getElementById('evolution-family-runtime-summary');
+            const pageMeta = document.getElementById('evolution-family-page-meta');
+            if (!wrap && !runtimeSummary) return;
+            evolutionFamilyStatsRows = Array.isArray(rows) ? rows.slice() : [];
+            evolutionFamilyStatsEnabled = !!enabled;
+            evolutionFamilyStatsError = String(errorText || '');
+            evolutionFamilyWeightsSnapshot = familyWeights && typeof familyWeights === 'object' ? familyWeights : null;
+            const configured = familyWeights?.configured || {};
+            const effective = familyWeights?.effective || {};
+            const history = Array.isArray(familyWeights?.history) ? familyWeights.history : [];
+            const adaptiveEnabled = !!familyWeights?.adaptive_enabled;
+            const apiThreshold = Number(familyWeights?.alert_threshold);
+            if (thresholdSel && !String(evolutionFamilyAlertThresholdOverride || '').trim()) {
+                const fallback = Number.isFinite(apiThreshold) ? apiThreshold : 0.18;
+                thresholdSel.value = String(fallback.toFixed(2));
+            }
+            const selectedThreshold = Number.parseFloat(
+                String(evolutionFamilyAlertThresholdOverride || thresholdSel?.value || apiThreshold || 0.18),
+            );
+            const threshold = Number.isFinite(selectedThreshold) ? selectedThreshold : 0.18;
+            const styleMeta = evolutionPresetStyleMeta(evolutionFamilyAlertPreset);
+            if (meta) {
+                const cTrend = evolutionFormatNumber(configured.trend_following, 2);
+                const cMean = evolutionFormatNumber(configured.mean_reversion, 2);
+                const eTrend = evolutionFormatNumber(effective.trend_following, 3);
+                const eMean = evolutionFormatNumber(effective.mean_reversion, 3);
+                meta.innerText = `权重(${adaptiveEnabled ? 'adaptive' : 'fixed'}) cfg[T=${cTrend},M=${cMean}] eff[T=${eTrend},M=${eMean}] threshold=${evolutionFormatNumber(threshold, 2)}`;
+            }
+            if (pageMeta) {
+                const statusText = enabled ? `记录：${Number(evolutionFamilyTotal || evolutionFamilyStatsRows.length || 0)}` : '记录：文件页关闭';
+                pageMeta.innerText = errorText ? `${statusText} · ${errorText}` : statusText;
+            }
+            if (styleHintEl) {
+                styleHintEl.innerText = `风格：${styleMeta.name} · 建议blend_ratio=${evolutionFormatNumber(styleMeta.blend, 2)}`;
+            }
+            if (trendEl) {
+                const tail = history.slice(-8);
+                if (!tail.length) {
+                    trendEl.innerText = '趋势：--';
+                } else {
+                    const trendSeries = tail.map((x) => evolutionFormatNumber(x?.trend_following, 2)).join('>');
+                    const meanSeries = tail.map((x) => evolutionFormatNumber(x?.mean_reversion, 2)).join('>');
+                    trendEl.innerText = `趋势 T:${trendSeries} | M:${meanSeries}`;
+                }
+            }
+            const sparkTail = history.slice(-24);
+            const buildPath = (arr, key) => {
+                const pts = Array.isArray(arr) ? arr : [];
+                if (!pts.length) return '';
+                const w = 180;
+                const h = 28;
+                const values = pts.map((x) => Number(x?.[key]));
+                const safe = values.map((v) => (Number.isFinite(v) ? v : 0));
+                const min = Math.min(...safe, 0.0);
+                const max = Math.max(...safe, 1.0);
+                const span = Math.max(0.0001, max - min);
+                return safe.map((v, i) => {
+                    const x = (i / Math.max(1, safe.length - 1)) * (w - 2) + 1;
+                    const y = h - 1 - ((v - min) / span) * (h - 2);
+                    return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
+                }).join(' ');
+            };
+            if (sparkTrend) sparkTrend.setAttribute('d', buildPath(sparkTail, 'trend_following'));
+            if (sparkMean) sparkMean.setAttribute('d', buildPath(sparkTail, 'mean_reversion'));
+            if (alertEl) {
+                let maxStep = 0.0;
+                for (let i = 1; i < sparkTail.length; i += 1) {
+                    const prev = Number(sparkTail[i - 1]?.trend_following);
+                    const curr = Number(sparkTail[i]?.trend_following);
+                    if (!Number.isFinite(prev) || !Number.isFinite(curr)) continue;
+                    const delta = Math.abs(curr - prev);
+                    if (delta > maxStep) maxStep = delta;
+                }
+                if (!sparkTail.length) {
+                    alertEl.innerText = '波动告警：--';
+                } else if (maxStep >= threshold) {
+                    alertEl.innerText = `波动告警：触发（最大步进=${evolutionFormatNumber(maxStep, 3)} >= ${threshold}）`;
+                } else {
+                    alertEl.innerText = `波动告警：正常（最大步进=${evolutionFormatNumber(maxStep, 3)}）`;
+                }
+            }
+            const summaryRows = evolutionFamilyStatsRows.slice(0, 6).map((row, idx) => {
+                const family = String(row?.family || 'unknown');
+                const count = Number(row?.run_count || row?.sample_count || 0);
+                const avgScore = evolutionFormatNumber(row?.avg_score, 3);
+                const avgSharpe = evolutionFormatNumber(row?.avg_sharpe, 3);
+                const avgDrawdown = evolutionFormatNumber(row?.avg_drawdown, 3);
+                return `<div>#${idx + 1} ${evolutionEscapeHtml(family)} · 样本=${count} · 均分=${avgScore} · 夏普=${avgSharpe} · 回撤=${avgDrawdown}</div>`;
+            }).join('');
+            if (runtimeSummary) {
+                if (!enabled) runtimeSummary.innerHTML = '<div class="text-slate-500">family 文件页未启用。</div>';
+                else if (!summaryRows) runtimeSummary.innerHTML = '<div class="text-slate-500">暂无</div>';
+                else runtimeSummary.innerHTML = summaryRows;
+            }
+            if (!wrap) return;
+            renderEvolutionFamilyPager();
+            if (!enabled) {
+                wrap.innerHTML = '<div class="text-slate-500">family 仅按文件展示；当前文件页未启用。</div>';
+                return;
+            }
+            if (!evolutionFamilyStatsRows.length) {
+                wrap.innerHTML = '<div class="text-slate-500">暂无</div>';
+                return;
+            }
+            wrap.innerHTML = evolutionFamilyStatsRows.map((row, idx) => {
+                const family = String(row?.family || 'unknown');
+                const count = Number(row?.run_count || row?.sample_count || 0);
+                const avgScore = evolutionFormatNumber(row?.avg_score, 3);
+                const avgSharpe = evolutionFormatNumber(row?.avg_sharpe, 3);
+                const avgDrawdown = evolutionFormatNumber(row?.avg_drawdown, 3);
+                const updatedAt = String(row?.updated_at || row?.created_at || '--');
+                const note = String(row?.note || '').trim();
+                const noteHtml = note ? `<div class="text-slate-400 mt-1">${evolutionEscapeHtml(note)}</div>` : '';
+                return `<div class="border border-slate-700 rounded p-2 bg-slate-900/50">
+                    <div class="flex items-start justify-between gap-2">
+                        <div>
+                            <div class="text-cyan-300">#${idx + 1} ${evolutionEscapeHtml(family)}</div>
+                            <div>样本=${count} · 均分=${avgScore} · 夏普=${avgSharpe} · 回撤=${avgDrawdown}</div>
+                            <div class="text-slate-400">更新时间=${evolutionEscapeHtml(updatedAt)}</div>
+                            ${noteHtml}
+                        </div>
+                        <div class="flex items-center gap-2 shrink-0">
+                            <button type="button" onclick="openEvolutionFamilyEditor('${encodeURIComponent(family)}')" class="bg-slate-700 hover:bg-slate-600 text-white px-2 py-1 rounded border border-slate-500">编辑</button>
+                            <button type="button" onclick="deleteEvolutionFamily('${encodeURIComponent(family)}')" class="bg-rose-700 hover:bg-rose-600 text-white px-2 py-1 rounded border border-rose-500">删除</button>
+                        </div>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
         function openEvolutionTopDetail(index) {
             const i = Number(index);
             if (!Number.isFinite(i) || i < 0 || i >= evolutionTopRows.length) return;
@@ -11711,6 +12438,421 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             modal.classList.remove('flex');
         }
 
+        function evolutionNormalizeQueryDateTime(value) {
+            const text = String(value || '').trim();
+            if (!text) return '';
+            if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(text)) return `${text}:00`;
+            return text;
+        }
+
+        function evolutionGetFamilyFiltersFromUi() {
+            const get = (id) => {
+                const el = document.getElementById(id);
+                return el ? String(el.value || '').trim() : '';
+            };
+            return {
+                family: get('evolution-family-filter-family'),
+                start_time: evolutionNormalizeQueryDateTime(get('evolution-family-filter-start-time')),
+                end_time: evolutionNormalizeQueryDateTime(get('evolution-family-filter-end-time')),
+            };
+        }
+
+        function evolutionBuildFamilyQuery(page = 1) {
+            const p = Math.max(1, Number(page || 1));
+            const offset = (p - 1) * evolutionFamilyPageSize;
+            const filters = evolutionGetFamilyFiltersFromUi();
+            evolutionFamilyFilters = { ...filters };
+            const params = new URLSearchParams();
+            params.set('limit', String(evolutionFamilyPageSize));
+            params.set('offset', String(offset));
+            Object.entries(filters).forEach(([key, value]) => {
+                const v = String(value || '').trim();
+                if (v) params.set(key, v);
+            });
+            return params.toString();
+        }
+
+        async function loadEvolutionFamilyPage(page = 1) {
+            const p = Math.max(1, Number(page || 1));
+            evolutionFamilyPage = p;
+            try {
+                const resp = await fetchJsonWithTimeout(`/api/evolution/family_stats?${evolutionBuildFamilyQuery(p)}`, {}, 12000);
+                if (!resp.res.ok || resp.data?.status !== 'success') {
+                    renderEvolutionFamilyStats([], false, '查询失败', null);
+                    return;
+                }
+                evolutionFamilyTotal = Number(resp.data?.count || 0) || 0;
+                renderEvolutionFamilyStats(
+                    resp.data?.rows || [],
+                    !!resp.data?.enabled,
+                    String(resp.data?.error || '').trim(),
+                    resp.data?.family_weights || null,
+                );
+            } catch (e) {
+                renderEvolutionFamilyStats([], false, String(e?.message || e || '查询异常'), null);
+            }
+        }
+
+        function resetEvolutionFamilyFilters() {
+            ['evolution-family-filter-family', 'evolution-family-filter-start-time', 'evolution-family-filter-end-time'].forEach((id) => {
+                const el = document.getElementById(id);
+                if (el) el.value = '';
+            });
+            evolutionFamilyFilters = { family: '', start_time: '', end_time: '' };
+            loadEvolutionFamilyPage(1);
+        }
+
+        async function openEvolutionFamilyEditor(encodedFamily = '') {
+            const current = decodeURIComponent(String(encodedFamily || ''));
+            const family = window.prompt('策略谱系名称', current || 'trend_following');
+            if (family === null) return;
+            const payload = {
+                family: String(family || '').trim(),
+                run_count: Number(window.prompt('样本数', '0') || 0),
+                avg_score: Number(window.prompt('平均评分', '0') || 0),
+                avg_sharpe: Number(window.prompt('平均夏普', '0') || 0),
+                avg_drawdown: Number(window.prompt('平均回撤', '0') || 0),
+                note: String(window.prompt('备注', '') || '').trim(),
+            };
+            if (!payload.family) return;
+            const method = current ? 'PUT' : 'POST';
+            const url = current ? `/api/evolution/family/${encodeURIComponent(current)}` : '/api/evolution/family';
+            try {
+                const resp = await fetchJsonWithTimeout(url, {
+                    method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                }, 12000);
+                if (!resp.res.ok || resp.data?.status !== 'success') {
+                    setEvolutionStatusText('策略谱系保存失败', 'warning');
+                    return;
+                }
+                setEvolutionStatusText(`策略谱系已保存：${payload.family}`, 'success');
+                loadEvolutionFamilyPage(evolutionFamilyPage || 1);
+            } catch (e) {
+                setEvolutionStatusText(`策略谱系保存失败：${e?.message || e}`, 'warning');
+            }
+        }
+
+        async function deleteEvolutionFamily(encodedFamily) {
+            const family = decodeURIComponent(String(encodedFamily || ''));
+            if (!family) return;
+            if (!window.confirm(`确认删除策略谱系：${family} ?`)) return;
+            try {
+                const resp = await fetchJsonWithTimeout(`/api/evolution/family/${encodeURIComponent(family)}`, { method: 'DELETE' }, 12000);
+                if (!resp.res.ok || resp.data?.status !== 'success') {
+                    setEvolutionStatusText('策略谱系删除失败', 'warning');
+                    return;
+                }
+                setEvolutionStatusText(`策略谱系已删除：${family}`, 'success');
+                loadEvolutionFamilyPage(1);
+            } catch (e) {
+                setEvolutionStatusText(`策略谱系删除失败：${e?.message || e}`, 'warning');
+            }
+        }
+
+        async function openEvolutionRunEditor(encodedRunId = '') {
+            const current = decodeURIComponent(String(encodedRunId || ''));
+            const selected = evolutionRunRows.find((row) => String(row?.run_id || '') === current) || {};
+            const runId = window.prompt('run_id', current || `run_${Date.now()}`);
+            if (runId === null) return;
+            const payload = {
+                run_id: String(runId || '').trim(),
+                status: String(window.prompt('status', String(selected?.status || 'ok')) || 'ok').trim(),
+                score: Number(window.prompt('score', String(selected?.score ?? 0)) || 0),
+                child_gene_id: String(window.prompt('child_gene_id', String(selected?.child_gene_id || '')) || '').trim(),
+                parent_strategy_id: String(window.prompt('parent_strategy_id', String(selected?.parent_strategy_id || '')) || '').trim(),
+                child_gene_family: String(window.prompt('child_gene_family', String(selected?.child_gene_family || 'unknown')) || '').trim(),
+                created_at: String(selected?.created_at || new Date().toISOString()),
+                metrics: selected?.metrics || {},
+                profile: selected?.profile || {},
+                child_gene_parent_ids: selected?.child_gene_parent_ids || [],
+                child_gene_fingerprint: String(selected?.child_gene_fingerprint || ''),
+                strategy_code_sha256: String(selected?.strategy_code_sha256 || ''),
+                note: String(window.prompt('备注', String(selected?.note || '')) || '').trim(),
+            };
+            if (!payload.run_id) return;
+            const method = current ? 'PUT' : 'POST';
+            const url = current ? `/api/evolution/runs/${encodeURIComponent(current)}` : '/api/evolution/runs';
+            try {
+                const resp = await fetchJsonWithTimeout(url, {
+                    method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                }, 12000);
+                if (!resp.res.ok || resp.data?.status !== 'success') {
+                    setEvolutionStatusText('运行记录保存失败', 'warning');
+                    return;
+                }
+                setEvolutionStatusText(`运行记录已保存：${payload.run_id}`, 'success');
+                searchEvolutionRuns(evolutionRunsPage || 1);
+            } catch (e) {
+                setEvolutionStatusText(`运行记录保存失败：${e?.message || e}`, 'warning');
+            }
+        }
+
+        async function deleteEvolutionRun(encodedRunId) {
+            const runId = decodeURIComponent(String(encodedRunId || ''));
+            if (!runId) return;
+            if (!window.confirm(`确认删除运行记录：${runId} ?`)) return;
+            try {
+                const resp = await fetchJsonWithTimeout(`/api/evolution/runs/${encodeURIComponent(runId)}`, { method: 'DELETE' }, 12000);
+                if (!resp.res.ok || resp.data?.status !== 'success') {
+                    setEvolutionStatusText('运行记录删除失败', 'warning');
+                    return;
+                }
+                setEvolutionStatusText(`运行记录已删除：${runId}`, 'success');
+                searchEvolutionRuns(1);
+            } catch (e) {
+                setEvolutionStatusText(`运行记录删除失败：${e?.message || e}`, 'warning');
+            }
+        }
+
+        function evolutionGetRunFiltersFromUi() {
+            const get = (id) => {
+                const el = document.getElementById(id);
+                return el ? String(el.value || '').trim() : '';
+            };
+            return {
+                run_id: get('evolution-runs-run-id'),
+                child_gene_id: get('evolution-runs-gene-id'),
+                parent_strategy_id: get('evolution-runs-parent-id'),
+                status: get('evolution-runs-status'),
+                start_time: evolutionNormalizeQueryDateTime(get('evolution-runs-start-time')),
+                end_time: evolutionNormalizeQueryDateTime(get('evolution-runs-end-time')),
+            };
+        }
+
+        function evolutionBuildRunsQuery(page = 1) {
+            // Build GET query string for /api/evolution/runs with stable pagination params.
+            const p = Math.max(1, Number(page || 1));
+            const offset = (p - 1) * evolutionRunsPageSize;
+            const filters = evolutionGetRunFiltersFromUi();
+            const params = new URLSearchParams();
+            params.set('limit', String(evolutionRunsPageSize));
+            params.set('offset', String(offset));
+            Object.entries(filters).forEach(([key, value]) => {
+                const v = String(value || '').trim();
+                if (v) params.set(key, v);
+            });
+            return params.toString();
+        }
+
+        function renderEvolutionRunsPager() {
+            // Render pager text/buttons based on latest query result metadata.
+            const pageEl = document.getElementById('evolution-runs-page-text');
+            const prevBtn = document.getElementById('evolution-runs-prev-btn');
+            const nextBtn = document.getElementById('evolution-runs-next-btn');
+            const totalPage = Math.max(1, Math.ceil((Number(evolutionRunsTotal || 0) || 0) / evolutionRunsPageSize));
+            const page = Math.max(1, Math.min(totalPage, Number(evolutionRunsPage || 1)));
+            evolutionRunsPage = page;
+            if (pageEl) pageEl.innerText = `第 ${page} / ${totalPage} 页`;
+            if (prevBtn) prevBtn.disabled = page <= 1;
+            if (nextBtn) nextBtn.disabled = page >= totalPage;
+        }
+
+        function renderEvolutionFamilyPager() {
+            const pageEl = document.getElementById('evolution-family-page-text');
+            const prevBtn = document.getElementById('evolution-family-prev-btn');
+            const nextBtn = document.getElementById('evolution-family-next-btn');
+            const totalPage = Math.max(1, Math.ceil((Number(evolutionFamilyTotal || 0) || 0) / evolutionFamilyPageSize));
+            const page = Math.max(1, Math.min(totalPage, Number(evolutionFamilyPage || 1)));
+            evolutionFamilyPage = page;
+            if (pageEl) pageEl.innerText = `第 ${page} / ${totalPage} 页`;
+            if (prevBtn) prevBtn.disabled = page <= 1;
+            if (nextBtn) nextBtn.disabled = page >= totalPage;
+        }
+
+        function renderEvolutionRuns(rows, count, enabled, errorText = '') {
+            // Render run list rows with one-click detail action.
+            const wrap = document.getElementById('evolution-runs-wrap');
+            const meta = document.getElementById('evolution-runs-meta');
+            const runtimeSummary = document.getElementById('evolution-runs-runtime-summary');
+            evolutionRunRows = Array.isArray(rows) ? rows.slice() : [];
+            evolutionRunsTotal = Number(count || 0) || 0;
+            evolutionRunsLastEnabled = !!enabled;
+            if (meta) {
+                const statusText = enabled ? `记录：${evolutionRunsTotal}` : '记录：文件页关闭';
+                meta.innerText = errorText ? `${statusText} · ${errorText}` : statusText;
+            }
+            renderEvolutionRunsPager();
+            const summaryRows = evolutionRunRows.slice(0, 6).map((row, idx) => {
+                const runId = String(row?.run_id || '--');
+                const status = String(row?.status || '--');
+                const scoreNum = Number(row?.score);
+                const score = Number.isFinite(scoreNum) ? scoreNum.toFixed(4) : '--';
+                const geneId = String(row?.child_gene_id || '--');
+                const parent = String(row?.parent_strategy_id || '--');
+                const created = String(row?.created_at || '--');
+                return `<button onclick="switchEvolutionPlatformTab('runs');openEvolutionRunDetail(${idx})" class="w-full text-left hover:text-cyan-300">#${idx + 1} ${evolutionEscapeHtml(status)} · score=${evolutionEscapeHtml(score)} · run=${evolutionEscapeHtml(runId)} · gene=${evolutionEscapeHtml(geneId)} · parent=${evolutionEscapeHtml(parent)} · ${evolutionEscapeHtml(created)}</button>`;
+            }).join('');
+            if (runtimeSummary) {
+                if (!enabled) runtimeSummary.innerHTML = '<div class="text-slate-500">运行记录文件页未启用。</div>';
+                else if (!summaryRows) runtimeSummary.innerHTML = '<div class="text-slate-500">暂无</div>';
+                else runtimeSummary.innerHTML = summaryRows;
+            }
+            if (!wrap) return;
+            if (!enabled) {
+                wrap.innerHTML = '<div class="text-slate-500">这里展示的是文件化运行记录；当前文件页未启用。</div>';
+                return;
+            }
+            if (!evolutionRunRows.length) {
+                wrap.innerHTML = '<div class="text-slate-500">暂无匹配记录</div>';
+                return;
+            }
+            wrap.innerHTML = evolutionRunRows.map((row, idx) => {
+                const runId = String(row?.run_id || '--');
+                const status = String(row?.status || '--');
+                const scoreNum = Number(row?.score);
+                const score = Number.isFinite(scoreNum) ? scoreNum.toFixed(4) : '--';
+                const geneId = String(row?.child_gene_id || '--');
+                const parent = String(row?.parent_strategy_id || '--');
+                const created = String(row?.created_at || '--');
+                return `<div class="border border-slate-700 rounded p-2 bg-slate-900/50">
+                    <div class="flex items-start justify-between gap-2">
+                        <button onclick="openEvolutionRunDetail(${idx})" class="flex-1 text-left hover:text-cyan-300">#${idx + 1} ${evolutionEscapeHtml(status)} · score=${evolutionEscapeHtml(score)} · run=${evolutionEscapeHtml(runId)} · gene=${evolutionEscapeHtml(geneId)} · parent=${evolutionEscapeHtml(parent)} · ${evolutionEscapeHtml(created)}</button>
+                        <div class="flex items-center gap-2 shrink-0">
+                            <button type="button" onclick="openEvolutionRunEditor('${encodeURIComponent(runId)}')" class="bg-slate-700 hover:bg-slate-600 text-white px-2 py-1 rounded border border-slate-500">编辑</button>
+                            <button type="button" onclick="deleteEvolutionRun('${encodeURIComponent(runId)}')" class="bg-rose-700 hover:bg-rose-600 text-white px-2 py-1 rounded border border-rose-500">删除</button>
+                        </div>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        async function searchEvolutionRuns(page = 1, opts = {}) {
+            // Query /api/evolution/runs and update list/pager widgets.
+            const p = Math.max(1, Number(page || 1));
+            evolutionRunsPage = p;
+            const silent = !!opts?.silent;
+            const requestSeq = ++evolutionRunsLastRequestSeq;
+            const query = evolutionBuildRunsQuery(p);
+            try {
+                const resp = await fetchJsonWithTimeout(`/api/evolution/runs?${query}`, {}, 12000);
+                // Ignore stale responses when newer filter requests are already in-flight.
+                if (requestSeq !== evolutionRunsLastRequestSeq) return;
+                if (!resp.res.ok || resp.data?.status !== 'success') {
+                    if (!silent) setEvolutionStatusText('运行记录查询失败', 'warning');
+                    renderEvolutionRuns([], 0, false, '查询失败');
+                    return;
+                }
+                renderEvolutionRuns(
+                    resp.data?.rows || [],
+                    resp.data?.count || 0,
+                    !!resp.data?.enabled,
+                    String(resp.data?.error || '').trim(),
+                );
+            } catch (e) {
+                if (requestSeq !== evolutionRunsLastRequestSeq) return;
+                renderEvolutionRuns([], 0, false, String(e?.message || e || '查询异常'));
+            }
+        }
+
+        function scheduleEvolutionRunsSearch(page = 1, delayMs = 450) {
+            // Debounce filter-triggered queries to reduce dashboard request pressure.
+            if (evolutionRunsDebounceTimer) clearTimeout(evolutionRunsDebounceTimer);
+            const p = Math.max(1, Number(page || 1));
+            evolutionRunsDebounceTimer = setTimeout(() => {
+                evolutionRunsDebounceTimer = null;
+                searchEvolutionRuns(p);
+            }, Math.max(120, Number(delayMs || 450)));
+        }
+
+        function bindEvolutionRunsFilterEvents() {
+            // Bind input/select Enter-change behavior for run filter controls.
+            const ids = [
+                'evolution-runs-run-id',
+                'evolution-runs-gene-id',
+                'evolution-runs-parent-id',
+                'evolution-runs-status',
+                'evolution-runs-start-time',
+                'evolution-runs-end-time',
+            ];
+            ids.forEach((id) => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                el.addEventListener('input', () => scheduleEvolutionRunsSearch(1, 520));
+                el.addEventListener('change', () => scheduleEvolutionRunsSearch(1, 180));
+                el.addEventListener('keydown', (evt) => {
+                    if (!evt || evt.key !== 'Enter') return;
+                    scheduleEvolutionRunsSearch(1, 0);
+                });
+            });
+        }
+
+        function resetEvolutionRunsFilters() {
+            // Reset run filters to blank and refresh first page.
+            const ids = [
+                'evolution-runs-run-id',
+                'evolution-runs-gene-id',
+                'evolution-runs-parent-id',
+                'evolution-runs-status',
+                'evolution-runs-start-time',
+                'evolution-runs-end-time',
+            ];
+            ids.forEach((id) => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                el.value = '';
+            });
+            if (evolutionRunsDebounceTimer) {
+                clearTimeout(evolutionRunsDebounceTimer);
+                evolutionRunsDebounceTimer = null;
+            }
+            searchEvolutionRuns(1);
+        }
+
+        function openEvolutionRunDetail(index) {
+            // Open detail modal for one run row in current page result.
+            const i = Number(index);
+            if (!Number.isFinite(i) || i < 0 || i >= evolutionRunRows.length) return;
+            const row = evolutionRunRows[i] || {};
+            const modal = document.getElementById('evolution-run-detail-modal');
+            const meta = document.getElementById('evolution-run-detail-meta');
+            const metrics = document.getElementById('evolution-run-detail-metrics');
+            const profile = document.getElementById('evolution-run-detail-profile');
+            const lineage = document.getElementById('evolution-run-detail-lineage');
+            const parentGenes = Array.isArray(row?.child_gene_parent_ids)
+                ? row.child_gene_parent_ids
+                : (typeof row?.child_gene_parent_ids === 'string' ? [row.child_gene_parent_ids] : []);
+            if (meta) {
+                meta.innerText = `run_id=${row?.run_id || '--'} · status=${row?.status || '--'} · score=${row?.score ?? '--'} · gene=${row?.child_gene_id || '--'} · commit=${row?.committed_strategy_id || '--'} · ${row?.created_at || '--'}`;
+            }
+            if (metrics) metrics.innerText = JSON.stringify(row?.metrics || {}, null, 2);
+            if (profile) profile.innerText = JSON.stringify(row?.profile || {}, null, 2);
+            if (lineage) {
+                lineage.innerText = JSON.stringify(
+                    {
+                        child_gene_id: row?.child_gene_id || '',
+                        child_gene_parent_ids: parentGenes,
+                        child_gene_fingerprint: row?.child_gene_fingerprint || '',
+                        parent_strategy_id: row?.parent_strategy_id || '',
+                        parent_strategy_name: row?.parent_strategy_name || '',
+                        strategy_id: row?.strategy_id || '',
+                        strategy_name: row?.strategy_name || '',
+                        committed_strategy_id: row?.committed_strategy_id || '',
+                        committed_strategy_name: row?.committed_strategy_name || '',
+                        committed_version: row?.committed_version || 0,
+                        strategy_code_sha256: row?.strategy_code_sha256 || '',
+                    },
+                    null,
+                    2,
+                );
+            }
+            if (modal) {
+                modal.classList.remove('hidden');
+                modal.classList.add('flex');
+            }
+        }
+
+        function closeEvolutionRunDetail() {
+            // Close run detail modal.
+            const modal = document.getElementById('evolution-run-detail-modal');
+            if (!modal) return;
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
         function applyEvolutionTick(row) {
             const record = row && typeof row === 'object' ? row : null;
             if (!record) return;
@@ -11734,7 +12876,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             next.push(record);
             renderEvolutionHistory(next.slice(-100));
             if (record.status === 'ok' && Number(record.iteration || 0) % 3 === 0) {
-                refreshEvolutionDashboard({ withTop: true });
+                refreshEvolutionDashboard({ withTop: true, withRuns: true, withFamilyStats: true, withProfileUpdates: true });
             }
         }
 
@@ -11744,15 +12886,49 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             updateEvolutionActionButtons(running);
         }
 
+        function switchEvolutionPlatformTab(tab) {
+            const next = ['runtime', 'family', 'runs'].includes(String(tab || '')) ? String(tab) : 'runtime';
+            evolutionPlatformTab = next;
+            ['runtime', 'family', 'runs'].forEach((name) => {
+                const btn = document.getElementById(`evolution-platform-tab-${name}`);
+                const panel = document.getElementById(`evolution-platform-panel-${name}`);
+                const active = name === next;
+                if (btn) {
+                    btn.className = active
+                        ? 'px-3 py-1 rounded border border-cyan-500 bg-cyan-700 text-white'
+                        : 'px-3 py-1 rounded border border-slate-600 bg-slate-800 text-slate-200';
+                }
+                if (panel) panel.classList.toggle('hidden', !active);
+            });
+            if (next === 'family') {
+                loadEvolutionFamilyPage(evolutionFamilyPage || 1);
+            } else if (next === 'runs') {
+                searchEvolutionRuns(evolutionRunsPage || 1, { silent: true });
+            }
+        }
+
+        function setEvolutionPlatformRefreshMeta(text) {
+            const meta = document.getElementById('evolution-platform-refresh-meta');
+            if (meta) meta.innerText = text;
+        }
+
         async function refreshEvolutionDashboard(options = {}) {
             const withHistory = options.withHistory !== false;
             const withTop = options.withTop !== false;
+            const withRuns = options.withRuns === true;
+            const withFamilyStats = options.withFamilyStats === true;
+            const withProfileUpdates = options.withProfileUpdates === true;
+            const withConcurrency = options.withConcurrency === true;
             const withTimingLog = options.withTimingLog === true;
             try {
                 const started = Date.now();
                 const reqs = [fetchJsonWithTimeout('/api/evolution/status', {}, 10000)];
                 if (withHistory) reqs.push(fetchJsonWithTimeout('/api/evolution/history?limit=80', {}, 10000));
                 if (withTop) reqs.push(fetchJsonWithTimeout('/api/evolution/top?k=15', {}, 10000));
+                if (withRuns) reqs.push(fetchJsonWithTimeout(`/api/evolution/runs?${evolutionBuildRunsQuery(evolutionRunsPage)}`, {}, 12000));
+                if (withFamilyStats) reqs.push(fetchJsonWithTimeout('/api/evolution/family_stats', {}, 10000));
+                if (withProfileUpdates) reqs.push(fetchJsonWithTimeout('/api/evolution/profile/updates?limit=20', {}, 10000));
+                if (withConcurrency) reqs.push(fetchJsonWithTimeout('/api/evolution/concurrency', {}, 10000));
                 const results = await Promise.all(reqs);
                 const elapsed = Date.now() - started;
                 if (withTimingLog) {
@@ -11774,6 +12950,40 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     const topResp = results[idx++];
                     if (topResp.res.ok && topResp.data.status === 'success') {
                         renderEvolutionTop(topResp.data.rows || []);
+                    }
+                }
+                if (withRuns) {
+                    const runResp = results[idx++];
+                    if (runResp.res.ok && runResp.data.status === 'success') {
+                        renderEvolutionRuns(
+                            runResp.data.rows || [],
+                            runResp.data.count || 0,
+                            !!runResp.data.enabled,
+                            String(runResp.data.error || '').trim(),
+                        );
+                    }
+                }
+                if (withFamilyStats) {
+                    const familyResp = results[idx++];
+                    if (familyResp.res.ok && familyResp.data.status === 'success') {
+                        renderEvolutionFamilyStats(
+                            familyResp.data.rows || [],
+                            !!familyResp.data.enabled,
+                            String(familyResp.data.error || '').trim(),
+                            familyResp.data.family_weights || null,
+                        );
+                    }
+                }
+                if (withProfileUpdates) {
+                    const updateResp = results[idx++];
+                    if (updateResp.res.ok && updateResp.data.status === 'success') {
+                        renderEvolutionProfileUpdates(updateResp.data.rows || []);
+                    }
+                }
+                if (withConcurrency) {
+                    const concurrencyResp = results[idx++];
+                    if (concurrencyResp.res.ok && concurrencyResp.data.status === 'success') {
+                        renderEvolutionConcurrencyStatus(concurrencyResp.data.concurrency || {});
                     }
                 }
             } catch (e) {
@@ -11955,6 +13165,8 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
         // Initial Log
         logMessage('SYSTEM', '控制台就绪，等待连接...', 'info');
         restoreConsoleState();
+        loadEvolutionFamilyAlertPresetPreference();
+        loadEvolutionFamilyAlertThresholdPreference();
         loadOpsHubPinState();
         applyInitialDisclaimerState();
         document.getElementById('disclaimer-agree-checkbox')?.addEventListener('change', updateDisclaimerAccess);
@@ -11975,9 +13187,44 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
         document.getElementById('evolution-top-detail-modal')?.addEventListener('click', (e) => {
             if (e.target && e.target.id === 'evolution-top-detail-modal') closeEvolutionTopDetail();
         });
+        document.getElementById('evolution-run-detail-modal')?.addEventListener('click', (e) => {
+            if (e.target && e.target.id === 'evolution-run-detail-modal') closeEvolutionRunDetail();
+        });
         document.getElementById('evolution-seed-source')?.addEventListener('change', renderEvolutionSeedSourceUi);
         document.getElementById('evolution-seed-search')?.addEventListener('input', renderEvolutionSeedSourceUi);
         document.getElementById('strategy-multi-search')?.addEventListener('input', updateStrategyMultiListUI);
+        document.getElementById('evolution-family-alert-preset')?.addEventListener('change', (evt) => {
+            const preset = String(evt?.target?.value || '').trim().toLowerCase();
+            evolutionFamilyAlertPreset = preset || 'balanced';
+            const threshold = evolutionPresetToThreshold(evolutionFamilyAlertPreset);
+            const thresholdSel = document.getElementById('evolution-family-alert-threshold');
+            if (thresholdSel) thresholdSel.value = threshold;
+            evolutionFamilyAlertThresholdOverride = threshold;
+            persistEvolutionFamilyAlertPresetPreference(evolutionFamilyAlertPreset);
+            persistEvolutionFamilyAlertThresholdPreference(threshold);
+            renderEvolutionFamilyStats(
+                evolutionFamilyStatsRows,
+                evolutionFamilyStatsEnabled,
+                evolutionFamilyStatsError,
+                evolutionFamilyWeightsSnapshot,
+            );
+        });
+        document.getElementById('evolution-family-alert-threshold')?.addEventListener('change', (evt) => {
+            const value = String(evt?.target?.value || '').trim();
+            evolutionFamilyAlertThresholdOverride = value;
+            evolutionFamilyAlertPreset = evolutionThresholdToPreset(value);
+            const presetSel = document.getElementById('evolution-family-alert-preset');
+            if (presetSel) presetSel.value = evolutionFamilyAlertPreset;
+            persistEvolutionFamilyAlertPresetPreference(evolutionFamilyAlertPreset);
+            persistEvolutionFamilyAlertThresholdPreference(value);
+            renderEvolutionFamilyStats(
+                evolutionFamilyStatsRows,
+                evolutionFamilyStatsEnabled,
+                evolutionFamilyStatsError,
+                evolutionFamilyWeightsSnapshot,
+            );
+        });
+        bindEvolutionRunsFilterEvents();
         document.addEventListener('keydown', (e) => {
             try {
                 const hardReload = !!(e && e.ctrlKey && !e.shiftKey && String(e.key || '').toLowerCase() === 'f5');
@@ -11990,6 +13237,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 closeFundamentalModuleDetailModal();
                 closeFundamentalDetailModal();
                 closeEvolutionTopDetail();
+                closeEvolutionRunDetail();
             }
         });
         window.addEventListener('resize', () => {
@@ -12020,10 +13268,16 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
         }, 3000);
         setInterval(() => {
             // Evolution 默认走 WS 推送，此处仅做兜底修正，避免网络抖动导致的状态漂移
-            refreshEvolutionDashboard({ withHistory: false, withTop: false });
+            refreshEvolutionDashboard({
+                withHistory: false,
+                withTop: false,
+                withRuns: isEvolutionBoardModalOpen(),
+                withFamilyStats: isEvolutionBoardModalOpen(),
+                withProfileUpdates: isEvolutionBoardModalOpen(),
+            });
         }, 10000);
         scheduleStrategyRegimeHintRefresh(true);
-        refreshEvolutionDashboard({ withHistory: true, withTop: true });
+        refreshEvolutionDashboard({ withHistory: true, withTop: true, withRuns: false, withProfileUpdates: true, withFamilyStats: true });
         renderEvolutionSeedSourceUi();
         tryAutoOpenConfigFromQuery();
         setTimeout(() => {

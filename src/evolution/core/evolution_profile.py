@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from src.utils.config_loader import ConfigLoader
 
@@ -16,6 +16,8 @@ class EvolutionProfile:
     timeframes: List[str] = field(default_factory=lambda: ["1min"])
     persist_enabled: bool = True
     persist_score_threshold: float = 0.2
+    family_alert_preset: str = "balanced"
+    family_adaptive_blend_ratio: Optional[float] = None
 
     @classmethod
     def load(cls) -> "EvolutionProfile":
@@ -32,6 +34,10 @@ class EvolutionProfile:
             timeframes = ["1min"]
         persist_enabled = bool(cfg.get("evolution.persist.enabled", True))
         score_threshold = cls._to_float(cfg.get("evolution.persist.score_threshold", 0.2), default=0.2)
+        family_alert_preset = str(cfg.get("evolution.gene.alert_preset", "balanced") or "balanced").strip().lower()
+        if family_alert_preset not in {"steady", "balanced", "aggressive"}:
+            family_alert_preset = "balanced"
+        family_adaptive_blend_ratio = cls._to_optional_float(cfg.get("evolution.gene.family_adaptive.blend_ratio", None))
         return cls(
             seed_strategy_id=seed_id,
             seed_strategy_ids=seed_ids,
@@ -41,6 +47,8 @@ class EvolutionProfile:
             timeframes=timeframes,
             persist_enabled=persist_enabled,
             persist_score_threshold=score_threshold,
+            family_alert_preset=family_alert_preset,
+            family_adaptive_blend_ratio=family_adaptive_blend_ratio,
         )
 
     @classmethod
@@ -55,6 +63,8 @@ class EvolutionProfile:
             timeframes=cls._to_str_list(data.get("timeframes", ["1min"])) or ["1min"],
             persist_enabled=bool(data.get("persist_enabled", True)),
             persist_score_threshold=cls._to_float(data.get("persist_score_threshold", 0.2), default=0.2),
+            family_alert_preset=cls._to_preset(data.get("family_alert_preset", "balanced")),
+            family_adaptive_blend_ratio=cls._to_optional_float(data.get("family_adaptive_blend_ratio", None)),
         )
 
     def merged(self, override_payload: Any) -> "EvolutionProfile":
@@ -80,6 +90,10 @@ class EvolutionProfile:
                 override_data.get("persist_score_threshold", out.get("persist_score_threshold", 0.2)),
                 default=self._to_float(out.get("persist_score_threshold", 0.2), default=0.2),
             )
+        if "family_alert_preset" in override_data:
+            out["family_alert_preset"] = self._to_preset(override_data.get("family_alert_preset", out.get("family_alert_preset", "balanced")))
+        if "family_adaptive_blend_ratio" in override_data:
+            out["family_adaptive_blend_ratio"] = self._to_optional_float(override_data.get("family_adaptive_blend_ratio", out.get("family_adaptive_blend_ratio")))
         return self.from_dict(out)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -92,6 +106,8 @@ class EvolutionProfile:
             "timeframes": list(self.timeframes),
             "persist_enabled": bool(self.persist_enabled),
             "persist_score_threshold": float(self.persist_score_threshold),
+            "family_alert_preset": self._to_preset(self.family_alert_preset),
+            "family_adaptive_blend_ratio": self._to_optional_float(self.family_adaptive_blend_ratio),
         }
 
     @staticmethod
@@ -113,3 +129,22 @@ class EvolutionProfile:
             return float(value)
         except Exception:
             return float(default)
+
+    @staticmethod
+    def _to_optional_float(value: Any) -> Optional[float]:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if text == "":
+            return None
+        try:
+            return float(text)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _to_preset(value: Any) -> str:
+        p = str(value or "").strip().lower()
+        if p in {"steady", "balanced", "aggressive"}:
+            return p
+        return "balanced"

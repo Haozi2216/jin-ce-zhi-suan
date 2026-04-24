@@ -4,10 +4,12 @@ import hashlib
 import re
 from typing import Any, Dict, List, Optional, Protocol
 
+from src.evolution.adapters.gene_strategy_adapter import GeneStrategyAdapter
 from src.evolution.adapters.strategy_library_adapter import StrategyLibraryAdapter
 from src.evolution.core.event_bus import EventBus
 from src.evolution.core.evolution_profile import EvolutionProfile
 from src.evolution.memory.strategy_memory import StrategyMemory
+from src.utils.config_loader import ConfigLoader
 
 
 class StrategyLLM(Protocol):
@@ -113,11 +115,13 @@ class Researcher:
         memory: StrategyMemory,
         llm_client: Optional[StrategyLLM] = None,
         strategy_library: Optional[StrategyLibraryAdapter] = None,
+        gene_adapter: Optional[GeneStrategyAdapter] = None,
     ):
         self.bus = bus
         self.memory = memory
         self.llm_client = llm_client or MockStrategyLLM()
         self.strategy_library = strategy_library or StrategyLibraryAdapter()
+        self.gene_adapter = gene_adapter or GeneStrategyAdapter()
         self._generated_fp = set()
         self.bus.subscribe("Start", self._on_start)
 
@@ -127,6 +131,8 @@ class Researcher:
         profile = self._profile_from_payload(payload.get("profile"))
         try:
             candidate = self._generate_from_library(iteration=iteration, profile=profile)
+            # Keep payload extensible so downstream agents can persist gene lineage.
+            child_gene = candidate.get("child_gene", {})
             self.bus.publish(
                 "StrategyGenerated",
                 {
@@ -134,13 +140,14 @@ class Researcher:
                     "strategy_code": candidate["strategy_code"],
                     "parent_strategy_id": candidate["parent_strategy_id"],
                     "parent_strategy_name": candidate["parent_strategy_name"],
+                    "child_gene": child_gene if isinstance(child_gene, dict) else {},
                     "profile": profile.to_dict(),
                 },
             )
         except Exception as exc:
             self.bus.publish("StrategyRejected", {"iteration": iteration, "reason": f"researcher_error:{exc}"})
 
-    def _generate_from_library(self, iteration: int, profile: EvolutionProfile) -> Dict[str, str]:
+    def _generate_from_library(self, iteration: int, profile: EvolutionProfile) -> Dict[str, Any]:
         seed_meta = self.strategy_library.pick_seed(iteration=iteration, profile=profile)
         seed_code = str((seed_meta or {}).get("code", "") or "").strip()
         parent_id = str((seed_meta or {}).get("id", "") or "").strip()
@@ -149,6 +156,84 @@ class Researcher:
             seed_code = self._bootstrap_seed_code()
             parent_id = "BOOT"
             parent_name = "Bootstrap"
+        # Prefer the gene-driven generation path in MVP to avoid hard-coding strategy logic.
+        if self._is_gene_mode_enabled():
+            return self._generate_from_gene_mvp(
+                seed_code=seed_code,
+                parent_id=parent_id,
+                parent_name=parent_name,
+                iteration=iteration,
+                profile=profile,
+            )
+        return self._generate_via_llm(
+            seed_code=seed_code,
+            parent_id=parent_id,
+            parent_name=parent_name,
+            iteration=iteration,
+            profile=profile,
+        )
+
+    def _generate_from_gene_mvp(
+        self,
+        seed_code: str,
+        parent_id: str,
+        parent_name: str,
+        iteration: int,
+        profile: EvolutionProfile,
+    ) -> Dict[str, Any]:
+        # Build child strategy from structured gene and keep fallback to LLM path if needed.
+        try:
+            generated = self.gene_adapter.generate_from_seed(
+                seed_code=seed_code,
+                parent_strategy_id=parent_id,
+                parent_strategy_name=parent_name,
+                iteration=iteration,
+                timeframes=profile.timeframes,
+                family_adaptive_blend_ratio=profile.family_adaptive_blend_ratio,
+            )
+            strategy_code = self._validate_candidate(str(generated.get("strategy_code", "") or ""))
+            seed_fp = self._fingerprint(seed_code)
+            strategy_code = self._ensure_not_duplicate(strategy_code, {seed_fp})
+            self.bus.publish(
+                "LLMExecution",
+                {
+                    "iteration": iteration,
+                    "stage": "done",
+                    "provider": "GeneStrategyAdapter",
+                    "fallback_used": False,
+                    "path": "gene_mvp",
+                    "primary_provider": "",
+                    "primary_error": "",
+                    "code_chars": len(strategy_code),
+                    "seed_strategy_id": parent_id,
+                },
+            )
+            return {
+                "strategy_code": strategy_code,
+                "parent_strategy_id": parent_id,
+                "parent_strategy_name": parent_name or parent_id,
+                "child_gene": generated["child_gene"].to_dict() if generated.get("child_gene") else {},
+            }
+        except Exception:
+            # If gene path fails, fallback to existing LLM path to keep system availability.
+            pass
+        return self._generate_via_llm(
+            seed_code=seed_code,
+            parent_id=parent_id,
+            parent_name=parent_name,
+            iteration=iteration,
+            profile=profile,
+        )
+
+    def _generate_via_llm(
+        self,
+        seed_code: str,
+        parent_id: str,
+        parent_name: str,
+        iteration: int,
+        profile: EvolutionProfile,
+    ) -> Dict[str, Any]:
+        # Preserve original LLM generation behavior as fallback.
         seed_fp = self._fingerprint(seed_code)
         context = self._build_context(
             seed_code=seed_code,
@@ -205,7 +290,14 @@ class Researcher:
             "strategy_code": strategy_code,
             "parent_strategy_id": parent_id,
             "parent_strategy_name": parent_name or parent_id,
+            # Keep shape consistent so downstream storage logic can be generic.
+            "child_gene": {},
         }
+
+    def _is_gene_mode_enabled(self) -> bool:
+        # Configurable switch: enabled by default for evolution MVP.
+        cfg = ConfigLoader.reload()
+        return bool(cfg.get("evolution.gene.enabled", True))
 
     def _extract_llm_meta(self) -> Dict[str, Any]:
         meta = getattr(self.llm_client, "last_call_meta", None)
@@ -306,4 +398,3 @@ class Researcher:
     def _sanitize_token(self, text: str) -> str:
         value = re.sub(r"[^0-9a-zA-Z_]+", "", str(text or ""))
         return value or "seed"
-

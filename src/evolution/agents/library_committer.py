@@ -32,6 +32,11 @@ class StrategyLibraryCommitter:
         metrics = payload.get("metrics", {})
         kline_type = str(payload.get("best_timeframe", "") or "").strip() or self._first_timeframe(profile.timeframes)
         stock_codes = self._to_str_list(payload.get("stock_codes", profile.target_stock_codes))
+        # Read optional gene lineage fields from StrategyScored payload.
+        child_gene_id = str(payload.get("child_gene_id", "") or "")
+        child_gene_parent_ids = self._to_str_list(payload.get("child_gene_parent_ids", []))
+        child_gene_fingerprint = str(payload.get("child_gene_fingerprint", "") or "")
+        child_gene = payload.get("child_gene", {}) if isinstance(payload.get("child_gene"), dict) else {}
         committed = self.adapter.append_success_strategy(
             strategy_code=strategy_code,
             parent_strategy_id=parent_id,
@@ -40,12 +45,18 @@ class StrategyLibraryCommitter:
             metrics=metrics if isinstance(metrics, dict) else {},
             kline_type=kline_type,
             stock_codes=stock_codes,
+            child_gene_id=child_gene_id,
+            child_gene_parent_ids=child_gene_parent_ids,
+            child_gene_fingerprint=child_gene_fingerprint,
+            child_gene=child_gene,
         )
         if not isinstance(committed, dict):
             return
         self.bus.publish(
             "StrategyCommitted",
             {
+                # Propagate run_id to support DB trace update in downstream agents.
+                "run_id": str(payload.get("run_id", "") or ""),
                 "iteration": int(payload.get("iteration", 0) or 0),
                 "status": "committed",
                 "score": score,
@@ -53,6 +64,9 @@ class StrategyLibraryCommitter:
                 "strategy_name": committed.get("name"),
                 "parent_strategy_id": committed.get("parent_strategy_id"),
                 "version": committed.get("version"),
+                "child_gene_id": committed.get("child_gene_id", ""),
+                "child_gene_parent_ids": self._to_str_list(committed.get("child_gene_parent_ids", [])),
+                "child_gene_fingerprint": committed.get("child_gene_fingerprint", ""),
             },
         )
 

@@ -17,6 +17,7 @@ from src.evolution.llm.client_factory import OpenAICompatibleStrategyLLM
 from src.evolution.llm.client_factory import load_evolution_llm_config
 from src.evolution.memory.strategy_memory import MemoryAgent
 from src.evolution.memory.strategy_memory import StrategyMemory
+from src.evolution.memory.gene_run_store import GeneRunAgent
 
 
 class EvolutionOrchestrator:
@@ -36,6 +37,8 @@ class EvolutionOrchestrator:
         self.critic = Critic(bus=self.bus)
         self.trader = Trader(bus=self.bus, backtest_adapter=adapter)
         self.memory_agent = MemoryAgent(bus=self.bus, memory=self.memory)
+        # Gene run persistence is optional and controlled by repository config.
+        self.gene_run_agent = GeneRunAgent(bus=self.bus)
         self.library_committer = StrategyLibraryCommitter(bus=self.bus, adapter=strategy_library)
         self._last_result: Dict[str, Any] = {"status": "rejected", "score": None, "reason": ""}
         self._last_generated: Dict[str, Any] = {}

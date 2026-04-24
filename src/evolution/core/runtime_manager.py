@@ -7,6 +7,12 @@ from datetime import datetime
 from typing import Any, Callable, Deque, Dict, List, Optional
 
 from src.evolution.core.orchestrator import EvolutionOrchestrator
+from src.evolution.core.concurrency_manager import (
+    ConcurrencyManager, 
+    OperationType, 
+    OperationContext,
+    get_concurrency_manager
+)
 
 
 class EvolutionRuntimeManager:
@@ -15,7 +21,9 @@ class EvolutionRuntimeManager:
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._orchestrator = EvolutionOrchestrator()
+        self._concurrency_manager = get_concurrency_manager()
         self._history: Deque[Dict[str, Any]] = deque(maxlen=max(50, int(max_history)))
+        self._profile_updates: Deque[Dict[str, Any]] = deque(maxlen=max(50, int(max_history)))
         self._state: Dict[str, Any] = {
             "running": False,
             "iteration": 0,
@@ -50,11 +58,23 @@ class EvolutionRuntimeManager:
         interval_seconds: float = 1.0,
         max_iterations: Optional[int] = None,
         profile: Optional[Dict[str, Any]] = None,
+        operator_id: str = "unknown",
     ) -> Dict[str, Any]:
-        snapshot = None
-        with self._lock:
-            if self._state["running"]:
-                return self._snapshot_unlocked()
+        """启动进化任务，支持并发控制"""
+        # 使用操作上下文管理器确保并发安全
+        with OperationContext(self._concurrency_manager, OperationType.START, operator_id, timeout=10.0) as acquired:
+            if not acquired:
+                # 无法获取操作权限，返回当前状态和错误信息
+                with self._lock:
+                    snapshot = self._snapshot_unlocked()
+                snapshot["error"] = "Operation not allowed: another start/stop operation is in progress"
+                snapshot["concurrency_conflict"] = True
+                return snapshot
+            
+            snapshot = None
+            with self._lock:
+                if self._state["running"]:
+                    return self._snapshot_unlocked()
             self._stop_event.clear()
             self._state["running"] = True
             self._state["iteration"] = 0
@@ -67,11 +87,11 @@ class EvolutionRuntimeManager:
             self._state["finished_at"] = None
             self._state["profile"] = profile if isinstance(profile, dict) else {}
             self._state["active_event_type"] = "start"
-            self._state["active_phase"] = "start"
-            self._state["active_phase_label"] = "任务启动中"
-            self._state["active_message"] = "进化任务已启动，等待首轮执行"
-            self._state["active_progress_pct"] = 0
-            self._state["active_data_status"] = "checking"
+            self._state["active_phase"] = "initializing"
+            self._state["active_phase_label"] = "首轮准备中"
+            self._state["active_message"] = "等待首轮执行"
+            self._state["active_progress_pct"] = 5
+            self._state["active_data_status"] = "idle"
             self._state["active_stock_code"] = ""
             self._state["active_timeframe"] = ""
             self._state["active_scenario_index"] = 0
@@ -83,12 +103,23 @@ class EvolutionRuntimeManager:
         self._emit_event({"kind": "state", "state": snapshot})
         return snapshot
 
-    def stop(self) -> Dict[str, Any]:
-        thread = None
-        snapshot = None
-        with self._lock:
-            self._stop_event.set()
-            thread = self._thread
+    def stop(self, operator_id: str = "unknown") -> Dict[str, Any]:
+        """停止进化任务，支持并发控制"""
+        # 使用操作上下文管理器确保并发安全
+        with OperationContext(self._concurrency_manager, OperationType.STOP, operator_id, timeout=10.0) as acquired:
+            if not acquired:
+                # 无法获取操作权限，返回当前状态和错误信息
+                with self._lock:
+                    snapshot = self._snapshot_unlocked()
+                snapshot["error"] = "Operation not allowed: another start/stop operation is in progress"
+                snapshot["concurrency_conflict"] = True
+                return snapshot
+            
+            thread = None
+            snapshot = None
+            with self._lock:
+                self._stop_event.set()
+                thread = self._thread
         if thread and thread.is_alive():
             thread.join(timeout=2.0)
         with self._lock:
@@ -105,10 +136,59 @@ class EvolutionRuntimeManager:
         with self._lock:
             return self._snapshot_unlocked()
 
+    def update_profile(
+        self,
+        profile_patch: Optional[Dict[str, Any]] = None,
+        updated_by: str = "system",
+        source: str = "runtime",
+    ) -> Dict[str, Any]:
+        """Patch runtime profile in-place for hot-configuration updates."""
+        # 配置更新操作允许并发，但仍需要记录操作
+        operator_id = f"{updated_by}@{source}"
+        
+        # 使用操作上下文管理器（配置更新允许并发，但需要记录）
+        with OperationContext(self._concurrency_manager, OperationType.PROFILE_UPDATE, operator_id, timeout=5.0) as acquired:
+            patch = profile_patch if isinstance(profile_patch, dict) else {}
+            with self._lock:
+                current = dict(self._state.get("profile", {})) if isinstance(self._state.get("profile"), dict) else {}
+                before = dict(current)
+                for key, value in patch.items():
+                    current[key] = value
+                self._state["profile"] = current
+                ts = datetime.now().isoformat(timespec="seconds")
+                self._state["active_updated_at"] = ts
+            if self._state.get("running"):
+                self._state["active_phase"] = "profile_update"
+                self._state["active_phase_label"] = "参数热更新"
+                self._state["active_message"] = "运行参数已热更新，将在后续轮次生效"
+                self._state["active_data_status"] = "ok"
+            self._profile_updates.append(
+                {
+                    "time": ts,
+                    "updated_by": str(updated_by or "system"),
+                    "source": str(source or "runtime"),
+                    "running": bool(self._state.get("running")),
+                    "patch": dict(patch),
+                    "before": before,
+                    "after": dict(current),
+                }
+            )
+            snapshot = self._snapshot_unlocked()
+        self._emit_event({"kind": "progress", "progress": snapshot.get("activity", {})})
+        self._emit_event({"kind": "state", "state": snapshot})
+        return snapshot
+
     def history(self, limit: int = 100) -> List[Dict[str, Any]]:
         n = max(1, min(int(limit), 1000))
         with self._lock:
             rows = list(self._history)
+        return rows[-n:]
+
+    def profile_updates(self, limit: int = 100) -> List[Dict[str, Any]]:
+        """Return profile hot-update audit rows."""
+        n = max(1, min(int(limit), 1000))
+        with self._lock:
+            rows = list(self._profile_updates)
         return rows[-n:]
 
     def top_strategies(self, k: int = 20) -> List[Dict[str, Any]]:
@@ -213,10 +293,10 @@ class EvolutionRuntimeManager:
                     self._state["iteration"] = iter_no
                 self._state["last_status"] = "running"
                 self._state["active_phase"] = "research"
-                self._state["active_phase_label"] = "研究候选策略"
-                self._state["active_message"] = f"迭代 {iter_no} 启动"
-                self._state["active_progress_pct"] = 1
-                self._state["active_data_status"] = "checking"
+                self._state["active_phase_label"] = "开始第1轮"
+                self._state["active_message"] = f"迭代 {iter_no} 已开始，正在准备候选策略"
+                self._state["active_progress_pct"] = 8
+                self._state["active_data_status"] = "idle"
             elif event_type_lower == "llmexecution":
                 iter_no = int(body.get("iteration", 0) or 0)
                 if iter_no > 0:
@@ -230,9 +310,9 @@ class EvolutionRuntimeManager:
                 self._state["active_phase"] = "llm"
                 self._state["active_phase_label"] = "大模型生成"
                 if stage == "start":
-                    self._state["active_message"] = f"LLM开始生成候选策略，provider={provider}"
-                    self._state["active_progress_pct"] = max(int(self._state.get("active_progress_pct", 0) or 0), 2)
-                    self._state["active_data_status"] = "checking"
+                    self._state["active_message"] = f"正在生成候选策略，provider={provider}"
+                    self._state["active_progress_pct"] = max(int(self._state.get("active_progress_pct", 0) or 0), 12)
+                    self._state["active_data_status"] = "idle"
                 elif stage == "done":
                     if fallback_used:
                         fallback_hint = f"，主模型={primary_provider}" if primary_provider else ""
@@ -335,6 +415,11 @@ class EvolutionRuntimeManager:
                 self._state["active_progress_pct"] = 100
                 self._state["active_data_status"] = "ok"
             progress_snapshot = self._progress_snapshot_unlocked()
+        self._emit_event({
+            "kind": "runtime_event",
+            "event_type": event_type,
+            "payload": dict(body),
+        })
         self._emit_event({"kind": "progress", "progress": progress_snapshot})
 
     def _emit_event(self, payload: Dict[str, Any]) -> None:
@@ -414,4 +499,27 @@ class EvolutionRuntimeManager:
             "scenario_index": int(self._state.get("active_scenario_index", 0) or 0),
             "scenario_total": int(self._state.get("active_scenario_total", 0) or 0),
             "updated_at": self._state.get("active_updated_at"),
+        }
+
+    def get_concurrency_status(self) -> Dict[str, Any]:
+        """获取并发管理器状态信息"""
+        # 清理超时操作
+        self._concurrency_manager.cleanup_timeout_operations()
+        
+        # 获取当前操作
+        current_operations = self._concurrency_manager.get_current_operations()
+        
+        # 获取统计信息
+        stats = self._concurrency_manager.get_statistics()
+        
+        # 获取操作历史
+        recent_history = self._concurrency_manager.get_operation_history(limit=10)
+        
+        return {
+            "current_operations": current_operations,
+            "statistics": stats,
+            "recent_history": recent_history,
+            "is_start_allowed": self._concurrency_manager.is_operation_allowed(OperationType.START),
+            "is_stop_allowed": self._concurrency_manager.is_operation_allowed(OperationType.STOP),
+            "is_profile_update_allowed": self._concurrency_manager.is_operation_allowed(OperationType.PROFILE_UPDATE),
         }

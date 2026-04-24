@@ -21,6 +21,7 @@ from src.utils.tushare_provider import TushareProvider
 from src.utils.akshare_provider import AkshareProvider
 from src.utils.mysql_provider import MysqlProvider
 from src.utils.postgres_provider import PostgresProvider
+from src.utils.duckdb_provider import DuckDbProvider
 from src.utils.tdx_provider import TdxProvider
 from src.utils.config_loader import ConfigLoader
 from src.utils.indicators import Indicators
@@ -92,6 +93,9 @@ class BacktestCabinet:
         self._event_queue = None
         self._event_task = None
         self._last_yield_ts = perf_counter()
+        self._coalesced_event_types = {"backtest_progress", "market", "ministry_tick"}
+        self._coalesced_event_latest = {}
+        self._flow_emit_stride = max(1, int(self.config.get("system.backtest_flow_emit_stride", 20) or 20))
         
         for s in self.strategies:
             self.personnel.register_strategy(s)
@@ -253,13 +257,15 @@ class BacktestCabinet:
             return MysqlProvider()
         if source == 'postgresql':
             return PostgresProvider()
+        if source == 'duckdb':
+            return DuckDbProvider()
         if source == 'tdx':
             return TdxProvider()
         return DataProvider()
 
     def _resolve_backtest_cache_db_source(self):
         target = str(self.config.get("data_provider.backtest_cache_db_source", "") or "").strip().lower()
-        if target in {"mysql", "postgresql"}:
+        if target in {"mysql", "postgresql", "duckdb"}:
             return target
         return ""
 
@@ -511,6 +517,10 @@ class BacktestCabinet:
             if item is None:
                 break
             event_type, data = item
+            if event_type in self._coalesced_event_types:
+                latest = self._coalesced_event_latest.pop(event_type, None)
+                if latest is not None:
+                    data = latest
             if self.event_callback:
                 await self.event_callback(event_type, data)
 
@@ -527,6 +537,7 @@ class BacktestCabinet:
         await self._event_task
         self._event_queue = None
         self._event_task = None
+        self._coalesced_event_latest = {}
 
     async def _emit(self, event_type, data):
         if not self.event_callback:
@@ -534,6 +545,11 @@ class BacktestCabinet:
         if self._event_queue is None:
             await self.event_callback(event_type, data)
             return
+        if event_type in self._coalesced_event_types:
+            self._coalesced_event_latest[event_type] = data
+            if any(item is not None and item[0] == event_type for item in list(self._event_queue._queue)):
+                await self._yield_control(0.01)
+                return
         try:
             self._event_queue.put_nowait((event_type, data))
         except asyncio.QueueFull:
@@ -905,13 +921,14 @@ class BacktestCabinet:
                     strategy_context={"__by_strategy__": strategy_context, "__kline_by_strategy__": strategy_kline_map}
                 )
                 signals, combo_meta = self._apply_signal_combination(signals, runnable_strategy_ids)
-                if signals:
+                should_emit_detail_flow = (i % self._flow_emit_stride == 0)
+                if signals and should_emit_detail_flow:
                     await self._emit('backtest_flow', {
                         'module': '中书省',
                         'level': 'warning',
                         'msg': f"{current_dt} 触发 {len(signals)} 条候选交易信号（策略: {','.join([s['strategy_id'] for s in signals])}）"
                     })
-                if isinstance(combo_meta, dict) and bool(combo_meta.get("enabled", False)):
+                if isinstance(combo_meta, dict) and bool(combo_meta.get("enabled", False)) and should_emit_detail_flow:
                     await self._emit('backtest_flow', {
                         'module': '中书省',
                         'level': 'system',

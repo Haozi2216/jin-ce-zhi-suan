@@ -13,6 +13,7 @@ from src.utils.indicators import Indicators
 from src.utils.tushare_provider import TushareProvider
 from src.utils.mysql_provider import MysqlProvider
 from src.utils.postgres_provider import PostgresProvider
+from src.utils.duckdb_provider import DuckDbProvider
 
 logger = logging.getLogger("HistorySyncService")
 
@@ -219,8 +220,8 @@ class HistoryDiffSyncService:
         if write_mode not in {"api", "direct_db"}:
             raise RuntimeError("history_sync.write_mode must be one of: api, direct_db")
         direct_db_source = str(payload.get("direct_db_source", cfg.get("history_sync.direct_db_source", "mysql")) or "mysql").strip().lower()
-        if direct_db_source not in {"mysql", "postgresql"}:
-            raise RuntimeError("history_sync.direct_db_source must be one of: mysql, postgresql")
+        if direct_db_source not in {"mysql", "postgresql", "duckdb"}:
+            raise RuntimeError("history_sync.direct_db_source must be one of: mysql, postgresql, duckdb")
         history_base_url = str(cfg.get("data_provider.default_api_url", "") or "").strip().rstrip("/")
         history_api_key = str(cfg.get("data_provider.default_api_key", "") or "").strip()
         tushare_token = str(cfg.get("data_provider.tushare_token", "") or "").strip()
@@ -408,6 +409,8 @@ class HistoryDiffSyncService:
             return MysqlProvider()
         if direct_db_source == "postgresql":
             return PostgresProvider()
+        if direct_db_source == "duckdb":
+            return DuckDbProvider()
         raise RuntimeError("unsupported direct_db_source")
 
     def _ensure_target_db_ready(self, write_mode: str, provider: Any, sample_code: str) -> None:

@@ -18,6 +18,7 @@ import subprocess
 import threading
 import uuid
 import signal
+from contextlib import asynccontextmanager
 from collections import deque
 import pandas as pd
 import numpy as np
@@ -55,6 +56,7 @@ from src.utils.tushare_provider import TushareProvider
 from src.utils.akshare_provider import AkshareProvider
 from src.utils.mysql_provider import MysqlProvider
 from src.utils.postgres_provider import PostgresProvider
+from src.utils.duckdb_provider import DuckDbProvider
 from src.utils.tdx_provider import TdxProvider
 from src.utils.history_sync_service import HistoryDiffSyncService, TABLE_INTERVAL_MAP, DEFAULT_SYNC_TABLES
 from src.utils.backtest_baseline import apply_backtest_baseline
@@ -64,6 +66,10 @@ from src.tdx.terminal_bridge import TdxTerminalBridge
 from src.utils.blk_loader import parse_blk_file, parse_blk_text
 from src.evolution.core.runtime_manager import EvolutionRuntimeManager
 from src.evolution.adapters.fundamental_adapter import FundamentalAdapterManager
+from src.evolution.memory.gene_run_store import PostgresGeneRunRepository
+from src.evolution.memory.profile_update_store import PostgresProfileUpdateRepository
+from src.evolution.adapters.gene_strategy_adapter import GeneStrategyAdapter
+from src.evolution.platform.platform_hub import EvolutionPlatformHub
 
 import logging
 
@@ -100,6 +106,9 @@ _QUIET_HTTP_PATHS = {
     "/api/evolution/status",
     "/api/evolution/history",
     "/api/evolution/top",
+    "/api/evolution/runs",
+    "/api/evolution/family_stats",
+    "/api/evolution/profile/updates",
     "/api/backtest/kline_thumb_status",
     "/api/backtest/kline_data",
     "/api/fundamental/cache_list",
@@ -128,7 +137,16 @@ class CachedStaticFiles(StaticFiles):
                 raise
             return await super().get_response(path, scope)
 
-app = FastAPI(title="三省六部 AI 交易决策控制台")
+@asynccontextmanager
+async def app_lifespan(_: FastAPI):
+    await startup_event()
+    try:
+        yield
+    finally:
+        await shutdown_event()
+
+
+app = FastAPI(title="三省六部 AI 交易决策控制台", lifespan=app_lifespan)
 STATIC_DIR = os.path.abspath("static")
 os.makedirs(STATIC_DIR, exist_ok=True)
 app.mount("/static", CachedStaticFiles(directory=STATIC_DIR), name="static")
@@ -189,6 +207,12 @@ REPORTS_DIR = os.path.join("data", "reports")
 REPORTS_LEGACY_FILE = os.path.join(REPORTS_DIR, "backtest_reports.json")
 REPORT_FILE_PREFIX = "backtest_report_"
 REPORT_FILE_SUFFIX = ".json"
+EVOLUTION_STORAGE_DIR = os.path.join("data", "evolution")
+EVOLUTION_RUNS_DIR = os.path.join(EVOLUTION_STORAGE_DIR, "runs")
+EVOLUTION_FAMILY_DIR = os.path.join(EVOLUTION_STORAGE_DIR, "family")
+EVOLUTION_RUN_FILE_PREFIX = "evolution_run_"
+EVOLUTION_FAMILY_FILE_PREFIX = "evolution_family_"
+EVOLUTION_FILE_SUFFIX = ".json"
 PATTERN_THUMB_DIR = os.path.join(REPORTS_DIR, "pattern_thumbs")
 CLASSIC_PATTERN_ITEMS = [
     {"stock": "688585", "start": "2025-07-09", "end": "2025-12-31"},
@@ -257,6 +281,10 @@ batch_run_state: Dict[str, Any] = {
     "logs": [],
 }
 evolution_runtime = EvolutionRuntimeManager()
+evolution_platform_hub = EvolutionPlatformHub(evolution_runtime=evolution_runtime)
+evolution_gene_run_repo = PostgresGeneRunRepository()
+evolution_profile_update_repo = PostgresProfileUpdateRepository()
+evolution_gene_adapter = GeneStrategyAdapter(gene_run_repo=evolution_gene_run_repo)
 evolution_ws_events = deque(maxlen=2000)
 evolution_ws_lock = threading.Lock()
 evolution_ws_pump_task = None
@@ -286,6 +314,11 @@ _WS_SKIP_WEBHOOK_EVENT_TYPES = {"backtest_progress", "backtest_flow", "backtest_
 def _push_evolution_ws_event(payload: Dict[str, Any]) -> None:
     if not isinstance(payload, dict):
         return
+    if str(payload.get("event_type", "") or "").strip():
+        try:
+            _persist_evolution_runtime_event(payload)
+        except Exception as e:
+            logger.warning("persist evolution event failed: %s", e)
     with evolution_ws_lock:
         evolution_ws_events.append(dict(payload))
 
@@ -303,10 +336,18 @@ async def _evolution_ws_pump_loop():
             items = _pop_all_evolution_ws_events()
             for item in items:
                 kind = str(item.get("kind", "")).strip().lower()
+                if kind == "runtime_event":
+                    continue
                 if kind == "tick":
                     payload = {"type": "evolution_tick", "data": item.get("record", {}), "server_time": datetime.now().isoformat(timespec="seconds")}
                 elif kind == "progress":
                     payload = {"type": "evolution_progress", "data": item.get("progress", {}), "server_time": datetime.now().isoformat(timespec="seconds")}
+                elif str(item.get("type", "")).startswith("platform_"):
+                    payload = {
+                        "type": str(item.get("type", "platform_event")),
+                        "data": item.get("data", {}),
+                        "server_time": str(item.get("server_time") or datetime.now().isoformat(timespec="seconds")),
+                    }
                 else:
                     payload = {"type": "evolution_state", "data": item.get("state", {}), "server_time": datetime.now().isoformat(timespec="seconds")}
                 await manager.broadcast(payload)
@@ -1272,6 +1313,8 @@ def _build_provider_by_source(source: str, cfg=None):
         return MysqlProvider()
     if s == "postgresql":
         return PostgresProvider()
+    if s == "duckdb":
+        return DuckDbProvider()
     if s == "tdx":
         return TdxProvider()
     return DataProvider(
@@ -1403,6 +1446,364 @@ def _report_file_path(report_id):
     if not rid:
         rid = f"{int(datetime.now().timestamp() * 1000)}-{os.urandom(2).hex()}"
     return os.path.join(REPORTS_DIR, f"{REPORT_FILE_PREFIX}{rid}{REPORT_FILE_SUFFIX}")
+
+
+def _ensure_evolution_storage_dirs():
+    os.makedirs(EVOLUTION_RUNS_DIR, exist_ok=True)
+    os.makedirs(EVOLUTION_FAMILY_DIR, exist_ok=True)
+
+
+def _sanitize_file_key(raw: Any, fallback_prefix: str) -> str:
+    text = re.sub(r"[^0-9A-Za-z_.-]+", "_", str(raw or "").strip())
+    if text:
+        return text
+    return f"{fallback_prefix}_{int(datetime.now().timestamp() * 1000)}_{os.urandom(2).hex()}"
+
+
+def _iter_prefixed_json_paths(directory: str, prefix: str) -> List[str]:
+    os.makedirs(directory, exist_ok=True)
+    files: List[str] = []
+    try:
+        for entry in os.scandir(directory):
+            if not entry.is_file():
+                continue
+            name = str(entry.name or "")
+            if name.startswith(prefix) and name.endswith(EVOLUTION_FILE_SUFFIX):
+                files.append(entry.path)
+    except Exception:
+        return []
+    return files
+
+
+def _evolution_run_file_path(run_id: Any) -> str:
+    return os.path.join(EVOLUTION_RUNS_DIR, f"{EVOLUTION_RUN_FILE_PREFIX}{_sanitize_file_key(run_id, 'run')}{EVOLUTION_FILE_SUFFIX}")
+
+
+def _evolution_family_file_path(family: Any) -> str:
+    return os.path.join(EVOLUTION_FAMILY_DIR, f"{EVOLUTION_FAMILY_FILE_PREFIX}{_sanitize_file_key(family, 'family')}{EVOLUTION_FILE_SUFFIX}")
+
+
+def _load_json_file(path: str) -> Optional[Dict[str, Any]]:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        return payload if isinstance(payload, dict) else None
+    except Exception as e:
+        logger.warning("failed to load json file path=%s err=%s", path, e)
+        return None
+
+
+def _write_json_file(path: str, payload: Dict[str, Any]) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(_sanitize_non_finite(payload), f, ensure_ascii=False, indent=2, default=str)
+
+
+def _remove_file_if_exists(path: str) -> bool:
+    if not os.path.exists(path):
+        return False
+    os.remove(path)
+    return True
+
+
+def _parse_iso_like(value: Any) -> Optional[datetime]:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
+def _normalize_time_text(value: Any, fallback: str = "") -> str:
+    text = str(value or fallback or "").strip()
+    dt = _parse_iso_like(text)
+    if dt is not None:
+        return dt.isoformat()
+    return text or datetime.now().isoformat(timespec="seconds")
+
+
+def _normalize_evolution_run_row(payload: Dict[str, Any], existing: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    data = dict(existing or {})
+    if isinstance(payload, dict):
+        data.update(payload)
+    run_id = str(data.get("run_id", "") or "").strip() or _sanitize_file_key("", "run")
+    child_gene_family = str(data.get("child_gene_family", "") or data.get("family", "") or "unknown").strip().lower() or "unknown"
+    now = datetime.now().isoformat(timespec="seconds")
+    row = {
+        "run_id": run_id,
+        "iteration": int(data.get("iteration", 0) or 0),
+        "status": str(data.get("status", "ok") or "ok").strip().lower(),
+        "score": float(data.get("score")) if data.get("score") is not None and str(data.get("score", "")).strip() != "" else None,
+        "strategy_id": str(data.get("strategy_id", "") or "").strip(),
+        "strategy_name": str(data.get("strategy_name", "") or "").strip(),
+        "parent_strategy_id": str(data.get("parent_strategy_id", "") or "").strip(),
+        "parent_strategy_name": str(data.get("parent_strategy_name", "") or "").strip(),
+        "child_gene_id": str(data.get("child_gene_id", "") or "").strip(),
+        "child_gene_parent_ids": [str(x or "").strip() for x in (data.get("child_gene_parent_ids") or []) if str(x or "").strip()],
+        "child_gene_fingerprint": str(data.get("child_gene_fingerprint", "") or "").strip(),
+        "child_gene_family": child_gene_family,
+        "metrics": data.get("metrics") if isinstance(data.get("metrics"), dict) else {},
+        "profile": data.get("profile") if isinstance(data.get("profile"), dict) else {},
+        "strategy_code_sha256": str(data.get("strategy_code_sha256", "") or "").strip(),
+        "committed_strategy_id": str(data.get("committed_strategy_id", "") or "").strip(),
+        "committed_strategy_name": str(data.get("committed_strategy_name", "") or "").strip(),
+        "committed_version": int(data.get("committed_version", 0) or 0),
+        "committed_at": _normalize_time_text(data.get("committed_at"), "") if str(data.get("committed_at", "")).strip() else "",
+        "created_at": _normalize_time_text(data.get("created_at"), data.get("time") or now),
+        "updated_at": _normalize_time_text(data.get("updated_at"), now),
+        "note": str(data.get("note", "") or "").strip(),
+    }
+    return row
+
+
+def _normalize_evolution_family_row(payload: Dict[str, Any], existing: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    data = dict(existing or {})
+    if isinstance(payload, dict):
+        data.update(payload)
+    family = str(data.get("family", "") or "unknown").strip().lower() or "unknown"
+    now = datetime.now().isoformat(timespec="seconds")
+    row = {
+        "family": family,
+        "run_count": int(data.get("run_count", data.get("sample_count", 0)) or 0),
+        "sample_count": int(data.get("run_count", data.get("sample_count", 0)) or 0),
+        "avg_score": float(data.get("avg_score", 0.0) or 0.0),
+        "avg_sharpe": float(data.get("avg_sharpe", 0.0) or 0.0),
+        "avg_drawdown": float(data.get("avg_drawdown", 0.0) or 0.0),
+        "note": str(data.get("note", "") or "").strip(),
+        "created_at": _normalize_time_text(data.get("created_at"), now),
+        "updated_at": _normalize_time_text(data.get("updated_at"), now),
+    }
+    return row
+
+
+def _load_all_evolution_run_rows() -> List[Dict[str, Any]]:
+    _ensure_evolution_storage_dirs()
+    rows: List[Dict[str, Any]] = []
+    for path in _iter_prefixed_json_paths(EVOLUTION_RUNS_DIR, EVOLUTION_RUN_FILE_PREFIX):
+        payload = _load_json_file(path) or {}
+        row = payload.get("run") if isinstance(payload.get("run"), dict) else payload
+        if isinstance(row, dict):
+            rows.append(_normalize_evolution_run_row(row))
+    rows.sort(key=lambda x: (str(x.get("created_at") or ""), str(x.get("run_id") or "")), reverse=True)
+    return rows
+
+
+def _load_all_evolution_family_rows() -> List[Dict[str, Any]]:
+    _ensure_evolution_storage_dirs()
+    rows: List[Dict[str, Any]] = []
+    for path in _iter_prefixed_json_paths(EVOLUTION_FAMILY_DIR, EVOLUTION_FAMILY_FILE_PREFIX):
+        payload = _load_json_file(path) or {}
+        row = payload.get("family") if isinstance(payload.get("family"), dict) else payload
+        if isinstance(row, dict):
+            rows.append(_normalize_evolution_family_row(row))
+    rows.sort(key=lambda x: (str(x.get("updated_at") or ""), str(x.get("family") or "")), reverse=True)
+    return rows
+
+
+def _save_evolution_run_row(payload: Dict[str, Any], original_run_id: str = "") -> Dict[str, Any]:
+    _ensure_evolution_storage_dirs()
+    existing = None
+    source_id = str(original_run_id or payload.get("run_id") or "").strip()
+    if source_id:
+        existing_payload = _load_json_file(_evolution_run_file_path(source_id)) or {}
+        existing = existing_payload.get("run") if isinstance(existing_payload.get("run"), dict) else existing_payload
+    row = _normalize_evolution_run_row(payload, existing=existing if isinstance(existing, dict) else None)
+    if source_id and source_id != row["run_id"]:
+        try:
+            _remove_file_if_exists(_evolution_run_file_path(source_id))
+        except Exception:
+            pass
+    _write_json_file(_evolution_run_file_path(row["run_id"]), {"run": row})
+    return row
+
+
+def _save_evolution_family_row(payload: Dict[str, Any], original_family: str = "") -> Dict[str, Any]:
+    _ensure_evolution_storage_dirs()
+    existing = None
+    source_key = str(original_family or payload.get("family") or "").strip().lower()
+    if source_key:
+        existing_payload = _load_json_file(_evolution_family_file_path(source_key)) or {}
+        existing = existing_payload.get("family") if isinstance(existing_payload.get("family"), dict) else existing_payload
+    row = _normalize_evolution_family_row(payload, existing=existing if isinstance(existing, dict) else None)
+    if source_key and source_key != row["family"]:
+        try:
+            _remove_file_if_exists(_evolution_family_file_path(source_key))
+        except Exception:
+            pass
+    _write_json_file(_evolution_family_file_path(row["family"]), {"family": row})
+    return row
+
+
+def _delete_evolution_run_row(run_id: str) -> bool:
+    _ensure_evolution_storage_dirs()
+    return _remove_file_if_exists(_evolution_run_file_path(run_id))
+
+
+def _delete_evolution_family_row(family: str) -> bool:
+    _ensure_evolution_storage_dirs()
+    return _remove_file_if_exists(_evolution_family_file_path(family))
+
+
+def _query_evolution_run_rows(limit: int = 100, offset: int = 0, run_id: str = "", child_gene_id: str = "", status: str = "", parent_strategy_id: str = "", start_time: str = "", end_time: str = "") -> Dict[str, Any]:
+    rows = _load_all_evolution_run_rows()
+    start_dt = _parse_iso_like(start_time)
+    end_dt = _parse_iso_like(end_time)
+    filtered: List[Dict[str, Any]] = []
+    for row in rows:
+        if run_id and str(row.get("run_id", "")).strip() != str(run_id).strip():
+            continue
+        if child_gene_id and str(row.get("child_gene_id", "")).strip() != str(child_gene_id).strip():
+            continue
+        if status and str(row.get("status", "")).strip().lower() != str(status).strip().lower():
+            continue
+        if parent_strategy_id and str(row.get("parent_strategy_id", "")).strip() != str(parent_strategy_id).strip():
+            continue
+        created_dt = _parse_iso_like(row.get("created_at"))
+        if start_dt and created_dt and created_dt < start_dt:
+            continue
+        if end_dt and created_dt and created_dt > end_dt:
+            continue
+        filtered.append(row)
+    total = len(filtered)
+    safe_offset = max(0, int(offset or 0))
+    safe_limit = max(1, min(int(limit or 100), 500))
+    return {
+        "rows": filtered[safe_offset:safe_offset + safe_limit],
+        "count": total,
+        "limit": safe_limit,
+        "offset": safe_offset,
+        "enabled": True,
+        "error": "",
+    }
+
+
+def _build_family_stats_from_runs(run_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    stats: Dict[str, Dict[str, Any]] = {}
+    for row in run_rows:
+        family = str(row.get("child_gene_family", "") or "unknown").strip().lower() or "unknown"
+        bucket = stats.setdefault(family, {
+            "family": family,
+            "run_count": 0,
+            "sample_count": 0,
+            "score_sum": 0.0,
+            "score_count": 0,
+            "sharpe_sum": 0.0,
+            "sharpe_count": 0,
+            "drawdown_sum": 0.0,
+            "drawdown_count": 0,
+            "updated_at": "",
+        })
+        bucket["run_count"] += 1
+        bucket["sample_count"] += 1
+        score = row.get("score")
+        if score is not None:
+            try:
+                bucket["score_sum"] += float(score)
+                bucket["score_count"] += 1
+            except Exception:
+                pass
+        metrics = row.get("metrics") if isinstance(row.get("metrics"), dict) else {}
+        sharpe = metrics.get("sharpe")
+        drawdown = metrics.get("drawdown")
+        try:
+            if sharpe is not None:
+                bucket["sharpe_sum"] += float(sharpe)
+                bucket["sharpe_count"] += 1
+        except Exception:
+            pass
+        try:
+            if drawdown is not None:
+                bucket["drawdown_sum"] += float(drawdown)
+                bucket["drawdown_count"] += 1
+        except Exception:
+            pass
+        updated_at = str(row.get("updated_at") or row.get("created_at") or "")
+        if updated_at > str(bucket.get("updated_at") or ""):
+            bucket["updated_at"] = updated_at
+    out: List[Dict[str, Any]] = []
+    for bucket in stats.values():
+        run_count = int(bucket.get("run_count", 0) or 0)
+        score_count = max(1, int(bucket.get("score_count", 0) or 0)) if int(bucket.get("score_count", 0) or 0) > 0 else 0
+        sharpe_count = max(1, int(bucket.get("sharpe_count", 0) or 0)) if int(bucket.get("sharpe_count", 0) or 0) > 0 else 0
+        drawdown_count = max(1, int(bucket.get("drawdown_count", 0) or 0)) if int(bucket.get("drawdown_count", 0) or 0) > 0 else 0
+        out.append({
+            "family": bucket.get("family", "unknown"),
+            "run_count": run_count,
+            "sample_count": run_count,
+            "avg_score": (bucket.get("score_sum", 0.0) / score_count) if score_count else 0.0,
+            "avg_sharpe": (bucket.get("sharpe_sum", 0.0) / sharpe_count) if sharpe_count else 0.0,
+            "avg_drawdown": (bucket.get("drawdown_sum", 0.0) / drawdown_count) if drawdown_count else 0.0,
+            "updated_at": bucket.get("updated_at", ""),
+            "note": "",
+        })
+    out.sort(key=lambda x: (str(x.get("updated_at") or ""), str(x.get("family") or "")), reverse=True)
+    return out
+
+
+def _query_evolution_family_rows(limit: int = 100, offset: int = 0, family: str = "", start_time: str = "", end_time: str = "") -> Dict[str, Any]:
+    file_rows = _load_all_evolution_family_rows()
+    if not file_rows:
+        file_rows = _build_family_stats_from_runs(_load_all_evolution_run_rows())
+    start_dt = _parse_iso_like(start_time)
+    end_dt = _parse_iso_like(end_time)
+    filtered: List[Dict[str, Any]] = []
+    family_text = str(family or "").strip().lower()
+    for row in file_rows:
+        if family_text and family_text not in str(row.get("family", "")).strip().lower():
+            continue
+        updated_dt = _parse_iso_like(row.get("updated_at") or row.get("created_at"))
+        if start_dt and updated_dt and updated_dt < start_dt:
+            continue
+        if end_dt and updated_dt and updated_dt > end_dt:
+            continue
+        filtered.append(row)
+    total = len(filtered)
+    safe_offset = max(0, int(offset or 0))
+    safe_limit = max(1, min(int(limit or 100), 500))
+    return {
+        "rows": filtered[safe_offset:safe_offset + safe_limit],
+        "count": total,
+        "limit": safe_limit,
+        "offset": safe_offset,
+        "enabled": True,
+        "error": "",
+    }
+
+
+def _persist_evolution_runtime_event(event: Dict[str, Any]) -> None:
+    payload = event if isinstance(event, dict) else {}
+    event_type = str(payload.get("event_type", "") or "").strip().lower()
+    body = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
+    if event_type == "strategyscored":
+        try:
+            row = _save_evolution_run_row(body)
+            if row.get("child_gene_family"):
+                family_rows = _build_family_stats_from_runs(_load_all_evolution_run_rows())
+                for family_row in family_rows:
+                    _save_evolution_family_row(family_row, original_family=str(family_row.get("family") or ""))
+        except Exception as e:
+            logger.warning("persist evolution scored event failed: %s", e)
+    elif event_type == "strategycommitted":
+        run_id = str(body.get("run_id", "") or "").strip()
+        if not run_id:
+            return
+        try:
+            existing_payload = _load_json_file(_evolution_run_file_path(run_id)) or {}
+            existing_row = existing_payload.get("run") if isinstance(existing_payload.get("run"), dict) else existing_payload
+            merged = dict(existing_row or {})
+            merged.update({
+                "run_id": run_id,
+                "committed_strategy_id": body.get("strategy_id", ""),
+                "committed_strategy_name": body.get("strategy_name", ""),
+                "committed_version": body.get("version", 0),
+                "committed_at": datetime.now().isoformat(timespec="seconds"),
+                "updated_at": datetime.now().isoformat(timespec="seconds"),
+            })
+            _save_evolution_run_row(merged, original_run_id=run_id)
+        except Exception as e:
+            logger.warning("persist evolution committed event failed: %s", e)
 
 def load_report_history(force=False):
     global report_history, latest_backtest_result, latest_strategy_reports, report_history_mtime, report_detail_cache
@@ -1895,6 +2296,40 @@ class ReportDeleteRequest(BaseModel):
     report_id: str
 
 
+class EvolutionRunUpsertRequest(BaseModel):
+    run_id: str
+    status: Optional[str] = None
+    score: Optional[float] = None
+    child_gene_id: Optional[str] = None
+    child_gene_parent_ids: Optional[List[str]] = None
+    child_gene_fingerprint: Optional[str] = None
+    child_gene_family: Optional[str] = None
+    parent_strategy_id: Optional[str] = None
+    parent_strategy_name: Optional[str] = None
+    strategy_id: Optional[str] = None
+    strategy_name: Optional[str] = None
+    committed_strategy_id: Optional[str] = None
+    committed_strategy_name: Optional[str] = None
+    committed_version: Optional[int] = None
+    strategy_code_sha256: Optional[str] = None
+    metrics: Optional[Dict[str, Any]] = None
+    profile: Optional[Dict[str, Any]] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    note: Optional[str] = None
+
+
+class EvolutionFamilyUpsertRequest(BaseModel):
+    family: str
+    run_count: Optional[int] = 0
+    avg_score: Optional[float] = 0.0
+    avg_sharpe: Optional[float] = 0.0
+    avg_drawdown: Optional[float] = 0.0
+    note: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+
 class FundamentalProfileRequest(BaseModel):
     stock_code: str
     context: Optional[str] = "backtest"
@@ -2118,6 +2553,79 @@ class EvolutionStartRequest(BaseModel):
     timeframes: Optional[List[str]] = None
     persist_enabled: Optional[bool] = None
     persist_score_threshold: Optional[float] = None
+    family_alert_preset: Optional[str] = None
+    family_adaptive_blend_ratio: Optional[float] = None
+
+
+class EvolutionProfileUpdateRequest(BaseModel):
+    seed_strategy_id: Optional[str] = None
+    seed_strategy_ids: Optional[List[str]] = None
+    seed_include_builtin: Optional[bool] = None
+    seed_only_enabled: Optional[bool] = None
+    target_stock_codes: Optional[List[str]] = None
+    timeframes: Optional[List[str]] = None
+    persist_enabled: Optional[bool] = None
+    persist_score_threshold: Optional[float] = None
+    family_alert_preset: Optional[str] = None
+    family_adaptive_blend_ratio: Optional[float] = None
+    updated_by: Optional[str] = None
+    source: Optional[str] = None
+
+
+class EvolutionPlatformRiskAssessRequest(BaseModel):
+    strategy_id: str
+    backtest_results: Optional[Dict[str, Any]] = None
+    strategy_data: Optional[Dict[str, Any]] = None
+
+
+class EvolutionPlatformComplianceCheckRequest(BaseModel):
+    strategy_id: str
+    data: Optional[Dict[str, Any]] = None
+
+
+class EvolutionPlatformBackupListRequest(BaseModel):
+    data_key: Optional[str] = None
+    source_type: Optional[str] = None
+
+
+class EvolutionPlatformStrategyQueryRequest(BaseModel):
+    strategy_id: str
+    hours: Optional[int] = 24
+
+
+class EvolutionPlatformDeploymentStartRequest(BaseModel):
+    strategy_id: str
+    version: Optional[str] = None
+    environment: Optional[str] = "production"
+    strategy_data: Optional[Dict[str, Any]] = None
+    auto_deploy: bool = True
+    require_approval: bool = False
+    rollback_enabled: bool = True
+
+
+class EvolutionPlatformAlertTestRequest(BaseModel):
+    title: str
+    content: str
+    level: Optional[str] = "warning"
+    strategy_id: Optional[str] = None
+    channels: Optional[List[str]] = None
+    source: Optional[str] = "platform_manual"
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class EvolutionPlatformBackupRunRequest(BaseModel):
+    data_key: str
+    data: Optional[Any] = None
+    source_type: Optional[str] = None
+
+
+class EvolutionPlatformBackupRestoreRequest(BaseModel):
+    data_key: str
+    source_type: Optional[str] = None
+
+
+class EvolutionPlatformCircuitBreakerResetRequest(BaseModel):
+    name: str
 
 
 def _extract_code_block(text):
@@ -2505,6 +3013,12 @@ async def get_logo():
         media_type="image/png",
         headers={"Cache-Control": "public, max-age=31536000, immutable"}
     )
+
+
+@app.get("/favicon.ico")
+async def get_favicon():
+    return await get_logo()
+
 
 def _cache_frontend_asset_file(remote_url: str, target_path: str):
     os.makedirs(os.path.dirname(target_path), exist_ok=True)
@@ -5274,6 +5788,8 @@ def _select_provider():
         return MysqlProvider()
     if provider_source == "postgresql":
         return PostgresProvider()
+    if provider_source == "duckdb":
+        return DuckDbProvider()
     if provider_source == "tdx":
         return TdxProvider()
     return DataProvider()
@@ -6039,8 +6555,8 @@ async def api_switch_strategy(req: StrategySwitchRequest):
 async def api_set_source(req: SourceSwitchRequest):
     global cabinet_task, current_provider_source, current_cabinet, config
     source = str(req.source or "").lower().strip()
-    if source not in {"default", "tushare", "akshare", "mysql", "postgresql", "tdx"}:
-        return {"status": "error", "msg": "source must be one of: default, tushare, akshare, mysql, postgresql, tdx"}
+    if source not in {"default", "tushare", "akshare", "mysql", "postgresql", "duckdb", "tdx"}:
+        return {"status": "error", "msg": "source must be one of: default, tushare, akshare, mysql, postgresql, duckdb, tdx"}
     cfg = ConfigLoader.reload()
     cfg.set("data_provider.source", source)
     cfg.save()
@@ -6150,6 +6666,10 @@ def _build_evolution_profile_payload(req: EvolutionStartRequest) -> Dict[str, An
         profile["persist_enabled"] = bool(req.persist_enabled)
     if req.persist_score_threshold is not None:
         profile["persist_score_threshold"] = float(req.persist_score_threshold)
+    if req.family_alert_preset is not None:
+        profile["family_alert_preset"] = str(req.family_alert_preset or "").strip().lower()
+    if req.family_adaptive_blend_ratio is not None:
+        profile["family_adaptive_blend_ratio"] = float(req.family_adaptive_blend_ratio)
     return profile
 
 
@@ -6158,19 +6678,91 @@ async def api_evolution_start(req: EvolutionStartRequest):
     interval = float(req.interval_seconds if req.interval_seconds is not None else 1.0)
     max_iters = req.max_iterations if req.max_iterations is not None else None
     profile = _build_evolution_profile_payload(req)
-    state = evolution_runtime.start(interval_seconds=interval, max_iterations=max_iters, profile=profile)
+    # 使用请求来源作为operator_id
+    operator_id = f"api_user_{req.updated_by}" if hasattr(req, 'updated_by') and req.updated_by else "api_user"
+    state = evolution_runtime.start(interval_seconds=interval, max_iterations=max_iters, profile=profile, operator_id=operator_id)
+    
+    # 检查是否有并发冲突
+    if state.get("concurrency_conflict"):
+        return {"status": "error", "msg": state.get("error", "Concurrency conflict"), "state": state}
+    
     return {"status": "success", "msg": "evolution started", "state": state}
+
+
+@app.post("/api/evolution/profile/update")
+async def api_evolution_profile_update(req: EvolutionProfileUpdateRequest):
+    raw = req.model_dump(exclude_none=True) if hasattr(req, "model_dump") else req.dict(exclude_none=True)
+    updated_by = str(raw.pop("updated_by", "") or "dashboard").strip() or "dashboard"
+    source = str(raw.pop("source", "") or "api").strip() or "api"
+    patch = _build_evolution_profile_payload(EvolutionStartRequest(**raw))
+    if not patch:
+        return {"status": "success", "msg": "profile unchanged", "state": evolution_runtime.status()}
+    # 获取更新前的配置用于审计
+    current_profile = evolution_runtime.get_profile()
+    
+    # 执行配置更新
+    state = evolution_runtime.update_profile(profile_patch=patch, updated_by=updated_by, source=source)
+    
+    # 持久化审计日志到PostgreSQL（如果启用）
+    try:
+        if evolution_profile_update_repo.enabled:
+            after_profile = evolution_runtime.get_profile()
+            evolution_profile_update_repo.insert_update(
+                updated_by=updated_by,
+                source=source,
+                running=state.get("running", False),
+                patch=patch,
+                before_profile=current_profile,
+                after_profile=after_profile
+            )
+    except Exception as e:
+        # 记录错误但不影响API响应
+        logger.warning(f"Failed to persist profile update audit log: {e}")
+    
+    return {"status": "success", "msg": "evolution profile updated", "state": state}
+
+
+@app.get("/api/evolution/profile/updates")
+async def api_evolution_profile_updates(limit: int = 30):
+    limit = max(1, min(int(limit or 30), 200))
+    
+    # 优先从PostgreSQL读取数据（如果启用）
+    if evolution_profile_update_repo.enabled:
+        try:
+            result = evolution_profile_update_repo.query_updates(limit=limit)
+            return {"status": "success", "rows": result.get("rows", []), "count": result.get("count", 0)}
+        except Exception as e:
+            logger.warning(f"Failed to query profile updates from PostgreSQL: {e}")
+            # 降级到内存数据
+    
+    # 从内存读取数据
+    rows = evolution_runtime.profile_updates(limit=limit)
+    return {"status": "success", "rows": rows, "count": len(rows)}
 
 
 @app.post("/api/evolution/stop")
 async def api_evolution_stop():
-    state = evolution_runtime.stop()
+    # 使用API用户作为operator_id
+    operator_id = "api_user"
+    state = evolution_runtime.stop(operator_id=operator_id)
+    
+    # 检查是否有并发冲突
+    if state.get("concurrency_conflict"):
+        return {"status": "error", "msg": state.get("error", "Concurrency conflict"), "state": state}
+    
     return {"status": "success", "msg": "evolution stopped", "state": state}
 
 
 @app.get("/api/evolution/status")
 async def api_evolution_status():
     return {"status": "success", "state": evolution_runtime.status()}
+
+
+@app.get("/api/evolution/concurrency")
+async def api_evolution_concurrency():
+    """获取进化系统并发状态信息"""
+    concurrency_status = evolution_runtime.get_concurrency_status()
+    return {"status": "success", "concurrency": concurrency_status}
 
 
 @app.get("/api/evolution/history")
@@ -6183,6 +6775,262 @@ async def api_evolution_history(limit: int = 100):
 async def api_evolution_top(k: int = 20):
     rows = evolution_runtime.top_strategies(k=max(1, min(int(k or 20), 200)))
     return {"status": "success", "rows": rows, "count": len(rows)}
+
+
+@app.get("/api/evolution/runs")
+async def api_evolution_runs(
+    limit: int = 100,
+    offset: int = 0,
+    run_id: Optional[str] = None,
+    child_gene_id: Optional[str] = None,
+    status: Optional[str] = None,
+    parent_strategy_id: Optional[str] = None,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+):
+    result = _query_evolution_run_rows(
+        limit=max(1, min(int(limit or 100), 500)),
+        offset=max(0, int(offset or 0)),
+        run_id=str(run_id or "").strip(),
+        child_gene_id=str(child_gene_id or "").strip(),
+        status=str(status or "").strip(),
+        parent_strategy_id=str(parent_strategy_id or "").strip(),
+        start_time=str(start_time or "").strip(),
+        end_time=str(end_time or "").strip(),
+    )
+    rows = result.get("rows", []) if isinstance(result.get("rows"), list) else []
+    return {
+        "status": "success",
+        "enabled": bool(result.get("enabled", False)),
+        "rows": rows,
+        "count": int(result.get("count", 0) or 0),
+        "limit": int(result.get("limit", limit) or limit),
+        "offset": int(result.get("offset", offset) or offset),
+        "error": str(result.get("error", "") or ""),
+    }
+
+
+@app.post("/api/evolution/runs")
+async def api_evolution_runs_create(req: EvolutionRunUpsertRequest):
+    row = _save_evolution_run_row(req.model_dump(exclude_none=True) if hasattr(req, "model_dump") else req.dict(exclude_none=True))
+    return {"status": "success", "row": _safe_json_obj(row)}
+
+
+@app.put("/api/evolution/runs/{run_id}")
+async def api_evolution_runs_update(run_id: str, req: EvolutionRunUpsertRequest):
+    payload = req.model_dump(exclude_none=True) if hasattr(req, "model_dump") else req.dict(exclude_none=True)
+    row = _save_evolution_run_row(payload, original_run_id=str(run_id or "").strip())
+    return {"status": "success", "row": _safe_json_obj(row)}
+
+
+@app.delete("/api/evolution/runs/{run_id}")
+async def api_evolution_runs_delete(run_id: str):
+    deleted = _delete_evolution_run_row(str(run_id or "").strip())
+    return {"status": "success", "deleted": bool(deleted)}
+
+
+@app.get("/api/evolution/family_stats")
+async def api_evolution_family_stats(
+    limit: int = 100,
+    offset: int = 0,
+    family: Optional[str] = None,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+):
+    result = _query_evolution_family_rows(
+        limit=max(1, min(int(limit or 100), 500)),
+        offset=max(0, int(offset or 0)),
+        family=str(family or "").strip(),
+        start_time=str(start_time or "").strip(),
+        end_time=str(end_time or "").strip(),
+    )
+    rows = result.get("rows", []) if isinstance(result.get("rows"), list) else []
+    family_weights = evolution_gene_adapter.get_family_weight_snapshot()
+    cfg = ConfigLoader.reload()
+    family_alert_threshold = float(cfg.get("evolution.gene.family_alert_threshold", 0.18) or 0.18)
+    if isinstance(family_weights, dict):
+        family_weights["alert_threshold"] = family_alert_threshold
+    return {
+        "status": "success",
+        "enabled": bool(result.get("enabled", False)),
+        "rows": rows,
+        "count": int(result.get("count", 0) or 0),
+        "limit": int(result.get("limit", limit) or limit),
+        "offset": int(result.get("offset", offset) or offset),
+        "family_weights": family_weights if isinstance(family_weights, dict) else {},
+        "family_alert_threshold": family_alert_threshold,
+        "error": str(result.get("error", "") or ""),
+    }
+
+
+@app.post("/api/evolution/family")
+async def api_evolution_family_create(req: EvolutionFamilyUpsertRequest):
+    row = _save_evolution_family_row(req.model_dump(exclude_none=True) if hasattr(req, "model_dump") else req.dict(exclude_none=True))
+    return {"status": "success", "row": _safe_json_obj(row)}
+
+
+@app.put("/api/evolution/family/{family}")
+async def api_evolution_family_update(family: str, req: EvolutionFamilyUpsertRequest):
+    payload = req.model_dump(exclude_none=True) if hasattr(req, "model_dump") else req.dict(exclude_none=True)
+    row = _save_evolution_family_row(payload, original_family=str(family or "").strip())
+    return {"status": "success", "row": _safe_json_obj(row)}
+
+
+@app.delete("/api/evolution/family/{family}")
+async def api_evolution_family_delete(family: str):
+    deleted = _delete_evolution_family_row(str(family or "").strip())
+    return {"status": "success", "deleted": bool(deleted)}
+
+
+@app.get("/api/evolution/platform/overview")
+async def api_evolution_platform_overview():
+    return {"status": "success", **evolution_platform_hub.get_overview()}
+
+
+@app.get("/api/evolution/platform/risk/overview")
+async def api_evolution_platform_risk_overview():
+    return {"status": "success", **evolution_platform_hub.get_risk_overview(), "performance": evolution_platform_hub.get_risk_performance()}
+
+
+@app.get("/api/evolution/platform/risk/strategies/{strategy_id}")
+async def api_evolution_platform_risk_strategy(strategy_id: str):
+    payload = evolution_platform_hub.get_strategy_risk(strategy_id)
+    return {"status": "success" if payload.get("status") != "error" else "error", "data": payload}
+
+
+@app.get("/api/evolution/platform/risk/strategies/{strategy_id}/history")
+async def api_evolution_platform_risk_strategy_history(strategy_id: str, hours: int = 24):
+    payload = evolution_platform_hub.get_strategy_risk_history(strategy_id, hours=hours)
+    return {"status": "success" if payload.get("status") != "error" else "error", "data": payload}
+
+
+@app.post("/api/evolution/platform/risk/assess")
+async def api_evolution_platform_risk_assess(req: EvolutionPlatformRiskAssessRequest):
+    payload = evolution_platform_hub.assess_strategy_risk(
+        strategy_id=str(req.strategy_id or "").strip(),
+        backtest_results=req.backtest_results or {},
+        strategy_data=req.strategy_data or {},
+    )
+    return {"status": "success", "data": payload}
+
+
+@app.post("/api/evolution/platform/compliance/check")
+async def api_evolution_platform_compliance_check(req: EvolutionPlatformComplianceCheckRequest):
+    payload = evolution_platform_hub.check_compliance(
+        strategy_id=str(req.strategy_id or "").strip(),
+        data=req.data or {},
+    )
+    return {"status": "success", "data": payload}
+
+
+@app.get("/api/evolution/platform/deployments")
+async def api_evolution_platform_deployments(strategy_id: Optional[str] = None, limit: int = 20):
+    rows = evolution_platform_hub.get_deployments(strategy_id=str(strategy_id or "").strip() or None, limit=limit)
+    return {"status": "success", "rows": rows, "count": len(rows)}
+
+
+@app.get("/api/evolution/platform/deployments/{deployment_id}")
+async def api_evolution_platform_deployment_detail(deployment_id: str):
+    payload = evolution_platform_hub.get_deployment_detail(deployment_id)
+    return {"status": "success" if payload.get("status") != "error" else "error", "data": payload}
+
+
+@app.get("/api/evolution/platform/alerts")
+async def api_evolution_platform_alerts(hours: int = 24, level: Optional[str] = None, strategy_id: Optional[str] = None):
+    rows = evolution_platform_hub.get_alerts(hours=hours, level=level, strategy_id=str(strategy_id or "").strip() or None)
+    return {"status": "success", "rows": rows, "count": len(rows)}
+
+
+@app.get("/api/evolution/platform/alerts/stats")
+async def api_evolution_platform_alert_stats():
+    return {"status": "success", "data": evolution_platform_hub.get_alert_stats()}
+
+
+@app.get("/api/evolution/platform/backup/status")
+async def api_evolution_platform_backup_status():
+    return {"status": "success", "data": evolution_platform_hub.get_backup_status()}
+
+
+@app.get("/api/evolution/platform/backup/list")
+async def api_evolution_platform_backup_list(data_key: Optional[str] = None, source_type: Optional[str] = None):
+    rows = evolution_platform_hub.list_backups(data_key=data_key, source_type=source_type)
+    return {"status": "success", "rows": rows, "count": len(rows)}
+
+
+@app.get("/api/evolution/platform/recovery/stats")
+async def api_evolution_platform_recovery_stats():
+    return {"status": "success", "data": evolution_platform_hub.get_recovery_stats()}
+
+
+@app.post("/api/evolution/platform/deployments")
+async def api_evolution_platform_start_deployment(req: EvolutionPlatformDeploymentStartRequest):
+    payload = evolution_platform_hub.start_deployment(
+        strategy_id=str(req.strategy_id or "").strip(),
+        version=req.version,
+        environment=str(req.environment or "production").strip() or "production",
+        strategy_data=req.strategy_data or {},
+        auto_deploy=bool(req.auto_deploy),
+        require_approval=bool(req.require_approval),
+        rollback_enabled=bool(req.rollback_enabled),
+    )
+    return {"status": payload.get("status", "success"), "data": payload}
+
+
+@app.post("/api/evolution/platform/deployments/{deployment_id}/cancel")
+async def api_evolution_platform_cancel_deployment(deployment_id: str):
+    payload = evolution_platform_hub.cancel_deployment(deployment_id)
+    return {"status": payload.get("status", "success"), "data": payload}
+
+
+@app.post("/api/evolution/platform/alerts/test")
+async def api_evolution_platform_test_alert(req: EvolutionPlatformAlertTestRequest):
+    payload = await evolution_platform_hub.send_test_alert(
+        title=str(req.title or "").strip(),
+        content=str(req.content or "").strip(),
+        level=str(req.level or "warning").strip() or "warning",
+        strategy_id=str(req.strategy_id or "").strip() or None,
+        channels=req.channels or [],
+        source=str(req.source or "platform_manual").strip() or "platform_manual",
+        metadata=req.metadata or {},
+    )
+    return {"status": payload.get("status", "success"), "data": payload}
+
+
+@app.post("/api/evolution/platform/alerts/channels/{channel}/enable")
+async def api_evolution_platform_enable_alert_channel(channel: str):
+    payload = await evolution_platform_hub.set_alert_channel_state(channel, True)
+    return {"status": payload.get("status", "success"), "data": payload}
+
+
+@app.post("/api/evolution/platform/alerts/channels/{channel}/disable")
+async def api_evolution_platform_disable_alert_channel(channel: str):
+    payload = await evolution_platform_hub.set_alert_channel_state(channel, False)
+    return {"status": payload.get("status", "success"), "data": payload}
+
+
+@app.post("/api/evolution/platform/backup/run")
+async def api_evolution_platform_run_backup(req: EvolutionPlatformBackupRunRequest):
+    payload = evolution_platform_hub.trigger_backup(
+        data_key=str(req.data_key or "").strip(),
+        data=req.data,
+        source_type=req.source_type,
+    )
+    return {"status": payload.get("status", "success"), "data": payload}
+
+
+@app.post("/api/evolution/platform/backup/restore")
+async def api_evolution_platform_restore_backup(req: EvolutionPlatformBackupRestoreRequest):
+    payload = evolution_platform_hub.restore_backup(
+        data_key=str(req.data_key or "").strip(),
+        source_type=req.source_type,
+    )
+    return {"status": payload.get("status", "success"), "data": payload}
+
+
+@app.post("/api/evolution/platform/recovery/circuit-breaker/reset")
+async def api_evolution_platform_reset_circuit_breaker(req: EvolutionPlatformCircuitBreakerResetRequest):
+    payload = evolution_platform_hub.reset_circuit_breaker(str(req.name or "").strip())
+    return {"status": payload.get("status", "success"), "data": payload}
 
 
 @app.get("/api/live/fund_pool")
@@ -7011,7 +7859,6 @@ async def _broadcast_system_and_notify(msg: str, stock_codes=None):
     if _should_notify_webhook_by_category(event_type="system", data=notify_data):
         await webhook_notifier.notify(event_type="system", data=notify_data, stock_code=notify_stock_code)
 
-@app.on_event("startup")
 async def startup_event():
     global history_sync_scheduler_task, startup_server_host, startup_server_port, evolution_ws_pump_task, live_auto_start_scheduler_task
     _apply_log_level()
@@ -7037,6 +7884,8 @@ async def startup_event():
         # 自动实盘启动调度器始终常驻，由运行模式决定是否触发。
         live_auto_start_scheduler_task = asyncio.create_task(_live_auto_start_scheduler_loop())
     evolution_runtime.set_event_sink(_push_evolution_ws_event)
+    evolution_platform_hub.set_event_sink(_push_evolution_ws_event)
+    evolution_platform_hub.start_services(auto_backup=bool(cfg.get("evolution.platform.auto_backup_enabled", False)))
     if evolution_ws_pump_task is None or evolution_ws_pump_task.done():
         evolution_ws_pump_task = asyncio.create_task(_evolution_ws_pump_loop())
     server_host = startup_server_host if startup_server_host else _server_host(cfg)
@@ -7044,7 +7893,6 @@ async def startup_event():
     access_host = "localhost" if server_host in {"0.0.0.0", "::"} else server_host
     logger.info(f"Server Started. Access dashboard at http://{access_host}:{server_port}")
 
-@app.on_event("shutdown")
 async def shutdown_event():
     global history_sync_scheduler_task, evolution_ws_pump_task, live_auto_start_scheduler_task
     if not str(SERVER_SHUTDOWN_CONTEXT.get("reason", "") or "").strip():
@@ -7071,6 +7919,7 @@ async def shutdown_event():
         live_auto_start_scheduler_task.cancel()
     evolution_runtime.set_event_sink(None)
     evolution_runtime.stop()
+    await evolution_platform_hub.stop_services()
     if evolution_ws_pump_task and not evolution_ws_pump_task.done():
         evolution_ws_pump_task.cancel()
 

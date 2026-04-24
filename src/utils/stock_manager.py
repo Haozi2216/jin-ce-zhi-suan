@@ -17,15 +17,15 @@ class StockManager:
             try:
                 df = pd.read_csv(self.data_path)
                 self.stocks = df.to_dict('records')
-                print(f"✅ Loaded {len(self.stocks)} stocks from local cache.")
+                print(f"[OK] Loaded {len(self.stocks)} stocks from local cache.")
                 return
             except Exception as e:
-                print(f"⚠️ Failed to load local stock list: {e}")
+                print(f"[WARN] Failed to load local stock list: {e}")
 
         # 2. Try to fetch from Akshare (if available)
         # Note: Akshare might be blocked, so we wrap in try/except
         try:
-            print("🌐 Fetching stock list from Akshare...")
+            print("[INFO] Fetching stock list from Akshare...")
             # This interface is usually more stable than real-time quotes
             df = ak.stock_info_a_code_name() 
             # df columns: code, name
@@ -40,13 +40,13 @@ class StockManager:
             # Save to CSV
             os.makedirs(os.path.dirname(self.data_path), exist_ok=True)
             df.to_csv(self.data_path, index=False)
-            print(f"✅ Fetched and saved {len(self.stocks)} stocks.")
+            print(f"[OK] Fetched and saved {len(self.stocks)} stocks.")
             return
         except Exception as e:
-            print(f"⚠️ Akshare fetch failed: {e}")
+            print(f"[WARN] Akshare fetch failed: {e}")
 
         # 3. Fallback: Hardcoded Popular Stocks
-        print("⚠️ Using fallback stock list.")
+        print("[WARN] Using fallback stock list.")
         self.stocks = [
             {"code": "600519", "name": "贵州茅台", "pinyin": "GZMT"},
             {"code": "300750", "name": "宁德时代", "pinyin": "NDSD"},

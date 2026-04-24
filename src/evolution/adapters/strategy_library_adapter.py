@@ -54,6 +54,10 @@ class StrategyLibraryAdapter:
         metrics: Dict[str, Any],
         kline_type: str,
         stock_codes: List[str],
+        child_gene_id: str = "",
+        child_gene_parent_ids: Optional[List[str]] = None,
+        child_gene_fingerprint: str = "",
+        child_gene: Optional[Dict[str, Any]] = None,
     ) -> Optional[Dict[str, Any]]:
         sid = strategy_repo.next_custom_strategy_id()
         parent_id = str(parent_strategy_id or "").strip() or "unknown"
@@ -64,6 +68,16 @@ class StrategyLibraryAdapter:
         now = datetime.now().isoformat(timespec="seconds")
         metric_text = json.dumps(metrics if isinstance(metrics, dict) else {}, ensure_ascii=False)
         stock_text = ",".join([str(x).strip() for x in stock_codes if str(x).strip()])
+        # Keep gene lineage metadata in existing text fields to avoid schema changes.
+        gene_meta = {
+            "child_gene_id": str(child_gene_id or "").strip(),
+            "child_gene_parent_ids": [
+                str(x).strip() for x in (child_gene_parent_ids or []) if str(x).strip()
+            ],
+            "child_gene_fingerprint": str(child_gene_fingerprint or "").strip(),
+            "child_gene": child_gene if isinstance(child_gene, dict) else {},
+        }
+        gene_text = json.dumps(gene_meta, ensure_ascii=False, sort_keys=True)
         intent = {
             "source": "market",
             "strategy_type": "trend_following",
@@ -80,14 +94,14 @@ class StrategyLibraryAdapter:
             "class_name": self._extract_class_name(rewritten),
             "code": rewritten,
             "kline_type": str(kline_type or "1min"),
-            "template_text": f"Evolution parent={parent_id} version=v{version}",
-            "analysis_text": f"Evolution成功入库；parent={parent_id}; version=v{version}; score={float(score):.6f}",
+            "template_text": f"Evolution parent={parent_id} version=v{version}; gene={gene_text}",
+            "analysis_text": f"Evolution成功入库；parent={parent_id}; version=v{version}; score={float(score):.6f}; gene_id={gene_meta['child_gene_id']}",
             "source": "market",
             "protect_level": "custom",
             "immutable": False,
             "depends_on": [parent_id],
             "raw_requirement_title": "策略进化新增版本",
-            "raw_requirement": f"parent={parent_id}; parent_name={parent_name}; version=v{version}; stocks={stock_text}; metrics={metric_text}; created_at={now}",
+            "raw_requirement": f"parent={parent_id}; parent_name={parent_name}; version=v{version}; stocks={stock_text}; metrics={metric_text}; gene={gene_text}; created_at={now}",
             "strategy_intent": intent,
         }
         try:
@@ -100,6 +114,9 @@ class StrategyLibraryAdapter:
             "parent_strategy_id": parent_id,
             "version": version,
             "kline_type": str(kline_type or "1min"),
+            "child_gene_id": gene_meta.get("child_gene_id", ""),
+            "child_gene_parent_ids": gene_meta.get("child_gene_parent_ids", []),
+            "child_gene_fingerprint": gene_meta.get("child_gene_fingerprint", ""),
         }
 
     def _rewrite_strategy_identity(self, code: str, strategy_id: str, strategy_name: str, kline_type: str) -> str:

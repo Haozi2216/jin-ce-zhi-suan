@@ -5,6 +5,7 @@ matplotlib
 mplfinance
 pymysql
 psycopg2-binary
+duckdb
 requests
 tushare
 akshare

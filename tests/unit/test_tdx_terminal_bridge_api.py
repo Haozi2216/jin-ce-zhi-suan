@@ -264,7 +264,53 @@ def test_api_set_source_supports_tdx(monkeypatch):
     assert resp["live_restarted"] is False
 
 
-def test_api_test_tdx_connectivity_autodetect_success(monkeypatch):
+def test_api_set_source_supports_duckdb(monkeypatch):
+    class _DummyCfg:
+        def __init__(self):
+            self._data = {"data_provider": {"source": "default"}}
+
+        def get(self, key, default=None):
+            cur = self._data
+            try:
+                for part in str(key).split("."):
+                    cur = cur[part]
+                return cur
+            except Exception:
+                return default
+
+        def set(self, key, value):
+            keys = str(key).split(".")
+            cur = self._data
+            for part in keys[:-1]:
+                if part not in cur or not isinstance(cur[part], dict):
+                    cur[part] = {}
+                cur = cur[part]
+            cur[keys[-1]] = value
+
+        def save(self):
+            return None
+
+    class _FakeLoader:
+        _cfg = _DummyCfg()
+
+        @classmethod
+        def reload(cls, config_path="config.json"):
+            return cls._cfg
+
+    async def _fake_broadcast(_msg):
+        return None
+
+    monkeypatch.setattr(server, "ConfigLoader", _FakeLoader)
+    monkeypatch.setattr(server, "_live_running_codes", lambda: [])
+    monkeypatch.setattr(server.manager, "broadcast", _fake_broadcast)
+
+    req = server.SourceSwitchRequest(source="duckdb")
+    resp = asyncio.run(server.api_set_source(req))
+    assert resp["status"] == "success"
+    assert resp["source"] == "duckdb"
+    assert resp["live_restarted"] is False
+
+
     class _DummyCfg:
         def get(self, key, default=None):
             if key == "data_provider.tdxdir":

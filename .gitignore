@@ -24,3 +24,12 @@ data/reports/
 scripts/push_dual_repo.ps1
 data/batch_tasks/
 data/策略汇总评分.csv
+tests/e2e/node_modules/
+tests/e2e/playwright-report/
+tests/e2e/test-results/
+data/
+CLAUDE.MD
+tests/
+run_stress_tests.py
+.claude/
+.github/

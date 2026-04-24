@@ -22,6 +22,7 @@ from src.utils.tushare_provider import TushareProvider
 from src.utils.akshare_provider import AkshareProvider
 from src.utils.mysql_provider import MysqlProvider
 from src.utils.postgres_provider import PostgresProvider
+from src.utils.duckdb_provider import DuckDbProvider
 from src.utils.tdx_provider import TdxProvider
 from src.utils.indicators import Indicators
 from src.utils.config_loader import ConfigLoader
@@ -51,6 +52,9 @@ class LiveCabinet:
         elif self.provider_type == 'postgresql':
             self.provider = PostgresProvider()
             print("🌐 Data Source: PostgreSQL")
+        elif self.provider_type == 'duckdb':
+            self.provider = DuckDbProvider()
+            print("🌐 Data Source: DuckDB")
         elif self.provider_type == 'tdx':
             self.provider = TdxProvider()
             print("🌐 Data Source: TDX")
@@ -64,12 +68,12 @@ class LiveCabinet:
             except Exception:
                 self._tushare_fallback_provider = None
         sync_enabled = bool(self.config.get("live_monitoring.realtime_sync_to_default.enabled", True))
-        sync_sources = self.config.get("live_monitoring.realtime_sync_to_default.sources", ["tushare", "akshare", "mysql", "postgresql", "tdx"])
+        sync_sources = self.config.get("live_monitoring.realtime_sync_to_default.sources", ["tushare", "akshare", "mysql", "postgresql", "duckdb", "tdx"])
         sync_on_duplicate = str(self.config.get("live_monitoring.realtime_sync_to_default.on_duplicate", "update") or "update").strip().lower()
         if sync_on_duplicate not in {"ignore", "update", "replace"}:
             sync_on_duplicate = "update"
         if not isinstance(sync_sources, list):
-            sync_sources = ["tushare", "akshare", "mysql", "postgresql", "tdx"]
+            sync_sources = ["tushare", "akshare", "mysql", "postgresql", "duckdb", "tdx"]
         source_allow = {str(x or "").strip().lower() for x in sync_sources if str(x or "").strip()}
         self._rt_sync_to_default_enabled = bool(sync_enabled and (self.provider_type in source_allow))
         self._rt_sync_to_default_on_duplicate = sync_on_duplicate

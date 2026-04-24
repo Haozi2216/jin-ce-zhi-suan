@@ -1,7 +1,7 @@
 {
   "system": {
-    "mode": "live",
-    "enable_live": true,
+    "mode": "backtest",
+    "enable_live": false,
     "initial_capital": 1000000,
     "live_kline_log_on_change_only": true,
     "log_level": "INFO",
@@ -21,7 +21,9 @@
       "webhook_notification.feishu_webhook_url",
       "webhook_notification.feishu_secret",
       "evolution.llm.api_key"
-    ]
+    ],
+    "live_auto_start_enabled": false,
+    "live_auto_start_time": "09:20"
   },
   "data_provider": {
     "source": "tdx",
@@ -62,16 +64,25 @@
     "postgres_table_30min": "dat_30mins",
     "postgres_table_60min": "dat_60mins",
     "postgres_table_day": "dat_day",
+    "duckdb_path": "G:\\duckdb\\quantifydata.duckdb",
+    "duckdb_query_page_size": 20000,
+    "duckdb_table_1min": "dat_1mins",
+    "duckdb_table_5min": "dat_5mins",
+    "duckdb_table_10min": "dat_10mins",
+    "duckdb_table_15min": "dat_15mins",
+    "duckdb_table_30min": "dat_30mins",
+    "duckdb_table_60min": "dat_60mins",
+    "duckdb_table_day": "dat_day",
     "backtest_cache_db_source": "",
     "llm_api_url": "https://api.siliconflow.cn/v1",
     "llm_api_key": "",
-    "llm_model": "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+    "llm_model": "Qwen/Qwen3-VL-235B-A22B-Instruct",
     "strategy_llm_api_url": "https://api.siliconflow.cn/v1",
     "strategy_llm_api_key": "",
-    "strategy_llm_model": "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+    "strategy_llm_model": "Qwen/Qwen3-VL-235B-A22B-Instruct",
     "strategy_llm_timeout_sec": 240,
     "api_key": "",
-    "adjustment_mode": "hfq",
+    "adjustment_mode": "none",
     "tdxdir": "D:\\new_tdx64",
     "tdx_host": "",
     "tdx_port": 0,
@@ -85,8 +96,8 @@
     "interval_minutes": 60,
     "time_mode": "custom",
     "lookback_days": 20,
-    "custom_start_time": "2026-03-01 09:30:00",
-    "custom_end_time": "2026-03-31 15:00:00",
+    "custom_start_time": "2026-04-01 09:30:00",
+    "custom_end_time": "2026-04-01 15:00:00",
     "session_only": true,
     "intraday_mode": false,
     "max_codes": 10000,
@@ -102,8 +113,8 @@
     ],
     "dry_run": false,
     "on_duplicate": "ignore",
-    "write_mode": "api",
-    "direct_db_source": "mysql"
+    "write_mode": "direct_db",
+    "direct_db_source": "duckdb"
   },
   "targets": [],
   "strategies": {
@@ -243,7 +254,7 @@
         }
       }
     },
-    "last_applied_profile": "cn_equity_mid_long",
+    "last_applied_profile": "cn_equity_intraday",
     "last_applied_market": "A股"
   },
   "live_monitoring": {
@@ -254,7 +265,8 @@
         "tushare",
         "akshare",
         "mysql",
-        "postgresql"
+        "postgresql",
+        "duckdb"
       ],
       "on_duplicate": "update"
     },
@@ -408,14 +420,157 @@
       "temperature": 0.2,
       "max_tokens": 1200,
       "system_prompt": "你是量化策略生成助手。只输出可执行Python策略代码（不要解释、不要markdown）。必须继承BaseImplementedStrategy，并实现on_bar。禁止使用未来函数/回看偏差。遵守A股规则：T+1、涨停不可买、跌停不可卖。"
+    },
+    "data_sources": {
+      "health_check_interval": 30,
+      "cache_ttl": 300,
+      "max_retry_attempts": 3,
+      "circuit_breaker_threshold": 5,
+      "circuit_breaker_timeout": 300,
+      "sources": [
+        {
+          "name": "primary_api",
+          "source_type": "primary",
+          "connection_params": {
+            "url": "",
+            "api_key": "",
+            "timeout": 30
+          },
+          "priority": 1,
+          "enabled": true,
+          "retry_count": 3,
+          "retry_delay": 1
+        },
+        {
+          "name": "tushare_backup",
+          "source_type": "secondary",
+          "connection_params": {
+            "token": "",
+            "timeout": 30
+          },
+          "priority": 2,
+          "enabled": true,
+          "retry_count": 2,
+          "retry_delay": 2
+        },
+        {
+          "name": "local_cache",
+          "source_type": "cache",
+          "connection_params": {
+            "cache_dir": "data/history/cache"
+          },
+          "priority": 3,
+          "enabled": true,
+          "read_only": true
+        }
+      ]
+    },
+    "error_recovery": {
+      "enabled": true,
+      "max_error_history": 1000,
+      "recovery_policies": {
+        "network_error": {
+          "actions": [
+            "retry",
+            "fallback"
+          ],
+          "max_attempts": 3,
+          "base_delay": 2,
+          "max_delay": 30,
+          "fallback_sources": [
+            "tushare_backup",
+            "local_cache"
+          ]
+        },
+        "timeout_error": {
+          "actions": [
+            "retry",
+            "degrade"
+          ],
+          "max_attempts": 2,
+          "base_delay": 1,
+          "max_delay": 10
+        },
+        "rate_limit_error": {
+          "actions": [
+            "retry",
+            "degrade"
+          ],
+          "max_attempts": 2,
+          "base_delay": 5,
+          "max_delay": 60
+        },
+        "data_error": {
+          "actions": [
+            "fallback",
+            "ignore"
+          ],
+          "fallback_sources": [
+            "local_cache"
+          ]
+        },
+        "system_error": {
+          "actions": [
+            "circuit_break",
+            "escalate"
+          ],
+          "escalation_threshold": 3
+        }
+      }
+    },
+    "profile_update_store": {
+      "enabled": false,
+      "table": "evolution_profile_updates",
+      "schema": "evolution",
+      "cleanup_days": 30
+    },
+    "gene_run_store": {
+      "enabled": false,
+      "table": "evolution_gene_runs",
+      "schema": "evolution",
+      "cleanup_days": 7
+    },
+    "alerts": {
+      "email": {
+        "enabled": false,
+        "level_threshold": "warning",
+        "rate_limit": 5,
+        "smtp_server": "smtp.gmail.com",
+        "smtp_port": 587,
+        "username": "",
+        "password": "",
+        "recipients": []
+      },
+      "feishu": {
+        "enabled": false,
+        "level_threshold": "warning",
+        "rate_limit": 10,
+        "webhook_url": ""
+      },
+      "dingtalk": {
+        "enabled": false,
+        "level_threshold": "warning",
+        "rate_limit": 10,
+        "webhook_url": "",
+        "secret": ""
+      },
+      "webhook": {
+        "enabled": false,
+        "level_threshold": "error",
+        "rate_limit": 20,
+        "url": "",
+        "method": "POST",
+        "headers": {},
+        "custom_fields": {}
+      }
     }
   },
   "fundamental_adapter": {
     "enabled": true,
     "apply_in_backtest": true,
-    "apply_in_live": false,
+    "apply_in_live": true,
     "prefetch_on_backtest_start": true,
-    "provider": "tushare",
+    "provider": "tdx",
     "cache_ttl_sec": 0,
     "min_refresh_interval_sec": 0,
     "tushare_interfaces": {
