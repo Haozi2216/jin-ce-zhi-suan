@@ -34,3 +34,6 @@ run_stress_tests.py
 .claude/
 .github/
 .claude_consistency_ui_check.js
+evolution_backups/
+deployment_workspace/
+releases/

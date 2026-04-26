@@ -112,7 +112,7 @@ flowchart LR
 ```
 
 **项目答疑咨询** 
-<span style="color:red">**⚠️ 当前知识星球是唯一提供项目答疑、教程和技术咨询的官方平台。**</span>
+
 
 - 星球内容
   - 金策智算安装、部署、配置一站式教程
@@ -214,23 +214,6 @@ setx CUSTOM_STRATEGIES_WRITE_PRIVATE "1"
 
 ### 4. 手动启动&一键启动方式
 
-回测模式：
-
-```bash
-python main.py
-```
-
-命令行回测：
-
-```bash
-python run_backtest.py --stock 600036.SH --start 2025-01-01 --end 2025-12-31 --capital 1000000
-```
-
-实盘监控：
-
-```bash
-python run_live.py
-```
 
 启动 Web 面板（实际只需要启动server，剩下的都会启动）：
 
