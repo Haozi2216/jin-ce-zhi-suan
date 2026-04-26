@@ -33,3 +33,4 @@ tests/
 run_stress_tests.py
 .claude/
 .github/
+.claude_consistency_ui_check.js

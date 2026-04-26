@@ -54,6 +54,44 @@ def test_tdx_provider_check_connectivity_by_quotes(monkeypatch):
     assert msg == "ok"
 
 
+def test_tdx_provider_describe_mode_without_vipdoc(monkeypatch):
+    p = TdxProvider()
+    monkeypatch.setattr(p, "_has_valid_tdxdir", lambda: False)
+    p.provider_mode = "network_mirror"
+    mode = p.describe_mode()
+    assert mode["provider_mode"] == "network_mirror"
+    assert mode["has_vipdoc"] is False
+    assert mode["cache_dir"]
+
+
+
+def test_tdx_provider_check_connectivity_pass_with_network_mirror(monkeypatch):
+    p = TdxProvider()
+    monkeypatch.setattr(p, "_quotes_bars", lambda raw_code: pd.DataFrame())
+    monkeypatch.setattr(p, "_reader_daily", lambda raw_code: pd.DataFrame())
+    monkeypatch.setattr(p, "_quotes_snapshot", lambda raw_code: pd.DataFrame())
+    monkeypatch.setattr(p, "_load_cached_daily_data", lambda code, s, e: (pd.DataFrame(), False))
+    monkeypatch.setattr(p, "_ensure_reader", lambda: None)
+    monkeypatch.setattr(p, "_ensure_quotes", lambda: object())
+    monkeypatch.setattr(p, "_has_valid_tdxdir", lambda: False)
+    ok, msg = p.check_connectivity("600000.SH")
+    assert ok is True
+    assert msg == "ok_network_mirror"
+
+
+
+def test_tdx_provider_fetch_daily_from_cache_without_vipdoc(monkeypatch):
+    p = TdxProvider()
+    start = datetime.now().replace(second=0, microsecond=0) - timedelta(days=3)
+    cached_daily = pd.DataFrame(_build_rows(start, 3, step_min=24 * 60))
+    monkeypatch.setattr(p, "_load_cached_daily_data", lambda code, s, e: (p._normalize_ohlcv_df(cached_daily, code=code), True))
+    monkeypatch.setattr(p, "_reader_daily", lambda raw_code: pd.DataFrame())
+    out = p.fetch_kline_data("600000.SH", start, datetime.now(), interval="D")
+    assert isinstance(out, pd.DataFrame)
+    assert not out.empty
+    assert "dt" in out.columns
+
+
 def test_tdx_provider_get_latest_bar_from_quotes(monkeypatch):
     p = TdxProvider()
     now = datetime.now().replace(second=0, microsecond=0)
@@ -105,7 +143,9 @@ def test_tdx_provider_connectivity_pass_with_valid_reader(monkeypatch):
     monkeypatch.setattr(p, "_quotes_bars", lambda raw_code: pd.DataFrame())
     monkeypatch.setattr(p, "_reader_daily", lambda raw_code: pd.DataFrame())
     monkeypatch.setattr(p, "_quotes_snapshot", lambda raw_code: pd.DataFrame())
+    monkeypatch.setattr(p, "_load_cached_daily_data", lambda code, s, e: (pd.DataFrame(), False))
     monkeypatch.setattr(p, "_ensure_reader", lambda: object())
+    monkeypatch.setattr(p, "_ensure_quotes", lambda: None)
     monkeypatch.setattr(p, "_has_valid_tdxdir", lambda: True)
     ok, msg = p.check_connectivity("600000.SH")
     assert ok is True

@@ -1,4 +1,5 @@
 import os
+import platform
 from datetime import datetime
 from typing import Any, Optional
 
@@ -30,6 +31,8 @@ class TdxProvider:
         os.makedirs(self._cache_dir, exist_ok=True)
         self._reader = None
         self._quotes = None
+        self.runtime_platform = str(platform.system() or "").strip().lower() or os.name
+        self.provider_mode = "local_vipdoc" if self._has_valid_tdxdir() else "network_mirror"
 
     def _candidate_quote_servers(self):
         out = []
@@ -92,6 +95,16 @@ class TdxProvider:
     def _cache_file_path(self, code, interval="1min"):
         safe_code = str(code).upper().replace(".", "_")
         return os.path.join(self._cache_dir, f"tdx_{safe_code}_{interval}.csv")
+
+    def describe_mode(self):
+        has_vipdoc = self._has_valid_tdxdir()
+        return {
+            "platform": self.runtime_platform,
+            "provider_mode": self.provider_mode,
+            "has_vipdoc": has_vipdoc,
+            "tdxdir": str(self.tdxdir or "").strip(),
+            "cache_dir": self._cache_dir,
+        }
 
     def _normalize_symbol(self, code):
         c = str(code or "").strip().upper()
@@ -246,6 +259,41 @@ class TdxProvider:
         out = out.dropna(subset=["dt", "open", "high", "low", "close"])
         out = out.sort_values("dt").drop_duplicates(subset=["dt"]).reset_index(drop=True)
         return out
+
+    def _load_cached_daily_data(self, code, start_time, end_time):
+        if not self._cache_enabled:
+            return pd.DataFrame(), False
+        path = self._cache_file_path(code, "D")
+        if not os.path.exists(path):
+            return pd.DataFrame(), False
+        try:
+            df = pd.read_csv(path)
+            df = self._normalize_ohlcv_df(df, code=code)
+            if df.empty:
+                return pd.DataFrame(), False
+            full_coverage = df["dt"].min() <= start_time and df["dt"].max() >= end_time
+            df_range = df[(df["dt"] >= start_time) & (df["dt"] <= end_time)].copy()
+            return df_range, bool(full_coverage and not df_range.empty)
+        except Exception:
+            return pd.DataFrame(), False
+
+    def _save_daily_cache(self, code, df):
+        if not self._cache_enabled or df is None or df.empty:
+            return
+        path = self._cache_file_path(code, "D")
+        try:
+            df_save = self._normalize_ohlcv_df(df, code=code)
+            if df_save.empty:
+                return
+            if os.path.exists(path):
+                old_df = pd.read_csv(path)
+                old_df = self._normalize_ohlcv_df(old_df, code=code)
+                if not old_df.empty:
+                    df_save = pd.concat([old_df, df_save], ignore_index=True)
+                    df_save = self._normalize_ohlcv_df(df_save, code=code)
+            df_save.to_csv(path, index=False, encoding="utf-8")
+        except Exception:
+            return
 
     def _load_cached_minute_data(self, code, start_time, end_time):
         if not self._cache_enabled:
@@ -433,15 +481,23 @@ class TdxProvider:
         if not df_d.empty:
             self.last_error = ""
             return True, "ok_local"
+        cached_daily, _ = self._load_cached_daily_data(code, pd.Timestamp(datetime.now()) - pd.Timedelta(days=30), pd.Timestamp(datetime.now()))
+        if not cached_daily.empty:
+            self.last_error = ""
+            return True, "ok_cache"
         # Quotes 可能因网络/节点不可用返回空；若本地 Reader 可初始化且目录有效，
         # 放行预检查，后续数据拉取阶段再按真实数据可得性判定。
         reader = self._ensure_reader()
         if reader is not None and self._has_valid_tdxdir():
             self.last_error = ""
             return True, "ok_reader"
+        quotes = self._ensure_quotes()
+        if quotes is not None:
+            self.last_error = ""
+            return True, "ok_network_mirror"
         if self.last_error:
             return False, self.last_error
-        return False, "mootdx 连通性检查失败（bars/daily均为空）"
+        return False, "mootdx 连通性检查失败（bars/daily/cache均为空）"
 
     def fetch_minute_data(self, code, start_time, end_time):
         st = pd.to_datetime(start_time, errors="coerce")
@@ -451,6 +507,7 @@ class TdxProvider:
             return pd.DataFrame()
         cached_df, cache_hit = self._load_cached_minute_data(code, st, et)
         if cache_hit:
+            self.last_error = ""
             return cached_df
         raw_code = self._raw_symbol(code)
 
@@ -475,7 +532,10 @@ class TdxProvider:
                     f"请在通达信客户端下载该标的历史数据后重试"
                 )
             else:
-                self.last_error = self.last_error or f"mootdx分钟线为空 code={self._normalize_symbol(code)}"
+                self.last_error = (
+                    self.last_error
+                    or f"mootdx分钟线为空 code={self._normalize_symbol(code)}；当前处于无vipdoc的网络镜像模式，请先扩大回测窗口触发本地缓存积累或检查节点连通性"
+                )
             return pd.DataFrame()
         merged = pd.concat(parts, ignore_index=True)
         merged = self._normalize_ohlcv_df(merged, code=code)
@@ -528,15 +588,26 @@ class TdxProvider:
             return self.fetch_minute_data(code, st, et)
 
         if iv == "D":
+            cached_daily, cache_hit = self._load_cached_daily_data(code, st, et)
+            if cache_hit:
+                self.last_error = ""
+                return cached_daily
             raw_code = self._raw_symbol(code)
             daily = self._normalize_ohlcv_df(self._reader_daily(raw_code), code=code)
             if not daily.empty:
                 out = daily[(daily["dt"] >= st) & (daily["dt"] <= et)].copy()
                 if not out.empty:
+                    self._save_daily_cache(code, out)
                     self.last_error = ""
                     return out
             base = self.fetch_minute_data(code, st, et)
-            return Indicators.resample(base, "D") if not base.empty else pd.DataFrame()
+            if base.empty:
+                return pd.DataFrame()
+            out = Indicators.resample(base, "D")
+            if not out.empty:
+                self._save_daily_cache(code, out)
+                self.last_error = ""
+            return out
 
         base = self.fetch_minute_data(code, st, et)
         if base.empty:

@@ -252,6 +252,8 @@ class ConfigLoader:
 
         public_cfg = json.loads(json.dumps(full_cfg, ensure_ascii=False))
         for path in secret_paths:
+            if not private_exists:
+                continue
             if self._path_exists(public_cfg, path):
                 self._set_path_value(public_cfg, path, "")
         for path in private_only_paths:
@@ -268,6 +270,9 @@ class ConfigLoader:
         if not isinstance(private_cfg, dict):
             private_cfg = {}
         private_changed = False
+
+        if not private_exists:
+            return ConfigLoader.reload(target_path)
 
         for path in secret_paths:
             val = self._get_path_value(full_cfg, path, "")

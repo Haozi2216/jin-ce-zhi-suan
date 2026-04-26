@@ -163,6 +163,17 @@
             overflow-y: auto;
         }
 
+        #consistency-report-modal {
+            background: rgba(15, 23, 42, 0.75);
+            border: 0;
+            box-shadow: none;
+            width: 100vw;
+            height: 100vh;
+            max-width: none;
+            max-height: none;
+            overflow: hidden;
+        }
+
         .cyber-loader {
             width: 64px;
             height: 64px;
@@ -415,6 +426,165 @@
         </div>
     </div>
 
+    <div id="consistency-report-modal" class="hidden fixed inset-0 bg-black/75 z-[148] p-0">
+        <div class="rounded-none p-4 sm:p-5 relative w-full h-full max-w-none bg-slate-900/95 border-0 border-emerald-500/60 flex flex-col overflow-hidden">
+            <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 border-b border-slate-700 pb-3 mb-4 pr-12 shrink-0">
+                <div>
+                    <h2 class="text-2xl font-bold text-white"><i class="fa-solid fa-scale-balanced text-emerald-400 mr-2"></i>一致性对比报告</h2>
+                    <div class="text-xs text-slate-400">查看历史报告，并在需要时发起新的对比。</div>
+                </div>
+                <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full lg:w-auto lg:max-w-[720px]">
+                    <input id="consistency-report-filter-code" type="text" placeholder="按标的代码筛选，例如 600000.SH" onkeydown="if (event.key === 'Enter') loadConsistencyReportList()" class="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-xs text-slate-100 font-mono" />
+                    <button onclick="loadConsistencyReportList()" class="bg-slate-700 hover:bg-slate-600 text-white px-3 py-2 rounded text-xs border border-slate-500 whitespace-nowrap">查询</button>
+                    <button id="consistency-open-compare-drawer-btn" onclick="openConsistencyCompareDrawer()" class="bg-emerald-700 hover:bg-emerald-600 text-white px-3 py-2 rounded text-xs border border-emerald-500 whitespace-nowrap">发起新对比</button>
+                    <button onclick="closeConsistencyReportModal()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-2 rounded text-xs border border-slate-600 whitespace-nowrap">关闭</button>
+                </div>
+            </div>
+            <div class="grid grid-cols-1 xl:grid-cols-12 gap-4 flex-1 min-h-0 overflow-hidden">
+                <div class="xl:col-span-4 bg-slate-800/50 border border-slate-700 rounded-xl p-3 flex flex-col min-h-[260px] xl:min-h-0 overflow-hidden">
+                    <div class="flex items-center justify-between gap-3 mb-2">
+                        <div class="text-sm text-slate-300 font-semibold">报告列表</div>
+                        <div id="consistency-report-list-meta" class="text-[11px] text-slate-400 font-mono">--</div>
+                    </div>
+                    <div class="text-[11px] text-slate-500 mb-3">左侧选一份报告，右侧直接看结论、原因、建议和逐笔对照。</div>
+                    <div id="consistency-report-list" class="flex-1 overflow-auto space-y-2 text-xs font-mono pr-1"></div>
+                </div>
+                <div class="xl:col-span-8 bg-slate-800/50 border border-slate-700 rounded-xl p-4 flex flex-col min-h-[320px] xl:min-h-0 overflow-hidden">
+                    <div class="flex items-center justify-between gap-3 mb-3 shrink-0">
+                        <div>
+                            <div class="text-sm text-slate-300 font-semibold">报告详情</div>
+                            <div class="text-[11px] text-slate-500">默认优先展示最新报告；如需新建对比，请点右上角“发起新对比”。</div>
+                        </div>
+                    </div>
+                    <div id="consistency-report-detail" class="flex-1 overflow-auto text-xs font-mono text-slate-200 space-y-3 pr-1">
+                        <div class="rounded-xl border border-slate-700 bg-slate-900/40 px-4 py-5 text-sm text-slate-400">正在准备报告详情...</div>
+                    </div>
+                </div>
+            </div>
+            <div id="consistency-compare-drawer-backdrop" class="hidden absolute inset-0 bg-black/25 z-[4]" onclick="closeConsistencyCompareDrawer()"></div>
+            <div id="consistency-compare-drawer" class="absolute top-0 right-0 h-full w-[430px] max-w-[94vw] bg-slate-900 border-l border-slate-700 shadow-2xl z-[5] transform translate-x-full opacity-0 pointer-events-none transition-all duration-200">
+                <div class="h-full flex flex-col overflow-hidden">
+                    <div class="px-4 py-3 border-b border-slate-700 flex items-center justify-between gap-3 shrink-0">
+                        <div>
+                            <div class="text-white font-bold"><i class="fa-solid fa-sliders mr-2 text-emerald-300"></i>发起新对比</div>
+                            <div class="text-[11px] text-slate-400 mt-1">这里只负责配置本次对比，生成后会自动回到报告详情。</div>
+                        </div>
+                        <button onclick="closeConsistencyCompareDrawer()" class="w-8 h-8 rounded bg-slate-800 border border-slate-700 text-slate-300 hover:text-white hover:border-rose-500 transition-all" title="关闭抽屉">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                    </div>
+                    <div class="flex-1 overflow-y-auto p-4 space-y-4">
+                        <div class="rounded-xl border border-slate-700 bg-slate-900/50 p-4 space-y-3">
+                            <div class="text-sm font-semibold text-white">实盘范围</div>
+                            <label class="block text-xs text-slate-300">标的代码
+                                <input id="consistency-compare-code" type="text" placeholder="例如 600000.SH" class="mt-1 w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white font-mono uppercase" />
+                            </label>
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <label class="block text-xs text-slate-300">开始日期
+                                    <input id="consistency-compare-start-date" type="date" class="mt-1 w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white" />
+                                </label>
+                                <label class="block text-xs text-slate-300">结束日期
+                                    <input id="consistency-compare-end-date" type="date" class="mt-1 w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white" />
+                                </label>
+                            </div>
+                            <label class="block text-xs text-slate-300">实盘周期
+                                <select id="consistency-compare-timeframes" class="mt-1 w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white">
+                                    <option value="">全部周期</option>
+                                    <option value="1min">1分钟</option>
+                                    <option value="5min">5分钟</option>
+                                    <option value="15min">15分钟</option>
+                                    <option value="30min">30分钟</option>
+                                    <option value="60min">60分钟</option>
+                                    <option value="D">日线</option>
+                                </select>
+                            </label>
+                            <div>
+                                <div class="text-xs text-slate-300 mb-1">策略范围</div>
+                                <div class="relative">
+                                    <button id="consistency-compare-strategy-btn" onclick="toggleConsistencyCompareStrategyPanel()" class="w-full bg-slate-800 border border-slate-600 text-white py-2 pl-3 pr-9 rounded hover:border-emerald-500 text-xs text-left">
+                                        策略：未选择
+                                    </button>
+                                    <div class="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400"><i class="fa-solid fa-chevron-down text-xs"></i></div>
+                                    <div id="consistency-compare-strategy-panel" class="hidden absolute top-full mt-2 left-0 z-50 w-full bg-slate-900 border border-slate-700 rounded shadow-2xl p-3">
+                                        <input id="consistency-compare-strategy-search" type="text" placeholder="搜索策略ID/名称" class="w-full mb-2 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-100 font-mono" />
+                                        <label class="flex items-center gap-2 text-xs text-white mb-2">
+                                            <input id="consistency-compare-strategy-all" type="checkbox" onchange="toggleAllConsistencyCompareStrategies(this.checked)" />
+                                            <span>全部策略</span>
+                                        </label>
+                                        <div id="consistency-compare-strategy-list" class="max-h-56 overflow-y-auto space-y-1"></div>
+                                        <button onclick="applyConsistencyCompareStrategySelection()" class="mt-3 w-full bg-emerald-700 hover:bg-emerald-600 text-white py-1.5 rounded text-xs">应用选择</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div>
+                                <div class="text-xs text-slate-300 mb-2">实盘样本选择方式</div>
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                                    <button id="consistency-snapshot-mode-auto" onclick="setConsistencySnapshotSelectionMode('auto')" class="rounded border border-emerald-500 bg-emerald-950/20 text-emerald-200 px-3 py-2">系统自动匹配</button>
+                                    <button id="consistency-snapshot-mode-manual" onclick="setConsistencySnapshotSelectionMode('manual')" class="rounded border border-slate-700 bg-slate-900/60 text-slate-300 px-3 py-2">我手动挑选</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="rounded-xl border border-slate-700 bg-slate-900/50 p-4 space-y-3">
+                            <div class="text-sm font-semibold text-white">回测来源</div>
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                                <button id="consistency-source-existing" onclick="setConsistencyBacktestSourceType('existing_report')" class="rounded border border-emerald-500 bg-emerald-950/20 text-emerald-200 px-3 py-2">使用已有回测任务</button>
+                                <button id="consistency-source-new" onclick="setConsistencyBacktestSourceType('new_backtest')" class="rounded border border-slate-700 bg-slate-900/60 text-slate-300 px-3 py-2">现场新回测</button>
+                            </div>
+                            <div id="consistency-existing-report-filters" class="space-y-2">
+                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                    <label class="block text-xs text-slate-300">筛选标的
+                                        <input id="consistency-backtest-filter-code" type="text" placeholder="跟随上方标的" class="mt-1 w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white font-mono uppercase" />
+                                    </label>
+                                    <label class="block text-xs text-slate-300">状态
+                                        <select id="consistency-backtest-filter-status" class="mt-1 w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white">
+                                            <option value="">全部状态</option>
+                                            <option value="success">成功</option>
+                                            <option value="running">运行中</option>
+                                            <option value="failed">失败</option>
+                                        </select>
+                                    </label>
+                                </div>
+                                <button onclick="loadConsistencyCompareBacktestList()" class="w-full bg-slate-700 hover:bg-slate-600 text-white py-2 rounded text-xs border border-slate-500">加载已有回测任务</button>
+                            </div>
+                            <div id="consistency-new-backtest-settings" class="space-y-2 hidden">
+                                <label class="block text-xs text-slate-300">回测资金
+                                    <input id="consistency-new-backtest-capital" type="number" min="10000" step="10000" value="1000000" class="mt-1 w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white font-mono" />
+                                </label>
+                                <div class="text-[11px] text-slate-400">现场新回测会默认继承上方的标的、日期和策略范围。</div>
+                            </div>
+                            <label class="block text-xs text-slate-300">备注（可选）
+                                <input id="consistency-compare-note" type="text" placeholder="例如：排查 4 月中旬为何未复现" class="mt-1 w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white" />
+                            </label>
+                        </div>
+                        <div id="consistency-snapshot-picker-wrap" class="rounded-xl border border-slate-700 bg-slate-900/40 p-4 space-y-3 hidden">
+                            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                                <div class="text-sm font-semibold text-white">可选实盘记录</div>
+                                <button onclick="loadConsistencyCompareSnapshots()" class="bg-slate-700 hover:bg-slate-600 text-white px-3 py-1.5 rounded text-xs border border-slate-500 whitespace-nowrap">刷新实盘记录</button>
+                            </div>
+                            <div id="consistency-snapshot-picker-meta" class="text-[11px] text-slate-400">--</div>
+                            <div id="consistency-snapshot-picker-list" class="max-h-64 overflow-auto space-y-2 text-xs"></div>
+                        </div>
+                        <div id="consistency-backtest-picker-wrap" class="rounded-xl border border-slate-700 bg-slate-900/40 p-4 space-y-3">
+                            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                                <div class="text-sm font-semibold text-white">可选回测任务</div>
+                                <button id="consistency-backtest-picker-refresh" onclick="loadConsistencyCompareBacktestList()" class="bg-slate-700 hover:bg-slate-600 text-white px-3 py-1.5 rounded text-xs border border-slate-500 whitespace-nowrap">刷新回测任务</button>
+                            </div>
+                            <div id="consistency-backtest-picker-meta" class="text-[11px] text-slate-400">请选择来源后加载</div>
+                            <div id="consistency-backtest-picker-list" class="max-h-64 overflow-auto space-y-2 text-xs"></div>
+                        </div>
+                    </div>
+                    <div class="px-4 py-3 border-t border-slate-700 space-y-3 shrink-0 bg-slate-950/60">
+                        <div id="consistency-compare-status" class="rounded border border-slate-700 bg-slate-950/40 px-3 py-3 text-xs text-slate-300 min-h-[86px] leading-6">请先选择实盘范围和回测来源。</div>
+                        <div class="grid grid-cols-2 gap-2">
+                            <button onclick="closeConsistencyCompareDrawer()" class="w-full bg-slate-800 hover:bg-slate-700 text-slate-200 py-2.5 rounded text-sm font-semibold border border-slate-600">取消</button>
+                            <button id="consistency-compare-submit-btn" onclick="startConsistencyCompare()" class="w-full bg-emerald-700 hover:bg-emerald-600 text-white py-2.5 rounded text-sm font-semibold border border-emerald-500">开始对比</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div id="strategy-doc-overlay">
         <div class="bg-slate-900/95 border border-slate-700 rounded-lg p-5 w-[900px] max-w-[92vw] max-h-[85vh] overflow-y-auto">
             <div class="flex items-center justify-between mb-3">
@@ -503,8 +673,10 @@
                 <i class="fa-solid fa-chess-knight"></i> 策略管理器
             </button>
             <a href="/report" class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded text-xs transition-all border border-indigo-500">
-                <i class="fa-solid fa-file-lines"></i> 打开报告
+                <i class="fa-solid fa-file-lines"></i> 回测报告
             </a>
+            <button onclick="openConsistencyReportModal()" class="bg-emerald-700 hover:bg-emerald-600 text-white px-3 py-1.5 rounded text-xs transition-all border border-emerald-500">
+                <i class="fa-solid fa-scale-balanced"></i> 一致性校验            </button>
             <div class="w-2 h-2 rounded-full bg-trading-green animate-pulse-fast shadow-[0_0_10px_rgba(16,185,129,0.5)]" title="System Online"></div>
         </div>
     </header>
@@ -536,7 +708,7 @@
                     </div>
                 </div>
                 <div class="text-[10px] text-slate-400 mb-1">职责: 策略生成与草拟</div>
-                <div class="text-[10px] text-slate-500 mb-1">参数: 激活策略 <span id="cfg-zhongshu-active" class="text-slate-300">--</span>，09箱体周期 <span id="cfg-zhongshu-box" class="text-slate-300">--</span></div>
+                <div class="text-[10px] text-slate-500 mb-1">参数: 激活策略 <span id="cfg-zhongshu-active" class="text-slate-300">--</span></div>
                 <div class="flex-1 bg-slate-900/50 rounded border border-slate-700/50 p-3 font-mono text-xs overflow-y-auto" id="log-zhongshu">
                     <span class="text-slate-500">> 等待指令...</span>
                 </div>
@@ -647,7 +819,7 @@
                         <div class="text-[10px] bg-slate-700 px-1 rounded text-slate-300">监测</div>
                     </div>
                     <div class="text-[10px] text-slate-500 mt-1">市场情绪 & 交易合规</div>
-                    <div class="text-[10px] text-slate-500 mt-1">参数: 实盘开关 <span id="cfg-li-rites-live" class="text-slate-300">--</span></div>
+                    <div class="text-[10px] text-slate-500 mt-1">参数: 运行模式 <span id="cfg-li-rites-live" class="text-slate-300">--</span></div>
                     <div class="mt-2 font-mono text-sm">
                         <div>市场温度: <span class="text-slate-400" id="rites-market-temp">--</span></div>
                         <div>合规检查: <span class="text-slate-400" id="rites-compliance-status">--</span></div>
@@ -1480,28 +1652,74 @@
         </div>
     </div>
 
-    <div id="config-modal" class="hidden fixed inset-0 bg-black/70 z-[140] flex items-center justify-center p-6">
-        <div class="w-[980px] max-w-[96vw] h-[78vh] bg-slate-900 border border-slate-700 rounded-lg shadow-2xl flex flex-col overflow-hidden">
-            <div class="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
+    <div id="config-modal" class="hidden fixed inset-0 bg-black/75 z-[140] p-0">
+        <div class="w-full h-full max-w-none max-h-none bg-slate-900/95 border-0 border-slate-700 rounded-none shadow-2xl flex flex-col overflow-hidden">
+            <div class="px-4 sm:px-5 py-3 border-b border-slate-700 flex items-center justify-between gap-3 shrink-0">
                 <div class="text-white font-bold"><i class="fa-solid fa-sliders mr-2 text-purple-400"></i>运行配置中心</div>
                 <button onclick="closeConfigCenter()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
             </div>
-            <div class="px-4 py-2 text-xs text-slate-400 border-b border-slate-700 flex items-center justify-between gap-2">
-                <span>按模块表单编辑配置，保存后自动生效</span>
-                <div class="flex items-center gap-2">
+            <div class="px-4 sm:px-5 py-2 text-xs text-slate-400 border-b border-slate-700 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 shrink-0">
+                <span id="config-center-mode-hint">按任务向导逐步完成配置；需要细调时可切到专家模式</span>
+                <div class="flex items-center gap-2 flex-wrap">
+                    <button id="config-mode-wizard-btn" onclick="switchConfigMode('wizard')" class="bg-purple-700 hover:bg-purple-600 text-white px-2 py-1 rounded text-[11px] border border-purple-500">向导模式</button>
+                    <button id="config-mode-expert-btn" onclick="switchConfigMode('expert')" class="bg-slate-800 hover:bg-slate-700 text-white px-2 py-1 rounded text-[11px] border border-slate-600">专家模式</button>
                     <button onclick="setAllConfigSections(true)" class="bg-slate-700 hover:bg-slate-600 text-white px-2 py-1 rounded text-[11px] border border-slate-600">全部展开</button>
                     <button onclick="setAllConfigSections(false)" class="bg-slate-800 hover:bg-slate-700 text-white px-2 py-1 rounded text-[11px] border border-slate-600">全部折叠</button>
                 </div>
             </div>
-            <div class="flex-1 p-4 overflow-y-auto">
-                <div id="config-form-container" class="space-y-4"></div>
+            <div class="flex-1 min-h-0 px-4 sm:px-5 py-3 overflow-y-auto">
+                <div id="config-form-container" class="space-y-3"></div>
             </div>
-            <div class="px-4 py-3 border-t border-slate-700 flex items-center justify-between">
+            <div class="px-4 sm:px-5 py-3 border-t border-slate-700 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 shrink-0">
                 <div id="config-save-status" class="text-xs text-slate-400">未修改</div>
-                <div class="flex items-center gap-2">
+                <div class="flex items-center gap-2 flex-wrap">
                     <button onclick="loadConfigCenter()" class="bg-slate-700 hover:bg-slate-600 text-white px-3 py-2 rounded text-xs border border-slate-600">重新加载</button>
                     <button onclick="saveConfigCenter()" class="bg-purple-700 hover:bg-purple-600 text-white px-3 py-2 rounded text-xs border border-purple-500">保存并生效</button>
                 </div>
+            </div>
+        </div>
+    </div>
+    <div id="tdx-live-compliance-modal" class="hidden fixed inset-0 bg-black/85 z-[155] flex items-center justify-center p-6">
+        <div class="w-[640px] max-w-[92vw] bg-slate-900 border border-amber-500 rounded-lg shadow-2xl flex flex-col overflow-hidden">
+            <div class="px-5 py-4 border-b border-amber-500/50 bg-amber-900/30 flex items-center gap-3">
+                <i class="fa-solid fa-exclamation-triangle text-amber-400 text-xl"></i>
+                <div class="text-amber-200 font-bold text-lg">实盘合规提醒</div>
+            </div>
+            <div class="px-5 py-4 space-y-4 text-slate-200 text-sm leading-relaxed">
+                <div class="bg-slate-950/60 rounded p-4 border border-slate-700">
+                    <div class="text-amber-300 font-semibold mb-2">⚠️ 重要：程序化交易合规义务</div>
+                    <p>您正在启用<strong>通达信数据源 + 实盘模式</strong>，这涉及自动下单功能（程序化交易）。根据中国证监会《证券期货市场程序化交易管理办法》及相关规定，您需完成以下合规步骤：</p>
+                </div>
+                <div class="space-y-2">
+                    <div class="flex items-start gap-2">
+                        <span class="text-cyan-400 font-bold">①</span>
+                        <span><strong>向开户券商报备</strong>：启用实盘前，需向开户券商提交程序化交易策略报备表，说明策略类型、参数范围、风控设置。</span>
+                    </div>
+                    <div class="flex items-start gap-2">
+                        <span class="text-cyan-400 font-bold">②</span>
+                        <span><strong>开通量化交易权限</strong>：确认账户已开通量化/程序化交易权限，部分券商需单独申请。</span>
+                    </div>
+                    <div class="flex items-start gap-2">
+                        <span class="text-cyan-400 font-bold">③</span>
+                        <span><strong>设置交易限额</strong>：建议设置单笔/单日交易限额、异常熔断等风控参数，避免触发交易所异常交易监控。</span>
+                    </div>
+                    <div class="flex items-start gap-2">
+                        <span class="text-cyan-400 font-bold">④</span>
+                        <span><strong>数据源合规</strong>：通达信行情数据仅供个人研究使用，禁止用于商业荐股或向公众分发信号。</span>
+                    </div>
+                </div>
+                <div class="bg-rose-950/40 rounded p-3 border border-rose-700/50 text-rose-200">
+                    <div class="font-semibold mb-1">法律风险提示</div>
+                    <p>因使用本工具进行实盘交易产生的任何盈亏、纠纷、行政处罚、刑事责任，均由用户自行承担。开发者不具备证券投资咨询资质，不提供任何投资建议。</p>
+                </div>
+            </div>
+            <label class="px-5 py-3 flex items-start gap-3 cursor-pointer border-t border-slate-700">
+                <input id="tdx-live-compliance-checkbox" type="checkbox" class="mt-1 w-4 h-4 accent-amber-500" onchange="updateTdxLiveComplianceBtn()">
+                <span class="text-slate-200 text-sm">我已知晓以上合规义务，确认已完成或将要完成券商报备，自愿承担全部风险与法律责任</span>
+            </label>
+            <div class="px-5 py-3 border-t border-slate-700 flex items-center justify-end gap-3">
+                <button onclick="closeTdxLiveComplianceModal()" class="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded text-sm border border-slate-600">返回修改</button>
+                <button id="tdx-live-compliance-confirm-btn" onclick="confirmTdxLiveCompliance()" class="bg-amber-700 hover:bg-amber-600 text-white px-4 py-2 rounded text-sm border border-amber-500 disabled:opacity-50 disabled:cursor-not-allowed" disabled>确认并继续</button>
             </div>
         </div>
     </div>
@@ -1999,16 +2217,16 @@
             </div>
         </div>
     </div>
-    <div id="strategy-manager-modal" class="hidden fixed inset-0 bg-black/70 z-[145] flex items-center justify-center p-6">
-        <div class="w-[980px] max-w-[96vw] h-[78vh] bg-slate-900 border border-slate-700 rounded-lg shadow-2xl flex flex-col overflow-hidden resize" style="resize: both; min-width: 760px; min-height: 480px;">
-            <div class="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
+    <div id="strategy-manager-modal" class="hidden fixed inset-0 bg-black/75 z-[145] p-0">
+        <div class="w-full h-full max-w-none max-h-none bg-slate-900/95 border-0 border-slate-700 rounded-none shadow-2xl flex flex-col overflow-hidden">
+            <div class="px-4 sm:px-5 py-3 border-b border-slate-700 flex items-center justify-between gap-3 shrink-0">
                 <div class="text-white font-bold"><i class="fa-solid fa-chess-knight mr-2 text-indigo-400"></i>策略管理器</div>
                 <button onclick="closeStrategyManager()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
             </div>
-            <div class="px-4 py-2 text-xs text-slate-400 border-b border-slate-700">管理策略列表，支持新增、删除、启用与停用</div>
-            <div class="px-4 py-2 flex items-center justify-between border-b border-slate-700">
+            <div class="px-4 sm:px-5 py-2 text-xs text-slate-400 border-b border-slate-700 shrink-0">管理策略列表，支持新增、删除、启用与停用</div>
+            <div class="px-4 sm:px-5 py-2 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2 border-b border-slate-700 shrink-0">
                 <div id="strategy-manager-status" class="text-xs text-slate-400">待加载</div>
-                <div class="flex items-center gap-2">
+                <div class="flex items-center gap-2 flex-wrap lg:justify-end">
                     <select id="strategy-manager-page-size" onchange="setStrategyManagerPageSize(this.value)" class="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-100">
                         <option value="10">10条/页</option>
                         <option value="20" selected>20条/页</option>
@@ -2022,7 +2240,7 @@
                     <button onclick="openStrategyCreateModal()" class="bg-indigo-700 hover:bg-indigo-600 text-white px-3 py-1.5 rounded text-xs border border-indigo-500">新增策略</button>
                 </div>
             </div>
-            <div class="flex-1 p-4 min-h-0">
+            <div class="flex-1 min-h-0 px-4 sm:px-5 py-3 overflow-hidden">
                 <div class="h-full overflow-auto border border-slate-700 rounded">
                     <table class="w-full text-xs">
                         <thead class="bg-slate-800 text-slate-300 sticky top-0 z-20">
@@ -2171,6 +2389,12 @@
         </div>
     </div>
     <div id="strategy-create-modal" class="hidden fixed inset-0 bg-black/70 z-[150] flex items-center justify-center p-6">
+        <div id="strategy-create-analysis-overlay" class="hidden absolute inset-0 items-center justify-center bg-slate-950/45 z-10">
+            <div class="flex items-center gap-3 rounded-lg border border-cyan-500/40 bg-slate-900/95 px-4 py-3 text-sm text-cyan-200 shadow-2xl">
+                <i class="fa-solid fa-spinner fa-spin"></i>
+                <span>智能分析运行中，请稍候...</span>
+            </div>
+        </div>
         <div class="w-[980px] max-w-[96vw] h-[82vh] bg-slate-900 border border-slate-700 rounded-lg shadow-2xl flex flex-col overflow-hidden">
             <div class="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
                 <div class="text-white font-bold"><i class="fa-solid fa-wand-magic-sparkles mr-2 text-cyan-300"></i>新增策略</div>
@@ -2204,14 +2428,14 @@
                     </select>
                 </div>
                 <div class="flex items-end gap-2">
-                    <button onclick="analyzeStrategyTemplate()" class="bg-cyan-700 hover:bg-cyan-600 text-white px-3 py-1.5 rounded text-xs border border-cyan-500"><i class="fa-solid fa-robot mr-1"></i>智能分析</button>
+                    <button id="analyze-strategy-btn" onclick="analyzeStrategyTemplate()" class="bg-cyan-700 hover:bg-cyan-600 text-white px-3 py-1.5 rounded text-xs border border-cyan-500 whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"><i id="analyze-strategy-icon" class="fa-solid fa-robot mr-1"></i><span id="analyze-strategy-label">智能分析</span></button>
                     <div id="strategy-create-status" class="text-xs text-slate-400">待输入策略模版</div>
                 </div>
             </div>
             <div class="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-0 overflow-hidden">
                 <div class="border-r border-slate-700 p-3 flex flex-col gap-2">
                     <div class="text-xs text-slate-300">策略模版</div>
-                    <textarea id="strategy-template-input" class="h-40 w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs font-mono text-slate-200" placeholder="请粘贴或输入你的策略思路、入场条件、离场条件、风控规则"></textarea>
+                    <textarea id="strategy-template-input" class="flex-[6] min-h-0 w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs font-mono text-slate-200" placeholder="请粘贴或输入你的策略思路、入场条件、离场条件、风控规则"></textarea>
                     <div id="strategy-market-state-panel" class="hidden bg-slate-950 border border-slate-700 rounded p-2 space-y-2">
                         <div class="text-xs text-slate-300">market_state</div>
                         <div class="grid grid-cols-3 gap-2">
@@ -2234,13 +2458,13 @@
                         <textarea id="market-summary-input" class="w-full h-16 bg-slate-900 border border-slate-700 rounded p-2 text-xs text-slate-200" placeholder="可选：补充行情结构、板块轮动、事件冲击等"></textarea>
                     </div>
                     <div class="text-xs text-slate-300">代码模版（供智能分析参考）</div>
-                    <textarea id="strategy-code-template-input" class="flex-1 w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs font-mono text-cyan-200" placeholder="可按项目规范调整代码骨架，帮助智能分析按模板产出"></textarea>
+                    <textarea id="strategy-code-template-input" class="flex-[3] min-h-0 w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs font-mono text-cyan-200" placeholder="可按项目规范调整代码骨架，帮助智能分析按模板产出"></textarea>
                 </div>
                 <div class="p-3 flex flex-col gap-2">
                     <div class="text-xs text-slate-300">智能分析结论</div>
-                    <div id="strategy-analysis-output" class="h-24 overflow-auto bg-slate-950 border border-slate-700 rounded p-2 text-xs text-slate-300 whitespace-pre-wrap"></div>
+                    <div id="strategy-analysis-output" class="flex-[6] min-h-0 overflow-auto bg-slate-950 border border-slate-700 rounded p-2 text-xs text-slate-300 whitespace-pre-wrap resize-y" style="resize: vertical;"></div>
                     <div class="text-xs text-slate-300">可执行策略代码</div>
-                    <textarea id="strategy-code-output" class="flex-1 w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs font-mono text-emerald-200"></textarea>
+                    <textarea id="strategy-code-output" class="flex-[3] min-h-0 w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs font-mono text-emerald-200"></textarea>
                 </div>
             </div>
             <div class="px-4 py-3 border-t border-slate-700 flex items-center justify-end gap-2">
@@ -2386,6 +2610,15 @@
         const renderCoalesceMap = new Map();
         let renderLoopTimer = null;
         let strategyReportsBuffer = [];
+        let consistencyReportRows = [];
+        let consistencyReportSelectedId = '';
+        let consistencyCompareSnapshotRows = [];
+        let consistencyCompareBacktestRows = [];
+        let consistencyCompareSelectedSnapshotIds = [];
+        let consistencyCompareSelectedReportId = '';
+        let consistencyCompareStrategyTempSelectedIds = [];
+        let consistencyCompareRunning = false;
+        let consistencyCompareDrawerOpen = false;
         let batchOverviewPayload = null;
         let batchRunStatusPayload = null;
         let batchRunPollTimer = null;
@@ -2459,6 +2692,7 @@
         let strategyManagerPageSize = 20;
         let strategyManagerTotal = 0;
         let pendingGeneratedStrategy = null;
+        let strategyAnalyzeInFlight = false;
         let actionLayoutMode = 'expanded';
         let rightPanelPrefs = { strategy: true, console: true, stream: true };
         let rightLayoutPreset = 'balanced';
@@ -2618,7 +2852,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     '买入后不再重复加仓。'
                 ],
                 exit_rules: ['到达回测最后一根K线时一次性全部卖出。'],
-                params: ['下单数量：strategy_params.common.order_qty（默认1000）'],
+                params: ['下单数量：默认1000股'],
                 note: '该策略仅用于回测基准对照，模拟买入并持有到回测结束。',
                 example: '示例：第一根K线买入后全程持有，最后一根K线自动平仓。'
             },
@@ -5320,6 +5554,10 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
         let fundamentalCacheRows = [];
         let fundamentalDetailPayload = {};
         let fundamentalModuleDetailKey = '';
+        let currentConfigMode = 'wizard';
+        let configPreviewBound = false;
+        let tdxLiveCompliancePending = false;  // 标记待确认的TDX+实盘合规
+        let tdxLiveComplianceAcknowledged = false;  // 标记是否已确认过本会话
 
         function normalizeFundamentalInterfaceOptions(catalog) {
             const out = [];
@@ -5343,13 +5581,12 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             return out;
         }
 
-        const BIZ_SECTIONS = [
+        const FULL_CONFIG_SECTIONS = [
             {
                 title: '系统总控',
                 subtitle: '运行模式与全局开关',
                 fields: [
-                    { path: 'system.mode', label: '运行模式', type: 'select', options: [{ value: 'backtest', label: '回测模式' }, { value: 'live', label: '实盘模式' }], desc: '用于切换系统主流程（回测/实盘）' },
-                    { path: 'system.enable_live', label: '启用实盘', type: 'boolean', desc: '实盘总开关；需与“运行模式=实盘”同时满足才会生效' },
+                    { path: 'system.mode', label: '运行模式', type: 'select', options: [{ value: 'backtest', label: '回测模式' }, { value: 'live', label: '实盘模式' }], desc: '选择实盘模式即启用实盘监控与交易' },
                     // 自动实盘启动：默认开启，默认时间 09:20，可按运营需要在配置中心改动。
                     { path: 'system.live_auto_start_enabled', label: '自动开启实盘', type: 'boolean', default: true, desc: '开启后在指定时间自动拉起实盘任务（仅在运行模式=实盘且启用实盘时触发）' },
                     { path: 'system.live_auto_start_time', label: '自动开启时间', type: 'text', default: '09:20', placeholder: 'HH:MM，例如 09:20', desc: '24小时制，格式 HH:MM；配置非法时服务端会回退到 09:20' },
@@ -5373,58 +5610,58 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     { path: 'data_provider.enable_fallback', label: '启用数据回退', type: 'boolean' },
                     { path: 'live_monitoring.minute_close_confirm.enabled', label: '分钟收盘确认触发', type: 'boolean', desc: '开启后实盘信号在下一分钟到来时，按上一分钟已收盘K线触发，减少分钟内抖动误触发。' },
                     { path: 'data_provider.backtest_cache_db_source', label: '回测缓存落库源', type: 'select', options: [{ value: '', label: '关闭' }, { value: 'mysql', label: 'mysql' }, { value: 'postgresql', label: 'postgresql' }, { value: 'duckdb', label: 'duckdb' }] },
-                    { path: 'data_provider.tushare_api_url', label: 'Tushare接口地址', type: 'text' },
-                    { path: 'data_provider.tushare_token', label: 'Tushare令牌', type: 'password', secret: true },
-                    { path: 'data_provider.tdxdir', label: 'TDX数据目录(vipdoc上级)', type: 'text' },
-                    { path: 'data_provider.tdx_host', label: 'TDX主机', type: 'text' },
-                    { path: 'data_provider.tdx_port', label: 'TDX端口', type: 'number', min: 1, max: 65535, step: 1 },
-                    { path: 'data_provider.tdx_node_list', label: 'TDX节点池(host:port,...)', type: 'text' },
-                    { path: 'data_provider.tdx_timeout_sec', label: 'TDX超时(秒)', type: 'number', min: 1, max: 60, step: 1 },
-                    { path: 'data_provider.tdx_retry_count', label: 'TDX重试次数', type: 'number', min: 0, max: 10, step: 1 },
-                    { path: 'data_provider.tdx_max_bars', label: 'TDX最大拉取条数', type: 'number', min: 500, max: 100000, step: 500 },
-                    { path: 'data_provider.default_api_key', label: '默认数据服务密钥', type: 'password', secret: true },
-                    { path: 'data_provider.default_api_url', label: '默认数据服务地址', type: 'text' },
-                    { path: 'data_provider.duckdb_path', label: 'DuckDB文件路径', type: 'text' },
-                    { path: 'data_provider.duckdb_query_page_size', label: 'DuckDB分页批量', type: 'number', min: 1000, max: 1000000, step: 1000 },
-                    { path: 'data_provider.duckdb_table_1min', label: 'DuckDB 1分钟表', type: 'text' },
-                    { path: 'data_provider.duckdb_table_5min', label: 'DuckDB 5分钟表', type: 'text' },
-                    { path: 'data_provider.duckdb_table_10min', label: 'DuckDB 10分钟表', type: 'text' },
-                    { path: 'data_provider.duckdb_table_15min', label: 'DuckDB 15分钟表', type: 'text' },
-                    { path: 'data_provider.duckdb_table_30min', label: 'DuckDB 30分钟表', type: 'text' },
-                    { path: 'data_provider.duckdb_table_60min', label: 'DuckDB 60分钟表', type: 'text' },
-                    { path: 'data_provider.duckdb_table_day', label: 'DuckDB 日线表', type: 'text' },
-                    { path: 'data_provider.mysql_host', label: 'MySQL主机', type: 'text' },
-                    { path: 'data_provider.mysql_port', label: 'MySQL端口', type: 'number', min: 1, max: 65535, step: 1 },
-                    { path: 'data_provider.mysql_user', label: 'MySQL用户', type: 'text' },
-                    { path: 'data_provider.mysql_password', label: 'MySQL密码', type: 'password', secret: true },
-                    { path: 'data_provider.mysql_database', label: 'MySQL库名', type: 'text' },
-                    { path: 'data_provider.mysql_charset', label: 'MySQL字符集', type: 'text' },
-                    { path: 'data_provider.mysql_pool_size', label: 'MySQL连接池大小', type: 'number', min: 1, max: 64, step: 1 },
-                    { path: 'data_provider.mysql_pool_wait_timeout_sec', label: '连接池等待秒数', type: 'number', min: 1, max: 120, step: 1 },
-                    { path: 'data_provider.mysql_query_page_size', label: '分页批量条数', type: 'number', min: 1000, max: 200000, step: 1000 },
-                    { path: 'data_provider.mysql_table_1min', label: 'MySQL 1分钟表', type: 'text' },
-                    { path: 'data_provider.mysql_table_5min', label: 'MySQL 5分钟表', type: 'text' },
-                    { path: 'data_provider.mysql_table_10min', label: 'MySQL 10分钟表', type: 'text' },
-                    { path: 'data_provider.mysql_table_15min', label: 'MySQL 15分钟表', type: 'text' },
-                    { path: 'data_provider.mysql_table_30min', label: 'MySQL 30分钟表', type: 'text' },
-                    { path: 'data_provider.mysql_table_60min', label: 'MySQL 60分钟表', type: 'text' },
-                    { path: 'data_provider.mysql_table_day', label: 'MySQL 日线表', type: 'text' },
-                    { path: 'data_provider.postgres_host', label: 'PostgreSQL主机', type: 'text' },
-                    { path: 'data_provider.postgres_port', label: 'PostgreSQL端口', type: 'number', min: 1, max: 65535, step: 1 },
-                    { path: 'data_provider.postgres_user', label: 'PostgreSQL用户', type: 'text' },
-                    { path: 'data_provider.postgres_password', label: 'PostgreSQL密码', type: 'password', secret: true },
-                    { path: 'data_provider.postgres_database', label: 'PostgreSQL库名', type: 'text' },
-                    { path: 'data_provider.postgres_schema', label: 'PostgreSQL Schema', type: 'text' },
-                    { path: 'data_provider.postgres_pool_size', label: 'PostgreSQL连接池大小', type: 'number', min: 1, max: 64, step: 1 },
-                    { path: 'data_provider.postgres_pool_wait_timeout_sec', label: 'PostgreSQL等待秒数', type: 'number', min: 1, max: 120, step: 1 },
-                    { path: 'data_provider.postgres_query_page_size', label: 'PostgreSQL分页条数', type: 'number', min: 1000, max: 200000, step: 1000 },
-                    { path: 'data_provider.postgres_table_1min', label: 'PostgreSQL 1分钟表', type: 'text' },
-                    { path: 'data_provider.postgres_table_5min', label: 'PostgreSQL 5分钟表', type: 'text' },
-                    { path: 'data_provider.postgres_table_10min', label: 'PostgreSQL 10分钟表', type: 'text' },
-                    { path: 'data_provider.postgres_table_15min', label: 'PostgreSQL 15分钟表', type: 'text' },
-                    { path: 'data_provider.postgres_table_30min', label: 'PostgreSQL 30分钟表', type: 'text' },
-                    { path: 'data_provider.postgres_table_60min', label: 'PostgreSQL 60分钟表', type: 'text' },
-                    { path: 'data_provider.postgres_table_day', label: 'PostgreSQL 日线表', type: 'text' },
+                    { path: 'data_provider.tushare_api_url', label: 'Tushare接口地址', type: 'text', when: [{ path: 'data_provider.source', equals: 'tushare' }] },
+                    { path: 'data_provider.tushare_token', label: 'Tushare令牌', type: 'password', secret: true, when: [{ path: 'data_provider.source', equals: 'tushare' }] },
+                    { path: 'data_provider.tdxdir', label: 'TDX数据目录(vipdoc上级，可留空自动走网络镜像)', type: 'text', when: [{ path: 'data_provider.source', equals: 'tdx' }] },
+                    { path: 'data_provider.tdx_host', label: 'TDX主机', type: 'text', when: [{ path: 'data_provider.source', equals: 'tdx' }] },
+                    { path: 'data_provider.tdx_port', label: 'TDX端口', type: 'number', min: 1, max: 65535, step: 1, when: [{ path: 'data_provider.source', equals: 'tdx' }] },
+                    { path: 'data_provider.tdx_node_list', label: 'TDX节点池(host:port,...)', type: 'text', when: [{ path: 'data_provider.source', equals: 'tdx' }] },
+                    { path: 'data_provider.tdx_timeout_sec', label: 'TDX超时(秒)', type: 'number', min: 1, max: 60, step: 1, when: [{ path: 'data_provider.source', equals: 'tdx' }] },
+                    { path: 'data_provider.tdx_retry_count', label: 'TDX重试次数', type: 'number', min: 0, max: 10, step: 1, when: [{ path: 'data_provider.source', equals: 'tdx' }] },
+                    { path: 'data_provider.tdx_max_bars', label: 'TDX最大拉取条数', type: 'number', min: 500, max: 100000, step: 500, when: [{ path: 'data_provider.source', equals: 'tdx' }] },
+                    { path: 'data_provider.default_api_key', label: '默认数据服务密钥', type: 'password', secret: true, when: [{ path: 'data_provider.source', equals: 'default' }] },
+                    { path: 'data_provider.default_api_url', label: '默认数据服务地址', type: 'text', when: [{ path: 'data_provider.source', equals: 'default' }] },
+                    { path: 'data_provider.duckdb_path', label: 'DuckDB文件路径', type: 'text', when: [{ path: 'data_provider.source', equals: 'duckdb' }] },
+                    { path: 'data_provider.duckdb_query_page_size', label: 'DuckDB分页批量', type: 'number', min: 1000, max: 1000000, step: 1000, when: [{ path: 'data_provider.source', equals: 'duckdb' }] },
+                    { path: 'data_provider.duckdb_table_1min', label: 'DuckDB 1分钟表', type: 'text', when: [{ path: 'data_provider.source', equals: 'duckdb' }] },
+                    { path: 'data_provider.duckdb_table_5min', label: 'DuckDB 5分钟表', type: 'text', when: [{ path: 'data_provider.source', equals: 'duckdb' }] },
+                    { path: 'data_provider.duckdb_table_10min', label: 'DuckDB 10分钟表', type: 'text', when: [{ path: 'data_provider.source', equals: 'duckdb' }] },
+                    { path: 'data_provider.duckdb_table_15min', label: 'DuckDB 15分钟表', type: 'text', when: [{ path: 'data_provider.source', equals: 'duckdb' }] },
+                    { path: 'data_provider.duckdb_table_30min', label: 'DuckDB 30分钟表', type: 'text', when: [{ path: 'data_provider.source', equals: 'duckdb' }] },
+                    { path: 'data_provider.duckdb_table_60min', label: 'DuckDB 60分钟表', type: 'text', when: [{ path: 'data_provider.source', equals: 'duckdb' }] },
+                    { path: 'data_provider.duckdb_table_day', label: 'DuckDB 日线表', type: 'text', when: [{ path: 'data_provider.source', equals: 'duckdb' }] },
+                    { path: 'data_provider.mysql_host', label: 'MySQL主机', type: 'text', when: [{ path: 'data_provider.source', equals: 'mysql' }] },
+                    { path: 'data_provider.mysql_port', label: 'MySQL端口', type: 'number', min: 1, max: 65535, step: 1, when: [{ path: 'data_provider.source', equals: 'mysql' }] },
+                    { path: 'data_provider.mysql_user', label: 'MySQL用户', type: 'text', when: [{ path: 'data_provider.source', equals: 'mysql' }] },
+                    { path: 'data_provider.mysql_password', label: 'MySQL密码', type: 'password', secret: true, when: [{ path: 'data_provider.source', equals: 'mysql' }] },
+                    { path: 'data_provider.mysql_database', label: 'MySQL库名', type: 'text', when: [{ path: 'data_provider.source', equals: 'mysql' }] },
+                    { path: 'data_provider.mysql_charset', label: 'MySQL字符集', type: 'text', when: [{ path: 'data_provider.source', equals: 'mysql' }] },
+                    { path: 'data_provider.mysql_pool_size', label: 'MySQL连接池大小', type: 'number', min: 1, max: 64, step: 1, when: [{ path: 'data_provider.source', equals: 'mysql' }] },
+                    { path: 'data_provider.mysql_pool_wait_timeout_sec', label: '连接池等待秒数', type: 'number', min: 1, max: 120, step: 1, when: [{ path: 'data_provider.source', equals: 'mysql' }] },
+                    { path: 'data_provider.mysql_query_page_size', label: '分页批量条数', type: 'number', min: 1000, max: 200000, step: 1000, when: [{ path: 'data_provider.source', equals: 'mysql' }] },
+                    { path: 'data_provider.mysql_table_1min', label: 'MySQL 1分钟表', type: 'text', when: [{ path: 'data_provider.source', equals: 'mysql' }] },
+                    { path: 'data_provider.mysql_table_5min', label: 'MySQL 5分钟表', type: 'text', when: [{ path: 'data_provider.source', equals: 'mysql' }] },
+                    { path: 'data_provider.mysql_table_10min', label: 'MySQL 10分钟表', type: 'text', when: [{ path: 'data_provider.source', equals: 'mysql' }] },
+                    { path: 'data_provider.mysql_table_15min', label: 'MySQL 15分钟表', type: 'text', when: [{ path: 'data_provider.source', equals: 'mysql' }] },
+                    { path: 'data_provider.mysql_table_30min', label: 'MySQL 30分钟表', type: 'text', when: [{ path: 'data_provider.source', equals: 'mysql' }] },
+                    { path: 'data_provider.mysql_table_60min', label: 'MySQL 60分钟表', type: 'text', when: [{ path: 'data_provider.source', equals: 'mysql' }] },
+                    { path: 'data_provider.mysql_table_day', label: 'MySQL 日线表', type: 'text', when: [{ path: 'data_provider.source', equals: 'mysql' }] },
+                    { path: 'data_provider.postgres_host', label: 'PostgreSQL主机', type: 'text', when: [{ path: 'data_provider.source', equals: 'postgresql' }] },
+                    { path: 'data_provider.postgres_port', label: 'PostgreSQL端口', type: 'number', min: 1, max: 65535, step: 1, when: [{ path: 'data_provider.source', equals: 'postgresql' }] },
+                    { path: 'data_provider.postgres_user', label: 'PostgreSQL用户', type: 'text', when: [{ path: 'data_provider.source', equals: 'postgresql' }] },
+                    { path: 'data_provider.postgres_password', label: 'PostgreSQL密码', type: 'password', secret: true, when: [{ path: 'data_provider.source', equals: 'postgresql' }] },
+                    { path: 'data_provider.postgres_database', label: 'PostgreSQL库名', type: 'text', when: [{ path: 'data_provider.source', equals: 'postgresql' }] },
+                    { path: 'data_provider.postgres_schema', label: 'PostgreSQL Schema', type: 'text', when: [{ path: 'data_provider.source', equals: 'postgresql' }] },
+                    { path: 'data_provider.postgres_pool_size', label: 'PostgreSQL连接池大小', type: 'number', min: 1, max: 64, step: 1, when: [{ path: 'data_provider.source', equals: 'postgresql' }] },
+                    { path: 'data_provider.postgres_pool_wait_timeout_sec', label: 'PostgreSQL等待秒数', type: 'number', min: 1, max: 120, step: 1, when: [{ path: 'data_provider.source', equals: 'postgresql' }] },
+                    { path: 'data_provider.postgres_query_page_size', label: 'PostgreSQL分页条数', type: 'number', min: 1000, max: 200000, step: 1000, when: [{ path: 'data_provider.source', equals: 'postgresql' }] },
+                    { path: 'data_provider.postgres_table_1min', label: 'PostgreSQL 1分钟表', type: 'text', when: [{ path: 'data_provider.source', equals: 'postgresql' }] },
+                    { path: 'data_provider.postgres_table_5min', label: 'PostgreSQL 5分钟表', type: 'text', when: [{ path: 'data_provider.source', equals: 'postgresql' }] },
+                    { path: 'data_provider.postgres_table_10min', label: 'PostgreSQL 10分钟表', type: 'text', when: [{ path: 'data_provider.source', equals: 'postgresql' }] },
+                    { path: 'data_provider.postgres_table_15min', label: 'PostgreSQL 15分钟表', type: 'text', when: [{ path: 'data_provider.source', equals: 'postgresql' }] },
+                    { path: 'data_provider.postgres_table_30min', label: 'PostgreSQL 30分钟表', type: 'text', when: [{ path: 'data_provider.source', equals: 'postgresql' }] },
+                    { path: 'data_provider.postgres_table_60min', label: 'PostgreSQL 60分钟表', type: 'text', when: [{ path: 'data_provider.source', equals: 'postgresql' }] },
+                    { path: 'data_provider.postgres_table_day', label: 'PostgreSQL 日线表', type: 'text', when: [{ path: 'data_provider.source', equals: 'postgresql' }] },
                     { path: 'data_provider.llm_api_url', label: '智能服务地址（OpenAI兼容）', type: 'text' },
                     { path: 'data_provider.llm_api_key', label: '智能服务访问密钥', type: 'password', secret: true },
                     { path: 'data_provider.llm_model', label: '智能模型名称', type: 'text' },
@@ -5557,33 +5794,97 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             }
         ];
 
-        const STRATEGY_FORM_GROUPS = [
+        const WIZARD_STEPS = [
             {
-                id: 'common',
-                name: '公共参数',
-                fields: [
+                id: 'data-source',
+                title: '接入数据源',
+                subtitle: '先确定行情数据从哪里来',
+                icon: 'fa-database',
+                sections: [
                     {
-                        path: 'strategy_params.common.order_qty_mode',
-                        label: '默认下单模式',
-                        type: 'select',
-                        options: [
-                            { value: 'fixed', label: '固定数量' },
-                            { value: 'cash_pct', label: '按持有现金百分比' }
+                        title: '先选主数据源',
+                        fields: [
+                            { path: 'data_provider.source', label: '主数据源', type: 'select', options: [{ value: 'default', label: 'default' }, { value: 'akshare', label: 'akshare' }, { value: 'tushare', label: 'tushare' }, { value: 'mysql', label: 'mysql' }, { value: 'postgresql', label: 'postgresql' }, { value: 'duckdb', label: 'duckdb' }, { value: 'tdx', label: 'tdx' }], uiRelations: [{ area: '前台回测/实盘入口', effect: '决定后续所有行情读取来源' }] }
                         ]
                     },
-                    { path: 'strategy_params.common.order_qty', label: '默认下单数量', type: 'number', min: 100, max: 100000, step: 100, slider: true, desc: '固定数量模式下生效（单位：股）' },
-                    { path: 'strategy_params.common.order_cash_pct', label: '现金下单比例', type: 'number', min: 0.1, max: 100, step: 0.1, slider: true, unit: '%', desc: '现金百分比模式下生效，10 表示 10%（也兼容 0.1 表示 10%）' }
+                    {
+                        title: '当前数据源的必填项',
+                        fields: [
+                            { path: 'data_provider.default_api_url', label: '默认数据服务地址', type: 'text', when: [{ path: 'data_provider.source', equals: 'default' }], placeholder: 'http://your-api-server:port', uiRelations: [{ area: '回测与实盘', effect: '自建数据服务的 HTTP 接口地址' }] },
+                            { path: 'data_provider.default_api_key', label: '默认数据服务密钥', type: 'password', secret: true, when: [{ path: 'data_provider.source', equals: 'default' }], uiRelations: [{ area: '回测与实盘', effect: '访问自建数据服务的认证密钥' }] },
+                            { path: 'data_provider.duckdb_path', label: 'DuckDB文件路径', type: 'text', when: [{ path: 'data_provider.source', equals: 'duckdb' }], placeholder: '/Users/xxx/duckdb/quantifydata.duckdb 或 G:/duckdb/quantifydata.duckdb', uiRelations: [{ area: '回测与实盘', effect: '直接读取本地 DuckDB 文件' }] },
+                            { path: 'data_provider.mysql_host', label: 'MySQL主机', type: 'text', when: [{ path: 'data_provider.source', equals: 'mysql' }], placeholder: 'localhost 或 192.168.x.x' },
+                            { path: 'data_provider.mysql_port', label: 'MySQL端口', type: 'number', min: 1, max: 65535, step: 1, when: [{ path: 'data_provider.source', equals: 'mysql' }], placeholder: '3306' },
+                            { path: 'data_provider.mysql_user', label: 'MySQL用户', type: 'text', when: [{ path: 'data_provider.source', equals: 'mysql' }], placeholder: 'root' },
+                            { path: 'data_provider.mysql_password', label: 'MySQL密码', type: 'password', secret: true, when: [{ path: 'data_provider.source', equals: 'mysql' }] },
+                            { path: 'data_provider.mysql_database', label: 'MySQL库名', type: 'text', when: [{ path: 'data_provider.source', equals: 'mysql' }], placeholder: 'quantifydata' },
+                            { path: 'data_provider.postgres_host', label: 'PostgreSQL主机', type: 'text', when: [{ path: 'data_provider.source', equals: 'postgresql' }], placeholder: 'localhost 或 192.168.x.x' },
+                            { path: 'data_provider.postgres_port', label: 'PostgreSQL端口', type: 'number', min: 1, max: 65535, step: 1, when: [{ path: 'data_provider.source', equals: 'postgresql' }], placeholder: '5432' },
+                            { path: 'data_provider.postgres_user', label: 'PostgreSQL用户', type: 'text', when: [{ path: 'data_provider.source', equals: 'postgresql' }], placeholder: 'postgres' },
+                            { path: 'data_provider.postgres_password', label: 'PostgreSQL密码', type: 'password', secret: true, when: [{ path: 'data_provider.source', equals: 'postgresql' }] },
+                            { path: 'data_provider.postgres_database', label: 'PostgreSQL库名', type: 'text', when: [{ path: 'data_provider.source', equals: 'postgresql' }], placeholder: 'quantifydata' },
+                            { path: 'data_provider.tushare_api_url', label: 'Tushare接口地址', type: 'text', when: [{ path: 'data_provider.source', equals: 'tushare' }], placeholder: 'http://api.tushare.pro' },
+                            { path: 'data_provider.tushare_token', label: 'Tushare令牌', type: 'password', secret: true, when: [{ path: 'data_provider.source', equals: 'tushare' }], placeholder: '在 tushare.pro 注册后获取' },
+                            { path: 'data_provider.tdxdir', label: 'TDX数据目录(vipdoc上级，可留空自动走网络镜像)', type: 'text', when: [{ path: 'data_provider.source', equals: 'tdx' }], placeholder: 'Windows: C:/new_tdx  mac: 留空走网络', uiRelations: [{ area: '实盘与回测', effect: 'Windows 走本地 vipdoc，mac 可留空走网络镜像' }] }
+                        ]
+                    },
+                    {
+                        title: '高级项（按需再调）',
+                        advanced: true,
+                        defaultOpen: false,
+                        fields: [
+                            { path: 'data_provider.enable_fallback', label: '启用数据回退', type: 'boolean', uiRelations: [{ area: '前台回测/实盘入口', effect: '主数据源失败时是否尝试回退' }] },
+                            { path: 'data_provider.backtest_cache_db_source', label: '回测缓存落库源', type: 'select', options: [{ value: '', label: '关闭' }, { value: 'mysql', label: 'mysql' }, { value: 'postgresql', label: 'postgresql' }, { value: 'duckdb', label: 'duckdb' }], uiRelations: [{ area: '回测结果页', effect: '影响重复回测的数据缓存策略' }] }
+                        ]
+                    }
                 ]
             },
-            { id: '00', name: '00 长期持有', fields: [] },
-            { id: '01', name: '01 三周期共振', fields: [{ path: 'strategy_params.01.min_history_bars', label: '最小历史K线', type: 'number', min: 50, max: 5000, step: 10, slider: true }, { path: 'strategy_params.01.daily_ma10_tolerance', label: 'MA10偏离容忍', type: 'number', min: 0.001, max: 0.1, step: 0.001, slider: true, scale: 100 }, { path: 'strategy_params.01.volume_ma_window', label: '量能均线窗口', type: 'number', min: 2, max: 30, step: 1, slider: true }, { path: 'strategy_params.01.stop_loss_pct', label: '止损比例', type: 'number', min: 0.001, max: 0.2, step: 0.001, slider: true, scale: 100 }] },
-            { id: '02', name: '02 烂板战法', fields: [{ path: 'strategy_params.02.max_hold_bars', label: '最大持有Bar', type: 'number', min: 10, max: 5000, step: 10, slider: true }] },
-            { id: '03', name: '03 ETF轮动', fields: [{ path: 'strategy_params.03.stop_loss_pct', label: '止损比例', type: 'number', min: 0.001, max: 0.2, step: 0.001, slider: true, scale: 100 }] },
-            { id: '05', name: '05 3N主升浪', fields: [{ path: 'strategy_params.05.min_30m_bars', label: '最小30分钟K线', type: 'number', min: 10, max: 1000, step: 1, slider: true }, { path: 'strategy_params.05.volume_ma_window', label: '量能均线窗口', type: 'number', min: 2, max: 30, step: 1, slider: true }, { path: 'strategy_params.05.volume_multiple', label: '放量倍数', type: 'number', min: 1, max: 5, step: 0.1, slider: true }, { path: 'strategy_params.05.max_hold_bars', label: '最大持有Bar', type: 'number', min: 10, max: 5000, step: 10, slider: true }, { path: 'strategy_params.05.stop_loss_pct', label: '止损比例', type: 'number', min: 0.001, max: 0.2, step: 0.001, slider: true, scale: 100 }, { path: 'strategy_params.05.take_profit_pct', label: '止盈比例', type: 'number', min: 0.001, max: 0.5, step: 0.001, slider: true, scale: 100 }] },
-            { id: '06', name: '06 海豚交易法', fields: [{ path: 'strategy_params.06.min_history_bars', label: '最小历史K线', type: 'number', min: 10, max: 2000, step: 10, slider: true }, { path: 'strategy_params.06.ma_period', label: 'MA周期', type: 'number', min: 5, max: 120, step: 1, slider: true }, { path: 'strategy_params.06.trailing_stop_pct', label: '追踪止损', type: 'number', min: 0.001, max: 0.1, step: 0.001, slider: true, scale: 100 }, { path: 'strategy_params.06.stop_loss_pct', label: '初始止损', type: 'number', min: 0.001, max: 0.1, step: 0.001, slider: true, scale: 100 }] },
-            { id: '07', name: '07 跳空交易', fields: [{ path: 'strategy_params.07.min_15m_bars', label: '最小15分钟K线', type: 'number', min: 10, max: 1000, step: 1, slider: true }, { path: 'strategy_params.07.gap_down_multiplier', label: '低开阈值系数', type: 'number', min: 0.95, max: 1, step: 0.0005, slider: true }, { path: 'strategy_params.07.trailing_stop_pct', label: '追踪止损', type: 'number', min: 0.001, max: 0.1, step: 0.001, slider: true, scale: 100 }, { path: 'strategy_params.07.stop_loss_pct', label: '初始止损', type: 'number', min: 0.001, max: 0.1, step: 0.001, slider: true, scale: 100 }] },
-            { id: '08', name: '08 神奇九转', fields: [{ path: 'strategy_params.08.min_history_bars', label: '最小历史K线', type: 'number', min: 10, max: 1000, step: 1, slider: true }, { path: 'strategy_params.08.trailing_stop_pct', label: '追踪止损', type: 'number', min: 0.001, max: 0.1, step: 0.001, slider: true, scale: 100 }, { path: 'strategy_params.08.stop_loss_pct', label: '初始止损', type: 'number', min: 0.001, max: 0.1, step: 0.001, slider: true, scale: 100 }] },
-            { id: '09', name: '09 箱体降本策略', fields: [{ path: 'strategy_params.09.box_period', label: '箱体周期', type: 'number', min: 30, max: 1000, step: 1, slider: true }, { path: 'strategy_params.09.break_pct', label: '突破阈值', type: 'number', min: 0.001, max: 0.2, step: 0.001, slider: true, scale: 100 }, { path: 'strategy_params.09.rsi_period', label: 'RSI周期', type: 'number', min: 5, max: 60, step: 1, slider: true }, { path: 'strategy_params.09.rsi_oversold', label: 'RSI超卖阈值', type: 'number', min: 5, max: 45, step: 1, slider: true }, { path: 'strategy_params.09.rsi_overbought', label: 'RSI超买阈值', type: 'number', min: 55, max: 95, step: 1, slider: true }, { path: 'strategy_params.09.base_build_rsi', label: '底仓建仓RSI阈值', type: 'number', min: 5, max: 60, step: 1, slider: true }, { path: 'strategy_params.09.buy_zone_ratio', label: '低吸区比例', type: 'number', min: 0.01, max: 0.5, step: 0.01, slider: true, scale: 100 }, { path: 'strategy_params.09.sell_zone_ratio', label: '高抛区比例', type: 'number', min: 0.01, max: 0.5, step: 0.01, slider: true, scale: 100 }, { path: 'strategy_params.09.base_order_qty', label: '底仓手数', type: 'number', min: 100, max: 200000, step: 100, slider: true }, { path: 'strategy_params.09.dynamic_order_qty', label: '机动仓单次手数', type: 'number', min: 100, max: 100000, step: 100, slider: true }, { path: 'strategy_params.09.max_dynamic_qty', label: '机动仓总上限', type: 'number', min: 100, max: 500000, step: 100, slider: true }, { path: 'strategy_params.09.stop_loss_pct', label: '止损比例', type: 'number', min: 0.001, max: 0.3, step: 0.001, slider: true, scale: 100 }] }
+            {
+                id: 'backtest',
+                title: '先跑回测',
+                subtitle: '把最关键的回测前置项配好',
+                icon: 'fa-chart-line',
+                sections: [
+                    { title: '资金配置', fields: [
+                        { path: 'system.initial_capital', label: '系统初始资金', type: 'number', unit: '元', min: 10000, max: 100000000, step: 10000, slider: true, uiRelations: [{ area: '回测结果页', effect: '直接影响收益、仓位与回撤指标' }] }
+                    ] },
+                    { title: '费用与风控', fields: [
+                        { path: 'trading_cost.commission_rate', label: '手续费率', type: 'number', min: 0, max: 0.01, step: 0.00001, slider: true },
+                        { path: 'trading_cost.min_commission', label: '最低手续费', type: 'number', unit: '元', min: 0, max: 100, step: 0.1, slider: true },
+                        { path: 'risk_control.max_stop_loss_pct', label: '单笔最大止损', type: 'number', unit: '%', min: 0.001, max: 0.3, step: 0.001, slider: true, scale: 100 },
+                        { path: 'risk_control.max_drawdown_pct', label: '回撤限制', type: 'number', unit: '%', min: 0.001, max: 0.5, step: 0.001, slider: true, scale: 100 }
+                    ] }
+                ]
+            },
+            {
+                id: 'live',
+                title: '启用实盘',
+                subtitle: '实盘开关与监控标的',
+                icon: 'fa-rocket',
+                sections: [
+                    { title: '监控标的池', fields: [
+                        { path: 'targets', label: '监控标的列表', type: 'lines', itemType: 'string', hint: '每行一个股票代码，例如 600000.SH', uiRelations: [{ area: '实盘监控', effect: '决定实盘监控与交易的标的范围' }] }
+                    ] },
+                    { title: '实盘开关', fields: [
+                        { path: 'system.mode', label: '运行模式', type: 'select', options: [{ value: 'backtest', label: '回测模式' }, { value: 'live', label: '实盘模式' }], uiRelations: [{ area: '前台主面板', effect: '选择实盘模式即启用实盘监控与交易' }] },
+                        { path: 'system.live_auto_start_enabled', label: '自动开启实盘', type: 'boolean', default: true },
+                        { path: 'system.live_auto_start_time', label: '自动开启时间', type: 'text', default: '09:20', placeholder: 'HH:MM' }
+                    ] }
+                ]
+            },
+            {
+                id: 'consistency',
+                title: '做一致性对比',
+                subtitle: '控制实盘与回测的一致性检查',
+                icon: 'fa-balance-scale',
+                sections: [
+                    { title: '一致性检查', fields: [
+                        { path: 'live_monitoring.minute_close_confirm.enabled', label: '分钟收盘确认触发', type: 'boolean', desc: '减少分钟内抖动误触发', uiRelations: [{ area: '实盘一致性', effect: '影响实盘信号与回测对齐方式' }] },
+                        { path: 'live_monitoring.consistency_checks.enforce_adjustment_and_settlement_match', label: '强制复权/结算匹配', type: 'boolean', uiRelations: [{ area: '一致性报告', effect: '不一致时直接报错，避免错误对比' }] },
+                        { path: 'live_monitoring.consistency_checks.signal_execution_delay_seconds_warn', label: '信号执行延迟告警阈值', type: 'number', min: 0, max: 120, step: 1, uiRelations: [{ area: '一致性报告', effect: '影响延迟告警阈值' }] }
+                    ] }
+                ]
+            }
         ];
 
         function getByPath(obj, path, fallback = undefined) {
@@ -5709,7 +6010,6 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             const active = getByPath(cfg, 'strategies.active_ids', []);
             const activeText = Array.isArray(active) ? `${active.length}个 (${active.join(',')})` : '--';
             setText('cfg-zhongshu-active', activeText);
-            const boxPeriod = Number(getByPath(cfg, 'strategy_params.09.box_period', 0));
             const stopPct = Number(getByPath(cfg, 'risk_control.max_stop_loss_pct', 0));
             const dayLossPct = Number(getByPath(cfg, 'risk_control.max_daily_loss_pct', 0));
             const drawdownPct = Number(getByPath(cfg, 'risk_control.max_drawdown_pct', dayLossPct));
@@ -5718,15 +6018,14 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             const commissionRate = Number(getByPath(cfg, 'trading_cost.commission_rate', 0));
             const minCommission = Number(getByPath(cfg, 'trading_cost.min_commission', 0));
             const totalPos = Number(getByPath(cfg, 'risk_control.max_total_pos', 0));
-            setMetricText('cfg-zhongshu-box', `${boxPeriod}`, boxPeriod);
             setMetricText('cfg-menxia-stop', fmtPct(stopPct), stopPct * 100);
             setMetricText('cfg-menxia-dayloss', fmtPct(dayLossPct), dayLossPct * 100);
             setMetricText('cfg-shangshu-slippage', fmtPct(slippage, 3), slippage * 100);
             setText('cfg-shangshu-mode', `${getByPath(cfg, 'system.mode', '--')}`);
+            setText('cfg-li-rites-live', getByPath(cfg, 'system.mode', 'backtest') === 'live' ? '实盘' : '回测');
             setMetricText('cfg-li-capital', `¥ ${capital.toLocaleString()}`, capital);
             setMetricText('cfg-hu-commission', `${commissionRate.toFixed(6)}`, commissionRate);
             setMetricText('cfg-hu-minc', `¥ ${minCommission.toFixed(2)}`, minCommission);
-            setText('cfg-li-rites-live', getByPath(cfg, 'system.enable_live', false) ? '开启' : '关闭');
             setMetricText('cfg-bing-slippage', fmtPct(slippage, 3), slippage * 100);
             setMetricText('cfg-xing-totalpos', fmtPct(totalPos), totalPos * 100);
             setText('cfg-gong-source', `${getByPath(cfg, 'data_provider.source', '--')}`);
@@ -5759,14 +6058,28 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
 
         function createFieldRow(labelText) {
             const row = document.createElement('div');
-            row.className = 'grid grid-cols-[220px_1fr] gap-3 items-center bg-slate-950/60 border border-slate-700 rounded p-2';
+            row.className = 'grid grid-cols-1 md:grid-cols-[220px_minmax(0,1fr)] gap-2 md:gap-3 items-start md:items-center bg-slate-950/60 border border-slate-700 rounded p-2';
             const label = document.createElement('div');
-            label.className = 'text-[12px] text-slate-200';
+            label.className = 'text-[12px] text-slate-200 leading-5';
             label.innerText = labelText;
             row.appendChild(label);
             const holder = document.createElement('div');
+            holder.className = 'min-w-0';
             row.appendChild(holder);
             return { row, holder };
+        }
+
+        function createFieldRelationHints(field) {
+            if (!Array.isArray(field?.uiRelations) || !field.uiRelations.length) return null;
+            const wrap = document.createElement('div');
+            wrap.className = 'mt-1 space-y-1';
+            field.uiRelations.forEach(rel => {
+                const item = document.createElement('div');
+                item.className = 'text-[10px] text-cyan-400';
+                item.innerText = `前台关联 · ${String(rel?.area || '--')}: ${String(rel?.effect || '--')}`;
+                wrap.appendChild(item);
+            });
+            return wrap;
         }
 
         function createBusinessField(field, cfg) {
@@ -5796,6 +6109,8 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     desc.innerText = field.desc;
                     box.appendChild(desc);
                 }
+                const relationHints = createFieldRelationHints(field);
+                if (relationHints) holder.appendChild(relationHints);
                 holder.appendChild(box);
             } else if (field.type === 'select') {
                 const sel = document.createElement('select');
@@ -5825,6 +6140,8 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     hint.innerText = field.hint;
                     holder.appendChild(hint);
                 }
+                const relationHints = createFieldRelationHints(field);
+                if (relationHints) holder.appendChild(relationHints);
             } else if (field.type === 'checkbox_group') {
                 const box = document.createElement('div');
                 box.className = 'space-y-2';
@@ -5870,6 +6187,8 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     desc.innerText = field.desc;
                     box.appendChild(desc);
                 }
+                const relationHints = createFieldRelationHints(field);
+                if (relationHints) holder.appendChild(relationHints);
                 holder.appendChild(box);
             } else if (field.type === 'toggle_map') {
                 const box = document.createElement('div');
@@ -5923,6 +6242,8 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     desc.innerText = field.desc;
                     box.appendChild(desc);
                 }
+                const relationHints = createFieldRelationHints(field);
+                if (relationHints) holder.appendChild(relationHints);
                 holder.appendChild(box);
             } else {
                 const wrap = document.createElement('div');
@@ -5992,9 +6313,32 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     desc.innerText = field.desc;
                     wrap.appendChild(desc);
                 }
+                const relationHints = createFieldRelationHints(field);
+                if (relationHints) holder.appendChild(relationHints);
                 holder.appendChild(wrap);
             }
             return row;
+        }
+
+        function isFieldVisible(cfg, whenRules) {
+            if (!Array.isArray(whenRules) || !whenRules.length) return true;
+            return whenRules.every(rule => {
+                const actual = getByPath(cfg, String(rule?.path || ''), undefined);
+                if (Object.prototype.hasOwnProperty.call(rule || {}, 'equals')) return actual === rule.equals;
+                if (Array.isArray(rule?.in)) return rule.in.includes(actual);
+                if (Object.prototype.hasOwnProperty.call(rule || {}, 'notEquals')) return actual !== rule.notEquals;
+                return true;
+            });
+        }
+
+        function findFieldByPath(path) {
+            for (const section of FULL_CONFIG_SECTIONS) {
+                const fields = Array.isArray(section?.fields) ? section.fields : [];
+                for (const field of fields) {
+                    if (String(field?.path || '') === String(path || '')) return field;
+                }
+            }
+            return null;
         }
 
         function toggleConfigGroupBody(bodyId) {
@@ -6020,7 +6364,10 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
         function renderConfigFieldGroups(host, sectionMeta, fields, cfg) {
             const groups = Array.isArray(sectionMeta?.field_groups) ? sectionMeta.field_groups : [];
             if (!groups.length) {
-                fields.forEach(f => host.appendChild(createBusinessField(f, cfg)));
+                fields.forEach(f => {
+                    if (!isFieldVisible(cfg, f?.when)) return;
+                    host.appendChild(createBusinessField(f, cfg));
+                });
                 return;
             }
             const map = {};
@@ -6040,7 +6387,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 inner.className = `space-y-2 ${g.defaultOpen === false ? 'hidden' : ''}`;
                 const groupPaths = Array.isArray(g.paths) ? g.paths.map(x => String(x || '')) : [];
                 groupPaths.forEach(p => {
-                    if (map[p]) inner.appendChild(createBusinessField(map[p], cfg));
+                    if (map[p] && isFieldVisible(cfg, map[p]?.when)) inner.appendChild(createBusinessField(map[p], cfg));
                 });
                 wrapper.appendChild(inner);
                 host.appendChild(wrapper);
@@ -6048,7 +6395,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             const allGrouped = new Set();
             groups.forEach(g => (Array.isArray(g.paths) ? g.paths : []).forEach(p => allGrouped.add(String(p || ''))));
             fields.forEach(f => {
-                if (!allGrouped.has(String(f.path || ''))) host.appendChild(createBusinessField(f, cfg));
+                if (!allGrouped.has(String(f.path || '')) && isFieldVisible(cfg, f?.when)) host.appendChild(createBusinessField(f, cfg));
             });
         }
 
@@ -6079,9 +6426,9 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     <div class="flex flex-wrap items-center gap-2">
                         <button id="config-tdx-test-btn" onclick="testTdxConnectivity()" class="bg-cyan-700 hover:bg-cyan-600 text-white px-3 py-1.5 rounded text-xs border border-cyan-500">
                             <i id="config-tdx-test-icon" class="fa-solid fa-magnifying-glass"></i>
-                            <span id="config-tdx-test-label">自动探测TDX并测试</span>
+                            <span id="config-tdx-test-label">探测TDX模式并测试</span>
                         </button>
-                        <span id="config-tdx-test-status" class="text-[10px] text-slate-400">无需手填路径，自动探测 tdxdir 并校验</span>
+                        <span id="config-tdx-test-status" class="text-[10px] text-slate-400">Windows 可自动探测 vipdoc；mac/无 vipdoc 时自动校验 mootdx 网络镜像模式</span>
                     </div>
                     <div class="flex flex-wrap gap-2">
                         <button id="history-sync-run-btn" onclick="runHistorySync()" class="bg-teal-700 hover:bg-teal-600 text-white px-3 py-1.5 rounded text-xs border border-teal-500">
@@ -6150,48 +6497,128 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             return block;
         }
 
-        function renderStrategyParamsSection(cfg) {
-            const block = document.createElement('div');
-            block.className = 'border border-slate-700 rounded-lg overflow-hidden';
-            const sectionBodyId = 'cfg-section-body-strategy-params';
-            const head = document.createElement('div');
-            head.className = 'px-3 py-2 bg-slate-800 flex items-center justify-between gap-2';
-            head.innerHTML = `<div><div class="text-xs font-bold text-purple-300 uppercase tracking-widest">中书省策略研究中心</div><div class="text-[10px] text-slate-400 mt-0.5">分策略参数面板</div></div><button type="button" onclick="toggleConfigSectionBody('${sectionBodyId}')" class="text-[11px] text-slate-300 hover:text-white border border-slate-600 rounded px-2 py-1">折叠/展开</button>`;
-            block.appendChild(head);
-            const body = document.createElement('div');
-            body.id = sectionBodyId;
-            body.className = 'p-3 space-y-3 config-section-body';
-            STRATEGY_FORM_GROUPS.forEach(group => {
-                const g = document.createElement('div');
-                g.className = 'border border-slate-700 rounded p-2 space-y-2';
-                const title = document.createElement('div');
-                title.className = 'text-[11px] text-cyan-300 font-bold';
-                title.innerText = group.name;
-                g.appendChild(title);
-                group.fields.forEach(f => g.appendChild(createBusinessField(f, cfg)));
-                body.appendChild(g);
-            });
-            block.appendChild(body);
-            return block;
-        }
-
-        function renderConfigForm(cfg) {
+        function renderWizardMode(cfg) {
             const container = document.getElementById('config-form-container');
             if (!container) return;
             container.innerHTML = '';
-            BIZ_SECTIONS.forEach(section => {
+            WIZARD_STEPS.forEach((step, stepIdx) => {
+                const block = document.createElement('div');
+                block.className = 'border border-slate-700 rounded-lg overflow-hidden';
+                const head = document.createElement('div');
+                head.className = 'px-4 py-3 bg-slate-800/90 border-b border-slate-700 flex items-center gap-3';
+                head.innerHTML = `<i class="fa-solid ${step.icon} text-purple-300"></i><div><div class="text-sm font-bold text-purple-200">${step.title}</div><div class="text-[10px] text-slate-400 mt-0.5">${step.subtitle}</div></div>`;
+                block.appendChild(head);
+                const body = document.createElement('div');
+                body.className = 'p-3 space-y-3 config-section-body';
+                (step.sections || []).forEach((section, sectionIdx) => {
+                    const fields = Array.isArray(section?.fields) ? section.fields : [];
+                    const visibleFields = fields.filter(field => isFieldVisible(cfg, field?.when));
+                    if (!visibleFields.length) return;
+                    const sectionWrap = document.createElement('div');
+                    sectionWrap.className = 'border border-slate-700 rounded p-3 space-y-2 bg-slate-950/40';
+                    const bodyId = `cfg-wizard-${step.id}-${stepIdx}-${sectionIdx}`;
+                    const title = document.createElement('button');
+                    title.type = 'button';
+                    title.className = 'w-full text-left flex items-center justify-between gap-2';
+                    title.setAttribute('onclick', `toggleConfigGroupBody('${bodyId}')`);
+                    title.innerHTML = `<span class="text-xs font-bold text-cyan-300">${section.title}</span><span class="text-[10px] text-slate-400">${section.advanced ? '高级项 · ' : ''}折叠/展开</span>`;
+                    sectionWrap.appendChild(title);
+                    const inner = document.createElement('div');
+                    inner.id = bodyId;
+                    inner.className = `space-y-2 ${section.defaultOpen === false ? 'hidden' : ''}`;
+                    visibleFields.forEach(field => inner.appendChild(createBusinessField(field, cfg)));
+                    sectionWrap.appendChild(inner);
+                    body.appendChild(sectionWrap);
+                });
+                block.appendChild(body);
+                container.appendChild(block);
+            });
+        }
+
+        function renderExpertMode(cfg) {
+            const container = document.getElementById('config-form-container');
+            if (!container) return;
+            container.innerHTML = '';
+            FULL_CONFIG_SECTIONS.forEach(section => {
                 container.appendChild(renderSectionBlock(section.title, section.subtitle, section.fields, cfg, section));
             });
-            container.appendChild(renderStrategyParamsSection(cfg));
+        }
+
+        function updateConfigModeUi() {
+            const wizardBtn = document.getElementById('config-mode-wizard-btn');
+            const expertBtn = document.getElementById('config-mode-expert-btn');
+            const hint = document.getElementById('config-center-mode-hint');
+            if (wizardBtn) wizardBtn.className = `${currentConfigMode === 'wizard' ? 'bg-purple-700 hover:bg-purple-600 border-purple-500' : 'bg-slate-800 hover:bg-slate-700 border-slate-600'} text-white px-2 py-1 rounded text-[11px] border`;
+            if (expertBtn) expertBtn.className = `${currentConfigMode === 'expert' ? 'bg-purple-700 hover:bg-purple-600 border-purple-500' : 'bg-slate-800 hover:bg-slate-700 border-slate-600'} text-white px-2 py-1 rounded text-[11px] border`;
+            if (hint) hint.innerText = currentConfigMode === 'expert' ? '专家模式：按模块查看完整配置，仍保留私有配置优先级' : '向导模式：按任务分步配置，新手先看这里';
+        }
+
+        function switchConfigMode(mode) {
+            currentConfigMode = mode === 'expert' ? 'expert' : 'wizard';
+            const cfg = collectConfigFromForm();
+            configDraft = JSON.parse(JSON.stringify(cfg || {}));
+            renderConfigForm(configDraft);
+            bindConfigRealtimePreview();
+            applyConfigToBoards(configDraft);
+            updateConfigModeUi();
+        }
+
+        function renderConfigForm(cfg) {
+            if (currentConfigMode === 'expert') renderExpertMode(cfg);
+            else renderWizardMode(cfg);
+        }
+
+        function showTdxLiveComplianceModal() {
+            const modal = document.getElementById('tdx-live-compliance-modal');
+            const checkbox = document.getElementById('tdx-live-compliance-checkbox');
+            const btn = document.getElementById('tdx-live-compliance-confirm-btn');
+            if (modal) modal.classList.remove('hidden');
+            if (checkbox) checkbox.checked = false;
+            if (btn) btn.disabled = true;
+        }
+
+        function closeTdxLiveComplianceModal() {
+            const modal = document.getElementById('tdx-live-compliance-modal');
+            if (modal) modal.classList.add('hidden');
+            tdxLiveCompliancePending = false;
+        }
+
+        function updateTdxLiveComplianceBtn() {
+            const checkbox = document.getElementById('tdx-live-compliance-checkbox');
+            const btn = document.getElementById('tdx-live-compliance-confirm-btn');
+            if (btn) btn.disabled = !!(!checkbox || !checkbox.checked);
+        }
+
+        function confirmTdxLiveCompliance() {
+            const checkbox = document.getElementById('tdx-live-compliance-checkbox');
+            if (!checkbox || !checkbox.checked) return;
+            tdxLiveComplianceAcknowledged = true;
+            tdxLiveCompliancePending = false;
+            closeTdxLiveComplianceModal();
+            saveConfigCenter();
+        }
+
+        function _checkTdxLiveCompliance(cfg) {
+            const source = String(getByPath(cfg, 'data_provider.source', '') || '').trim().toLowerCase();
+            const mode = String(getByPath(cfg, 'system.mode', '') || '').trim().toLowerCase();
+            return source === 'tdx' && mode === 'live';
         }
 
         function bindConfigRealtimePreview() {
             const container = document.getElementById('config-form-container');
-            if (!container || container.dataset.previewBound === '1') return;
-            const refresh = () => applyConfigToBoards(collectConfigFromForm());
-            container.addEventListener('input', refresh);
-            container.addEventListener('change', refresh);
-            container.dataset.previewBound = '1';
+            if (!container || configPreviewBound) return;
+            const handleInput = (event) => {
+                const cfg = collectConfigFromForm();
+                configDraft = JSON.parse(JSON.stringify(cfg || {}));
+                applyConfigToBoards(configDraft);
+                if (String(event?.target?.dataset?.path || '') === 'data_provider.source') {
+                    renderConfigForm(configDraft);
+                    updateConfigModeUi();
+                }
+            };
+            container.addEventListener('input', handleInput);
+            container.addEventListener('change', handleInput);
+            configPreviewBound = true;
         }
 
         function collectConfigFromForm() {
@@ -6431,11 +6858,13 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 'batch-dashboard-modal',
                 'batch-task-csv-picker-modal',
                 'config-modal',
+                'strategy-manager-modal',
                 'fundamental-detail-modal',
                 'fundamental-module-detail-modal',
                 'webhook-retry-modal',
                 'pattern-picker-modal',
-                'evolution-board-modal'
+                'evolution-board-modal',
+                'consistency-report-modal'
             ];
             ids.forEach(id => {
                 if (id === keep) return;
@@ -6479,6 +6908,10 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             }
             if (t === 'evolution') {
                 openEvolutionBoardModal();
+                return;
+            }
+            if (t === 'consistency') {
+                openConsistencyReportModal();
                 return;
             }
         }
@@ -8331,6 +8764,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     fundamentalInterfaceOptions = [];
                 }
                 configDraft = data.config || {};
+                updateConfigModeUi();
                 renderConfigForm(configDraft);
                 await refreshHistorySyncStatus();
                 await loadFundamentalCacheList();
@@ -8347,6 +8781,15 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             try {
                 if (status) status.innerText = '保存中...';
                 const parsed = collectConfigFromForm();
+
+                // TDX+live compliance gate
+                if (_checkTdxLiveCompliance(parsed) && !tdxLiveComplianceAcknowledged) {
+                    tdxLiveCompliancePending = true;
+                    showTdxLiveComplianceModal();
+                    if (status) status.innerText = '需要确认合规声明后才能保存';
+                    return;
+                }
+
                 const res = await fetch('/api/config/save', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -8356,11 +8799,15 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 if (data.status !== 'success') throw new Error(data.msg || '保存失败');
                 configDraft = parsed;
                 applyConfigToBoards(configDraft);
+                updateConfigModeUi();
                 const savedMode = String(data.mode || getByPath(configDraft, 'system.mode', 'backtest'));
                 const liveReady = data.live_enabled === true;
                 if (status) status.innerText = `保存成功，已生效（模式=${savedMode}，实盘生效=${liveReady ? '是' : '否'}）`;
                 await syncStatus();
                 logMessage('SYSTEM', `配置保存成功并已生效（模式=${savedMode}，实盘生效=${liveReady ? '是' : '否'}）`, 'success');
+
+                // Reset compliance flag after successful save
+                tdxLiveComplianceAcknowledged = false;
             } catch (e) {
                 if (status) status.innerText = `保存失败: ${e}`;
             }
@@ -8432,7 +8879,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 if (btn) btn.disabled = true;
                 if (icon) icon.className = 'fa-solid fa-spinner fa-spin';
                 if (label) label.innerText = '探测并校验中...';
-                setStatus('正在自动探测 TDX 目录并校验连通性...', 'info');
+                setStatus('正在探测 TDX 本地目录或网络镜像模式并校验连通性...', 'info');
                 const parsed = collectConfigFromForm();
                 const tdxdir = String(getByPath(parsed, 'data_provider.tdxdir', '') || '').trim();
                 const targets = Array.isArray(getByPath(parsed, 'targets', [])) ? getByPath(parsed, 'targets', []) : [];
@@ -8452,12 +8899,17 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     throw new Error(data.msg || 'TDX 连通性校验失败');
                 }
                 const usedPath = String(data.tdxdir_used || '').trim();
+                const providerMode = String(data.provider_mode || '').trim();
+                const hasVipdoc = Boolean(data.has_vipdoc);
                 if (usedPath) {
                     const input = document.querySelector('input[data-path="data_provider.tdxdir"]');
                     if (input) input.value = usedPath;
                 }
                 const suffix = data.autodetected ? '（已自动探测目录）' : '';
-                const okMsg = `连通成功：${String(data.stock_code || stockCode)} @ ${usedPath}${suffix}`;
+                const modeText = providerMode === 'network_mirror'
+                    ? `网络镜像模式 · 缓存目录 ${String(data.cache_dir || '--')}`
+                    : `${hasVipdoc ? '本地vipdoc模式' : '本地模式'} @ ${usedPath || '--'}${suffix}`;
+                const okMsg = `连通成功：${String(data.stock_code || stockCode)} · ${modeText}`;
                 setStatus(okMsg, 'ok');
                 logMessage('SYSTEM', okMsg, 'success');
             } catch (e) {
@@ -8467,7 +8919,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             } finally {
                 if (btn) btn.disabled = false;
                 if (icon) icon.className = 'fa-solid fa-magnifying-glass';
-                if (label) label.innerText = '自动探测TDX并测试';
+                if (label) label.innerText = '探测TDX模式并测试';
             }
         }
 
@@ -9248,8 +9700,23 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             }
         }
 
+        function setStrategyAnalyzeBusy(isBusy) {
+            strategyAnalyzeInFlight = !!isBusy;
+            const btn = document.getElementById('analyze-strategy-btn');
+            const icon = document.getElementById('analyze-strategy-icon');
+            const label = document.getElementById('analyze-strategy-label');
+            const overlay = document.getElementById('strategy-create-analysis-overlay');
+            if (btn) btn.disabled = strategyAnalyzeInFlight;
+            if (icon) icon.className = strategyAnalyzeInFlight ? 'fa-solid fa-spinner fa-spin mr-1' : 'fa-solid fa-robot mr-1';
+            if (label) label.innerText = strategyAnalyzeInFlight ? '智能分析中' : '智能分析';
+            if (overlay) overlay.className = strategyAnalyzeInFlight
+                ? 'absolute inset-0 flex items-center justify-center bg-slate-950/45 z-10'
+                : 'hidden absolute inset-0 items-center justify-center bg-slate-950/45 z-10';
+        }
+
         async function openStrategyCreateModal() {
             pendingGeneratedStrategy = null;
+            setStrategyAnalyzeBusy(false);
             const modal = document.getElementById('strategy-create-modal');
             if (modal) modal.classList.remove('hidden');
             const status = document.getElementById('strategy-create-status');
@@ -9277,6 +9744,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
         }
 
         function closeStrategyCreateModal() {
+            setStrategyAnalyzeBusy(false);
             const modal = document.getElementById('strategy-create-modal');
             if (modal) modal.classList.add('hidden');
         }
@@ -9323,6 +9791,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
         }
 
         async function analyzeStrategyTemplate() {
+            if (strategyAnalyzeInFlight) return;
             const tplInput = document.getElementById('strategy-template-input');
             const codeTplInput = document.getElementById('strategy-code-template-input');
             const nameInput = document.getElementById('strategy-create-name');
@@ -9339,6 +9808,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 return;
             }
             try {
+                setStrategyAnalyzeBusy(true);
                 if (status) status.innerText = '智能分析中...';
                 const marketState = source === 'market' ? collectMarketStateFromForm() : null;
                 const endpoint = source === 'market' ? '/api/strategy_manager/analyze_market' : '/api/strategy_manager/analyze';
@@ -9387,6 +9857,8 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 if (status) status.innerText = `已生成策略 ${pendingGeneratedStrategy.strategy_id}（${source === 'market' ? 'market' : 'human'}）`;
             } catch (e) {
                 if (status) status.innerText = `智能分析失败: ${e}`;
+            } finally {
+                setStrategyAnalyzeBusy(false);
             }
         }
 
@@ -11104,6 +11576,735 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             // Ideally we should switch back to live mode automatically or manual
         }
 
+        function summarizeConsistencyCompareStrategySelection(ids) {
+            const picked = Array.isArray(ids) ? ids.slice() : [];
+            const btn = document.getElementById('consistency-compare-strategy-btn');
+            if (!btn) return;
+            if (!picked.length) {
+                btn.innerText = '策略：未选择';
+            } else if (picked.length === strategyCatalog.length) {
+                btn.innerText = '策略：全部策略';
+            } else if (picked.length === 1) {
+                const one = strategyCatalog.find(s => String(s.id) === String(picked[0]));
+                btn.innerText = `策略：[${picked[0]}] ${one ? one.name : ''}`;
+            } else {
+                btn.innerText = `策略：已选 ${picked.length} 个`;
+            }
+        }
+
+        function updateConsistencyCompareStrategyListUI() {
+            const picked = consistencyCompareStrategyTempSelectedIds.length ? consistencyCompareStrategyTempSelectedIds.slice() : selectedStrategyIds.slice();
+            const searchText = String(document.getElementById('consistency-compare-strategy-search')?.value || '').trim().toLowerCase();
+            const scopedRows = !searchText
+                ? strategyCatalog.slice()
+                : strategyCatalog.filter(row => {
+                    const id = String(row?.id || '').toLowerCase();
+                    const name = String(row?.name || '').toLowerCase();
+                    return id.includes(searchText) || name.includes(searchText);
+                });
+            renderSearchableStrategyChecklist({
+                listId: 'consistency-compare-strategy-list',
+                searchInputId: 'consistency-compare-strategy-search',
+                checkboxClass: 'consistency-compare-strategy-item-checkbox',
+                rows: scopedRows,
+                selectedIds: picked,
+                renderRightText: () => '',
+                onToggle: (cb) => {
+                    const sid = String(cb?.value || '').trim();
+                    const curr = new Set((Array.isArray(consistencyCompareStrategyTempSelectedIds) ? consistencyCompareStrategyTempSelectedIds : []).map(x => String(x)));
+                    if (sid) {
+                        if (cb.checked) curr.add(sid);
+                        else curr.delete(sid);
+                    }
+                    consistencyCompareStrategyTempSelectedIds = Array.from(curr);
+                    const allBox = document.getElementById('consistency-compare-strategy-all');
+                    if (allBox) {
+                        const currSet = new Set(consistencyCompareStrategyTempSelectedIds.map(x => String(x)));
+                        const scopedIds = scopedRows.map(row => String(row?.id || '').trim()).filter(Boolean);
+                        allBox.checked = scopedIds.length > 0 && scopedIds.every(id => currSet.has(id));
+                    }
+                }
+            });
+            const allBox = document.getElementById('consistency-compare-strategy-all');
+            if (allBox) {
+                const currSet = new Set(picked.map(x => String(x)));
+                const scopedIds = scopedRows.map(row => String(row?.id || '').trim()).filter(Boolean);
+                allBox.checked = scopedIds.length > 0 && scopedIds.every(id => currSet.has(id));
+            }
+        }
+
+        function toggleConsistencyCompareStrategyPanel() {
+            const panel = document.getElementById('consistency-compare-strategy-panel');
+            if (!panel) return;
+            if (panel.classList.contains('hidden')) {
+                consistencyCompareStrategyTempSelectedIds = selectedStrategyIds.slice();
+                updateConsistencyCompareStrategyListUI();
+            }
+            panel.classList.toggle('hidden');
+        }
+
+        function toggleAllConsistencyCompareStrategies(checked) {
+            const searchText = String(document.getElementById('consistency-compare-strategy-search')?.value || '').trim().toLowerCase();
+            const scopedIds = (!searchText
+                ? strategyCatalog
+                : strategyCatalog.filter(row => {
+                    const id = String(row?.id || '').toLowerCase();
+                    const name = String(row?.name || '').toLowerCase();
+                    return id.includes(searchText) || name.includes(searchText);
+                })
+            ).map(row => String(row?.id || '').trim()).filter(Boolean);
+            const curr = new Set((Array.isArray(consistencyCompareStrategyTempSelectedIds) ? consistencyCompareStrategyTempSelectedIds : []).map(x => String(x)));
+            if (checked) scopedIds.forEach(id => curr.add(id));
+            else scopedIds.forEach(id => curr.delete(id));
+            consistencyCompareStrategyTempSelectedIds = Array.from(curr);
+            setCheckedValuesByClass('consistency-compare-strategy-item-checkbox', consistencyCompareStrategyTempSelectedIds, !!checked);
+        }
+
+        function applyConsistencyCompareStrategySelection() {
+            selectedStrategyIds = consistencyCompareStrategyTempSelectedIds.slice();
+            summarizeConsistencyCompareStrategySelection(selectedStrategyIds);
+            renderStrategySelectionSummary();
+            const panel = document.getElementById('consistency-compare-strategy-panel');
+            if (panel) panel.classList.add('hidden');
+        }
+
+        function setConsistencySnapshotSelectionMode(mode) {
+            const finalMode = String(mode || 'auto').trim().toLowerCase() === 'manual' ? 'manual' : 'auto';
+            const autoBtn = document.getElementById('consistency-snapshot-mode-auto');
+            const manualBtn = document.getElementById('consistency-snapshot-mode-manual');
+            const wrap = document.getElementById('consistency-snapshot-picker-wrap');
+            if (autoBtn) autoBtn.className = finalMode === 'auto' ? 'rounded border border-emerald-500 bg-emerald-950/20 text-emerald-200 px-3 py-2' : 'rounded border border-slate-700 bg-slate-900/60 text-slate-300 px-3 py-2';
+            if (manualBtn) manualBtn.className = finalMode === 'manual' ? 'rounded border border-emerald-500 bg-emerald-950/20 text-emerald-200 px-3 py-2' : 'rounded border border-slate-700 bg-slate-900/60 text-slate-300 px-3 py-2';
+            if (wrap) wrap.classList.toggle('hidden', finalMode !== 'manual');
+            if (finalMode === 'manual' && !consistencyCompareSnapshotRows.length) {
+                loadConsistencyCompareSnapshots();
+            }
+        }
+
+        function getConsistencySnapshotSelectionMode() {
+            const manualBtn = document.getElementById('consistency-snapshot-mode-manual');
+            return manualBtn && manualBtn.className.includes('border-emerald-500') ? 'manual' : 'auto';
+        }
+
+        function setConsistencyBacktestSourceType(type) {
+            const finalType = String(type || 'existing_report').trim().toLowerCase() === 'new_backtest' ? 'new_backtest' : 'existing_report';
+            const existingBtn = document.getElementById('consistency-source-existing');
+            const newBtn = document.getElementById('consistency-source-new');
+            const existingWrap = document.getElementById('consistency-existing-report-filters');
+            const newWrap = document.getElementById('consistency-new-backtest-settings');
+            const pickerWrap = document.getElementById('consistency-backtest-picker-wrap');
+            if (existingBtn) existingBtn.className = finalType === 'existing_report' ? 'rounded border border-emerald-500 bg-emerald-950/20 text-emerald-200 px-3 py-2' : 'rounded border border-slate-700 bg-slate-900/60 text-slate-300 px-3 py-2';
+            if (newBtn) newBtn.className = finalType === 'new_backtest' ? 'rounded border border-emerald-500 bg-emerald-950/20 text-emerald-200 px-3 py-2' : 'rounded border border-slate-700 bg-slate-900/60 text-slate-300 px-3 py-2';
+            if (existingWrap) existingWrap.classList.toggle('hidden', finalType !== 'existing_report');
+            if (newWrap) newWrap.classList.toggle('hidden', finalType !== 'new_backtest');
+            if (pickerWrap) pickerWrap.classList.toggle('hidden', finalType !== 'existing_report');
+            if (finalType === 'existing_report' && !consistencyCompareBacktestRows.length) {
+                loadConsistencyCompareBacktestList();
+            }
+        }
+
+        function getConsistencyBacktestSourceType() {
+            const newBtn = document.getElementById('consistency-source-new');
+            return newBtn && newBtn.className.includes('border-emerald-500') ? 'new_backtest' : 'existing_report';
+        }
+
+        function buildConsistencyComparePayloadBase() {
+            const code = normalizeCode(String(document.getElementById('consistency-compare-code')?.value || '').trim());
+            const startDate = String(document.getElementById('consistency-compare-start-date')?.value || '').trim();
+            const endDate = String(document.getElementById('consistency-compare-end-date')?.value || '').trim();
+            const timeframe = String(document.getElementById('consistency-compare-timeframes')?.value || '').trim();
+            return {
+                market: 'ashare',
+                code,
+                start_date: startDate,
+                end_date: endDate,
+                strategy_ids: Array.isArray(selectedStrategyIds) ? selectedStrategyIds.slice() : [],
+                timeframes: timeframe ? [timeframe] : [],
+                note: String(document.getElementById('consistency-compare-note')?.value || '').trim(),
+            };
+        }
+
+        function setConsistencyCompareStatus(text, tone = 'normal') {
+            const el = document.getElementById('consistency-compare-status');
+            if (!el) return;
+            const cls = tone === 'error'
+                ? 'rounded border border-rose-500/40 bg-rose-950/20 px-3 py-3 text-xs text-rose-200 min-h-[86px] leading-6'
+                : (tone === 'success'
+                    ? 'rounded border border-emerald-500/40 bg-emerald-950/20 px-3 py-3 text-xs text-emerald-100 min-h-[86px] leading-6'
+                    : 'rounded border border-slate-700 bg-slate-950/40 px-3 py-3 text-xs text-slate-300 min-h-[86px] leading-6');
+            el.className = cls;
+            el.innerText = String(text || '');
+        }
+
+        function renderConsistencyCompareSnapshotList() {
+            const meta = document.getElementById('consistency-snapshot-picker-meta');
+            const listEl = document.getElementById('consistency-snapshot-picker-list');
+            if (!listEl) return;
+            if (meta) meta.innerText = `共 ${consistencyCompareSnapshotRows.length} 条实盘记录，已选 ${consistencyCompareSelectedSnapshotIds.length} 条`;
+            if (!consistencyCompareSnapshotRows.length) {
+                listEl.innerHTML = '<div class="text-slate-500">暂无可选实盘记录</div>';
+                return;
+            }
+            const selectedSet = new Set(consistencyCompareSelectedSnapshotIds.map(x => String(x)));
+            listEl.innerHTML = consistencyCompareSnapshotRows.map(row => {
+                const sid = String(row.snapshot_id || '');
+                const active = selectedSet.has(sid);
+                const tfText = Array.isArray(row.timeframes) && row.timeframes.length ? row.timeframes.join('、') : '未标注周期';
+                const strategyText = Array.isArray(row.strategy_ids) && row.strategy_ids.length ? row.strategy_ids.join('、') : '未标注策略';
+                return `
+                    <button onclick="toggleConsistencySnapshotPick('${sid.replace(/'/g, "\\'")}')" class="w-full text-left rounded-lg border ${active ? 'border-emerald-500 bg-emerald-950/20' : 'border-slate-700 bg-slate-950/40'} px-3 py-3 hover:border-emerald-400 transition-all">
+                        <div class="flex items-center justify-between gap-2 mb-2">
+                            <div class="text-sm font-semibold text-white">${evolutionEscapeHtml(String(row.code || '--'))}</div>
+                            <div class="text-xs ${active ? 'text-emerald-300' : 'text-slate-400'}">${active ? '已选中' : '点击选择'}</div>
+                        </div>
+                        <div class="text-xs text-slate-300 space-y-1">
+                            <div>日期：${evolutionEscapeHtml(String(row.date || '--'))}</div>
+                            <div>策略：${evolutionEscapeHtml(strategyText)}</div>
+                            <div>周期：${evolutionEscapeHtml(tfText)}</div>
+                            <div>成交 ${evolutionEscapeHtml(String(row.trade_count ?? 0))} 笔 / 信号 ${evolutionEscapeHtml(String(row.signal_count ?? 0))} 条 / 委托 ${evolutionEscapeHtml(String(row.order_count ?? 0))} 条</div>
+                        </div>
+                    </button>
+                `;
+            }).join('');
+        }
+
+        function toggleConsistencySnapshotPick(snapshotId) {
+            const sid = String(snapshotId || '').trim();
+            if (!sid) return;
+            const curr = new Set(consistencyCompareSelectedSnapshotIds.map(x => String(x)));
+            if (curr.has(sid)) curr.delete(sid);
+            else curr.add(sid);
+            consistencyCompareSelectedSnapshotIds = Array.from(curr);
+            renderConsistencyCompareSnapshotList();
+        }
+
+        async function loadConsistencyCompareSnapshots() {
+            const meta = document.getElementById('consistency-snapshot-picker-meta');
+            const listEl = document.getElementById('consistency-snapshot-picker-list');
+            if (meta) meta.innerText = '加载中...';
+            if (listEl) listEl.innerHTML = '<div class="text-slate-500">正在加载...</div>';
+            try {
+                const payload = buildConsistencyComparePayloadBase();
+                const qs = new URLSearchParams();
+                if (payload.code) qs.set('code', payload.code);
+                if (payload.start_date) qs.set('start_date', payload.start_date);
+                if (payload.end_date) qs.set('end_date', payload.end_date);
+                (payload.strategy_ids || []).forEach(x => qs.append('strategy_ids', x));
+                (payload.timeframes || []).forEach(x => qs.append('timeframes', x));
+                qs.set('page', '1');
+                qs.set('page_size', '100');
+                const res = await fetch(`/api/consistency/snapshots?${qs.toString()}`);
+                const data = await res.json();
+                if (!res.ok || String(data.status || '').toLowerCase() !== 'success') {
+                    throw new Error(data.msg || '加载实盘记录失败');
+                }
+                consistencyCompareSnapshotRows = Array.isArray(data.items) ? data.items : [];
+                const validIds = new Set(consistencyCompareSnapshotRows.map(x => String(x.snapshot_id || '')));
+                consistencyCompareSelectedSnapshotIds = consistencyCompareSelectedSnapshotIds.filter(x => validIds.has(String(x)));
+                renderConsistencyCompareSnapshotList();
+            } catch (e) {
+                if (meta) meta.innerText = `加载失败: ${e}`;
+                if (listEl) listEl.innerHTML = `<div class="text-rose-300">${evolutionEscapeHtml(String(e))}</div>`;
+            }
+        }
+
+        function renderConsistencyCompareBacktestList() {
+            const meta = document.getElementById('consistency-backtest-picker-meta');
+            const listEl = document.getElementById('consistency-backtest-picker-list');
+            if (!listEl) return;
+            if (meta) meta.innerText = `共 ${consistencyCompareBacktestRows.length} 条回测任务${consistencyCompareSelectedReportId ? '，已选 1 条' : ''}`;
+            if (!consistencyCompareBacktestRows.length) {
+                listEl.innerHTML = '<div class="text-slate-500">暂无可选回测任务</div>';
+                return;
+            }
+            listEl.innerHTML = consistencyCompareBacktestRows.map(row => {
+                const rid = String(row.report_id || '');
+                const active = consistencyCompareSelectedReportId === rid;
+                return `
+                    <button onclick="selectConsistencyBacktestReport('${rid.replace(/'/g, "\\'")}')" class="w-full text-left rounded-lg border ${active ? 'border-emerald-500 bg-emerald-950/20' : 'border-slate-700 bg-slate-950/40'} px-3 py-3 hover:border-emerald-400 transition-all">
+                        <div class="flex items-center justify-between gap-2 mb-2">
+                            <div class="text-sm font-semibold text-white">${evolutionEscapeHtml(String(row.stock_code || '--'))}</div>
+                            <div class="text-xs ${String(row.status || '').toLowerCase() === 'success' ? 'text-emerald-300' : 'text-amber-300'}">${evolutionEscapeHtml(String(row.status || '--'))}</div>
+                        </div>
+                        <div class="text-xs text-slate-300 space-y-1">
+                            <div>报告编号：${evolutionEscapeHtml(rid)}</div>
+                            <div>区间：${evolutionEscapeHtml(String(row.period || '--'))}</div>
+                            <div>总成交：${evolutionEscapeHtml(String(row.total_trades ?? 0))} 笔</div>
+                            <div>生成时间：${evolutionEscapeHtml(formatDateTime(row.created_at))}</div>
+                        </div>
+                    </button>
+                `;
+            }).join('');
+        }
+
+        function selectConsistencyBacktestReport(reportId) {
+            consistencyCompareSelectedReportId = String(reportId || '').trim();
+            renderConsistencyCompareBacktestList();
+        }
+
+        async function loadConsistencyCompareBacktestList() {
+            const meta = document.getElementById('consistency-backtest-picker-meta');
+            const listEl = document.getElementById('consistency-backtest-picker-list');
+            if (meta) meta.innerText = '加载中...';
+            if (listEl) listEl.innerHTML = '<div class="text-slate-500">正在加载...</div>';
+            try {
+                const payload = buildConsistencyComparePayloadBase();
+                const filterCode = normalizeCode(String(document.getElementById('consistency-backtest-filter-code')?.value || '').trim()) || payload.code;
+                const filterStatus = String(document.getElementById('consistency-backtest-filter-status')?.value || '').trim().toLowerCase();
+                const res = await fetch('/api/report/history');
+                const data = await res.json();
+                const rows = Array.isArray(data.reports) ? data.reports : [];
+                consistencyCompareBacktestRows = rows.filter(row => {
+                    const codeOk = !filterCode || String(row.stock_code || '').toUpperCase() === filterCode;
+                    const statusOk = !filterStatus || String(row.status || '').toLowerCase() === filterStatus;
+                    return codeOk && statusOk;
+                });
+                const validIds = new Set(consistencyCompareBacktestRows.map(x => String(x.report_id || '')));
+                if (!validIds.has(consistencyCompareSelectedReportId)) consistencyCompareSelectedReportId = '';
+                renderConsistencyCompareBacktestList();
+            } catch (e) {
+                if (meta) meta.innerText = `加载失败: ${e}`;
+                if (listEl) listEl.innerHTML = `<div class="text-rose-300">${evolutionEscapeHtml(String(e))}</div>`;
+            }
+        }
+
+        function initConsistencyCompareForm() {
+            const searchCode = normalizeCode(String(document.getElementById('stock-search-input')?.value || '').trim());
+            const reportFilterCode = document.getElementById('consistency-report-filter-code');
+            const codeInput = document.getElementById('consistency-compare-code');
+            const backtestCodeInput = document.getElementById('consistency-backtest-filter-code');
+            const capitalInput = document.getElementById('bt-capital-input');
+            const newBacktestCapital = document.getElementById('consistency-new-backtest-capital');
+            const rangeSelect = document.getElementById('bt-range-select');
+            const range = getBacktestDateRange(String(rangeSelect?.value || '1y')) || {};
+            if (reportFilterCode && !reportFilterCode.value) reportFilterCode.value = searchCode;
+            if (codeInput) codeInput.value = searchCode;
+            if (backtestCodeInput) backtestCodeInput.value = searchCode;
+            if (newBacktestCapital && capitalInput) newBacktestCapital.value = capitalInput.value || '1000000';
+            const startInput = document.getElementById('consistency-compare-start-date');
+            const endInput = document.getElementById('consistency-compare-end-date');
+            if (startInput) startInput.value = String(range.start || document.getElementById('bt-start-date')?.value || '');
+            if (endInput) endInput.value = String(range.end || document.getElementById('bt-end-date')?.value || '');
+            consistencyCompareSnapshotRows = [];
+            consistencyCompareBacktestRows = [];
+            consistencyCompareSelectedSnapshotIds = [];
+            consistencyCompareSelectedReportId = '';
+            consistencyCompareStrategyTempSelectedIds = selectedStrategyIds.slice();
+            summarizeConsistencyCompareStrategySelection(selectedStrategyIds);
+            setConsistencySnapshotSelectionMode('auto');
+            setConsistencyBacktestSourceType('existing_report');
+            setConsistencyCompareStatus('请先选择实盘范围和回测来源。');
+        }
+
+        async function startConsistencyCompare() {
+            if (consistencyCompareRunning) return;
+            const payload = buildConsistencyComparePayloadBase();
+            if (!payload.code || !payload.start_date || !payload.end_date) {
+                setConsistencyCompareStatus('请先填写标的代码、开始日期和结束日期。', 'error');
+                return;
+            }
+            const snapshotMode = getConsistencySnapshotSelectionMode();
+            const sourceType = getConsistencyBacktestSourceType();
+            payload.snapshot_selection_mode = snapshotMode;
+            payload.backtest_source_type = sourceType;
+            if (snapshotMode === 'manual') {
+                payload.selected_snapshot_ids = consistencyCompareSelectedSnapshotIds.slice();
+                if (!payload.selected_snapshot_ids.length) {
+                    setConsistencyCompareStatus('你已切换为手动挑选，请先勾选至少 1 条实盘记录。', 'error');
+                    return;
+                }
+            }
+            if (sourceType === 'existing_report') {
+                payload.selected_report_id = String(consistencyCompareSelectedReportId || '').trim();
+                if (!payload.selected_report_id) {
+                    setConsistencyCompareStatus('请先选择 1 条已有回测任务。', 'error');
+                    return;
+                }
+            } else {
+                payload.new_backtest_request = {
+                    strategy_ids: Array.isArray(selectedStrategyIds) ? selectedStrategyIds.slice() : [],
+                    capital: Number(document.getElementById('consistency-new-backtest-capital')?.value || 0) || null,
+                    realtime_push: false,
+                };
+            }
+            const submitBtn = document.getElementById('consistency-compare-submit-btn');
+            consistencyCompareRunning = true;
+            if (submitBtn) submitBtn.disabled = true;
+            setConsistencyCompareStatus(sourceType === 'new_backtest' ? '正在执行：先启动现场回测，再生成一致性报告。' : '正在执行：读取已有回测任务并生成一致性报告。');
+            try {
+                const res = await fetch('/api/consistency/compare', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                const data = await res.json();
+                if (!res.ok || String(data.status || '').toLowerCase() !== 'success') {
+                    throw new Error(data.msg || '开始对比失败');
+                }
+                setConsistencyCompareStatus(`对比完成：${String(data.comparison_scope_summary || '已生成一致性报告')}`, 'success');
+                await loadConsistencyReportList();
+                if (data.consistency_report_id) {
+                    await loadConsistencyReportDetail(data.consistency_report_id);
+                }
+                closeConsistencyCompareDrawer();
+            } catch (e) {
+                setConsistencyCompareStatus(`执行失败：${String(e)}`, 'error');
+            } finally {
+                consistencyCompareRunning = false;
+                if (submitBtn) submitBtn.disabled = false;
+            }
+        }
+
+        function openConsistencyCompareDrawer() {
+            const drawer = document.getElementById('consistency-compare-drawer');
+            const backdrop = document.getElementById('consistency-compare-drawer-backdrop');
+            consistencyCompareDrawerOpen = true;
+            if (drawer) {
+                drawer.classList.remove('translate-x-full', 'opacity-0', 'pointer-events-none');
+                drawer.classList.add('translate-x-0', 'opacity-100');
+            }
+            if (backdrop) backdrop.classList.remove('hidden');
+            initConsistencyCompareForm();
+        }
+
+        function closeConsistencyCompareDrawer() {
+            const drawer = document.getElementById('consistency-compare-drawer');
+            const backdrop = document.getElementById('consistency-compare-drawer-backdrop');
+            consistencyCompareDrawerOpen = false;
+            if (drawer) {
+                drawer.classList.remove('translate-x-0', 'opacity-100');
+                drawer.classList.add('translate-x-full', 'opacity-0', 'pointer-events-none');
+            }
+            if (backdrop) backdrop.classList.add('hidden');
+            const panel = document.getElementById('consistency-compare-strategy-panel');
+            if (panel) panel.classList.add('hidden');
+        }
+
+        function openConsistencyReportModal() {
+            closeAllMajorFunctionModals('consistency-report-modal');
+            const modal = document.getElementById('consistency-report-modal');
+            if (modal) modal.classList.remove('hidden');
+            closeConsistencyCompareDrawer();
+            loadConsistencyReportList();
+        }
+
+        function closeConsistencyReportModal() {
+            closeConsistencyCompareDrawer();
+            const modal = document.getElementById('consistency-report-modal');
+            if (modal) modal.classList.add('hidden');
+        }
+
+        async function loadConsistencyReportList() {
+            const code = String(document.getElementById('consistency-report-filter-code')?.value || '').trim();
+            const meta = document.getElementById('consistency-report-list-meta');
+            const listEl = document.getElementById('consistency-report-list');
+            const detailEl = document.getElementById('consistency-report-detail');
+            if (meta) meta.innerText = '加载中...';
+            if (listEl) listEl.innerHTML = '<div class="text-slate-500">正在加载...</div>';
+            try {
+                const qs = new URLSearchParams();
+                if (code) qs.set('code', code);
+                qs.set('page', '1');
+                qs.set('page_size', '100');
+                const res = await fetch(`/api/consistency/reports?${qs.toString()}`);
+                const data = await res.json();
+                if (!res.ok || String(data.status || '').toLowerCase() !== 'success') {
+                    throw new Error(data.msg || '加载一致性报告失败');
+                }
+                consistencyReportRows = Array.isArray(data.items) ? data.items : [];
+                if (meta) meta.innerText = `共 ${Number(data.total || 0)} 份报告`;
+                await Promise.all(consistencyReportRows.map(async (row) => {
+                    if (row && (row.snapshot_date != null || row.live_trade_count != null || row.replay_trade_count != null || row.mismatch_count != null)) {
+                        return;
+                    }
+                    const rid = String(row?.report_id || '').trim();
+                    if (!rid) return;
+                    try {
+                        const detailRes = await fetch(`/api/consistency/reports/${encodeURIComponent(rid)}`);
+                        const detailData = await detailRes.json();
+                        const detailStatus = String(detailData.status || '').toLowerCase();
+                        if (detailRes.ok && ['success', 'partial'].includes(detailStatus)) {
+                            row.detail = detailData;
+                            const sum = detailData.summary || {};
+                            row.snapshot_date = sum.snapshot_date ?? row.snapshot_date;
+                            row.live_trade_count = sum.live_trade_count ?? row.live_trade_count;
+                            row.replay_trade_count = sum.replay_trade_count ?? row.replay_trade_count;
+                            row.mismatch_count = sum.mismatch_count ?? row.mismatch_count;
+                            row.comparison_mode = sum.comparison_mode ?? row.comparison_mode;
+                            row.note = sum.note ?? row.note;
+                            row.root_cause_tags = Array.isArray(detailData.root_cause_tags) ? detailData.root_cause_tags : (row.root_cause_tags || []);
+                        }
+                    } catch (_) {}
+                }));
+                const availableIds = new Set(consistencyReportRows.map(row => String(row?.report_id || '').trim()).filter(Boolean));
+                if (!availableIds.has(consistencyReportSelectedId)) {
+                    consistencyReportSelectedId = consistencyReportRows.length ? String(consistencyReportRows[0]?.report_id || '').trim() : '';
+                }
+                renderConsistencyReportList();
+                if (consistencyReportSelectedId) {
+                    await loadConsistencyReportDetail(consistencyReportSelectedId);
+                } else if (detailEl) {
+                    detailEl.innerHTML = '<div class="rounded-xl border border-slate-700 bg-slate-900/40 px-4 py-5 text-sm text-slate-400">当前还没有一致性报告，可点击右上角“发起新对比”生成第一份报告。</div>';
+                }
+            } catch (e) {
+                if (meta) meta.innerText = `加载失败: ${e}`;
+                if (listEl) listEl.innerHTML = `<div class="text-rose-300">${String(e)}</div>`;
+                if (detailEl) detailEl.innerHTML = `<div class="rounded-xl border border-rose-500/30 bg-rose-950/10 px-4 py-5 text-sm text-rose-200">加载报告详情失败：${evolutionEscapeHtml(String(e))}</div>`;
+            }
+        }
+
+        function renderConsistencyReportList() {
+            const listEl = document.getElementById('consistency-report-list');
+            if (!listEl) return;
+            if (!Array.isArray(consistencyReportRows) || !consistencyReportRows.length) {
+                listEl.innerHTML = '<div class="text-slate-500">暂无一致性报告</div>';
+                return;
+            }
+            listEl.innerHTML = consistencyReportRows.map(row => {
+                const reportId = String(row.report_id || '');
+                const activeCls = consistencyReportSelectedId === reportId ? 'border-emerald-400 bg-emerald-900/20' : 'border-slate-700 bg-slate-900/40';
+                const detail = row.detail && typeof row.detail === 'object' ? row.detail : {};
+                const summary = detail.summary && typeof detail.summary === 'object' ? detail.summary : {};
+                const tradeDiff = detail.trade_diff && typeof detail.trade_diff === 'object' ? detail.trade_diff : {};
+                const tags = Array.isArray(detail.root_cause_tags) ? detail.root_cause_tags : [];
+                const liveTradeCount = Number(summary.live_trade_count ?? tradeDiff.live_trade_count ?? row.live_trade_count ?? 0);
+                const replayTradeCount = Number(summary.replay_trade_count ?? tradeDiff.replay_trade_count ?? row.replay_trade_count ?? 0);
+                const mismatchCount = Number(summary.mismatch_count ?? tradeDiff.mismatch_count ?? row.mismatch_count ?? 0);
+                const snapshotDate = String(summary.snapshot_date || row.snapshot_date || '--');
+                const strategyText = Array.isArray(row.selected_strategy_ids) && row.selected_strategy_ids.length
+                    ? row.selected_strategy_ids.join('、')
+                    : String(row.strategy_id || detail.strategy_id || detail.snapshot_id || '--');
+                const sourceText = String(row.backtest_source_type || summary.backtest_source_type || '').toLowerCase() === 'new_backtest' ? '现场新回测' : '已有回测';
+                const scopeText = String(row.comparison_scope_summary || summary.comparison_scope_summary || '').trim();
+                const snapshotCount = Number(row.snapshot_count ?? summary.snapshot_count ?? 0);
+                let headline = '基本一致';
+                let headlineCls = 'text-emerald-300 border-emerald-500/40 bg-emerald-950/20';
+                let dotCls = 'bg-emerald-400';
+                let advice = '先看详情';
+                if (liveTradeCount > 0 && replayTradeCount === 0) {
+                    headline = '未复现成功';
+                    headlineCls = 'text-rose-300 border-rose-500/40 bg-rose-950/20';
+                    dotCls = 'bg-rose-400';
+                    advice = '先看参数';
+                } else if (mismatchCount > 0) {
+                    headline = '存在差异';
+                    headlineCls = 'text-amber-300 border-amber-500/40 bg-amber-950/20';
+                    dotCls = 'bg-amber-400';
+                    advice = '先看逐笔';
+                }
+                if (tags.includes('live_risk_intercept')) {
+                    advice = '先看风控';
+                }
+                return `
+                    <button onclick="loadConsistencyReportDetail('${reportId}')" class="w-full text-left rounded-xl border ${activeCls} hover:border-emerald-500 px-3 py-3 transition-all">
+                        <div class="flex flex-wrap items-start justify-between gap-2 mb-2">
+                            <div>
+                                <div class="flex items-center gap-2 text-white font-semibold text-sm">
+                                    <span class="inline-block w-2.5 h-2.5 rounded-full ${dotCls}"></span>
+                                    <span>${evolutionEscapeHtml(String(row.code || '--'))}</span>
+                                </div>
+                                <div class="text-slate-400 text-xs mt-1">对比日期：${evolutionEscapeHtml(snapshotDate)}</div>
+                            </div>
+                            <div class="px-2 py-1 rounded-full border ${headlineCls} text-xs font-semibold">${evolutionEscapeHtml(headline)}</div>
+                        </div>
+                        <div class="grid grid-cols-3 gap-2 mb-2 text-xs">
+                            <div class="rounded bg-slate-950/40 px-2 py-2"><div class="text-slate-400">实盘</div><div class="text-white font-semibold">${evolutionEscapeHtml(String(liveTradeCount))} 笔</div></div>
+                            <div class="rounded bg-slate-950/40 px-2 py-2"><div class="text-slate-400">回测</div><div class="text-white font-semibold">${evolutionEscapeHtml(String(replayTradeCount))} 笔</div></div>
+                            <div class="rounded bg-slate-950/40 px-2 py-2"><div class="text-slate-400">不一致</div><div class="text-rose-300 font-semibold">${evolutionEscapeHtml(String(mismatchCount))} 笔</div></div>
+                        </div>
+                        <div class="rounded bg-slate-950/30 px-2 py-2 text-xs text-slate-300 mb-2">建议：${evolutionEscapeHtml(advice)}</div>
+                        <div class="grid grid-cols-2 gap-2 text-[11px] text-slate-400">
+                            <div class="rounded bg-slate-950/20 px-2 py-2">回测来源：${evolutionEscapeHtml(sourceText)}</div>
+                            <div class="rounded bg-slate-950/20 px-2 py-2">样本数量：${evolutionEscapeHtml(String(snapshotCount || '--'))}</div>
+                        </div>
+                        <div class="flex flex-wrap items-center justify-between gap-2 mt-2 text-[11px]">
+                            <div class="text-slate-500">${scopeText ? `覆盖范围：${evolutionEscapeHtml(scopeText)}` : `策略：${evolutionEscapeHtml(strategyText)}`}</div>
+                            <div class="text-slate-500">${evolutionEscapeHtml(formatDateTime(row.created_at))}</div>
+                        </div>
+                    </button>
+                `;
+            }).join('');
+        }
+
+        async function loadConsistencyReportDetail(reportId) {
+            const rid = String(reportId || '').trim();
+            if (!rid) return;
+            consistencyReportSelectedId = rid;
+            renderConsistencyReportList();
+            const detailEl = document.getElementById('consistency-report-detail');
+            if (detailEl) detailEl.innerHTML = '<div class="text-slate-500">正在加载详情...</div>';
+            try {
+                const res = await fetch(`/api/consistency/reports/${encodeURIComponent(rid)}`);
+                const data = await res.json();
+                const status = String(data.status || '').toLowerCase();
+                if (!res.ok || !['success', 'partial'].includes(status)) {
+                    throw new Error(data.msg || '加载一致性报告详情失败');
+                }
+                renderConsistencyReportDetail(data);
+            } catch (e) {
+                if (detailEl) detailEl.innerHTML = `<div class="text-rose-300">${String(e)}</div>`;
+            }
+        }
+
+        function renderConsistencyReportDetail(data) {
+            const el = document.getElementById('consistency-report-detail');
+            if (!el) return;
+            const summary = data.summary || {};
+            const tags = Array.isArray(data.root_cause_tags) ? data.root_cause_tags : [];
+            const tradeDiff = data.trade_diff || {};
+            const metricItems = Array.isArray((data.metrics_diff || {}).items) ? data.metrics_diff.items : [];
+            const tradeItems = Array.isArray(tradeDiff.items) ? tradeDiff.items : [];
+            const liveTradeCount = Number(summary.live_trade_count ?? tradeDiff.live_trade_count ?? 0);
+            const replayTradeCount = Number(summary.replay_trade_count ?? tradeDiff.replay_trade_count ?? 0);
+            const mismatchCount = Number(summary.mismatch_count ?? tradeDiff.mismatch_count ?? 0);
+            const riskInterceptCount = Number(tradeDiff.live_risk_reject_count ?? 0);
+            const comparisonMode = String(summary.comparison_mode || '').trim();
+            const noteText = String(summary.note || '').trim();
+            const tagLabelMap = {
+                no_material_diff: '没有发现明显差异',
+                execution_mismatch: '执行结果不一致',
+                signal_count_drift: '信号次数和实盘不一样',
+                signal_direction_drift: '买卖方向和实盘不一致',
+                position_size_mismatch: '买卖数量和实盘不一致',
+                slippage_drift: '成交价格和实盘有差别',
+                timing_drift: '成交时间和实盘有差别',
+                live_risk_intercept: '实盘被风控拦截过',
+                pnl_drift: '盈亏结果和实盘不一致',
+                performance_drift: '整体收益表现不一致',
+                risk_profile_drift: '风险表现不一致'
+            };
+            const metricLabelMap = {
+                total_trades: '成交次数',
+                annualized_roi: '年化收益',
+                win_rate: '胜率',
+                max_dd: '最大回撤',
+                sharpe: '夏普比率'
+            };
+            const summaryLevel = mismatchCount > 0 ? '需要关注' : '基本一致';
+            const summaryColor = mismatchCount > 0 ? 'text-rose-300 border-rose-500/40 bg-rose-950/20' : 'text-emerald-300 border-emerald-500/40 bg-emerald-950/20';
+            let conclusionTitle = '';
+            let conclusionDesc = '';
+            if (liveTradeCount > 0 && replayTradeCount === 0) {
+                conclusionTitle = '这次回测没有复现出实盘交易';
+                conclusionDesc = '历史实盘里已经发生了买卖，但按当前回测方式复盘时，没有出现对应成交。';
+            } else if (mismatchCount > 0) {
+                conclusionTitle = '回测结果和实盘存在明显差异';
+                conclusionDesc = '系统找到了相同区间的数据，但成交数量、价格、方向或盈亏并没有完全对上。';
+            } else {
+                conclusionTitle = '本次回测和实盘基本一致';
+                conclusionDesc = '从当前可比较的数据看，回测结果与实盘表现接近。';
+            }
+            const reasonCards = tags.length
+                ? tags.map(tag => `<div class="rounded-lg border border-amber-500/30 bg-amber-950/15 px-3 py-2 text-sm text-amber-100">${evolutionEscapeHtml(tagLabelMap[tag] || tag)}</div>`).join('')
+                : '<div class="text-slate-400 text-sm">暂无明显异常原因</div>';
+            const suggestionList = [];
+            if (liveTradeCount > 0 && replayTradeCount === 0) {
+                suggestionList.push('优先检查该策略当前参数、触发周期和历史实盘运行时是否一致。');
+                suggestionList.push('优先补采信号、风控、委托明细，这样才能继续定位是“没发出信号”还是“被中途拦截”。');
+            }
+            if (riskInterceptCount > 0) {
+                suggestionList.push('重点查看实盘风控记录，确认是否存在回测未覆盖的限制条件。');
+            }
+            if (comparisonMode === 'simplified_from_live_fund_pool') {
+                suggestionList.push('当前是简化对比，只能说明成交结果不同，不能直接判断具体是哪一层出错。');
+            }
+            if (!suggestionList.length) {
+                suggestionList.push('继续观察更多交易日样本，确认差异是否持续出现。');
+            }
+            const metricHtml = metricItems.map(item => {
+                const delta = Number(item.delta || 0);
+                const cls = Math.abs(delta) > 0.000001 ? 'text-rose-300' : 'text-emerald-300';
+                const metricName = metricLabelMap[item.metric] || item.metric;
+                return `<tr class="border-b border-slate-800"><td class="px-3 py-2 text-slate-200">${evolutionEscapeHtml(metricName)}</td><td class="px-3 py-2">${evolutionEscapeHtml(String(item.live))}</td><td class="px-3 py-2">${evolutionEscapeHtml(String(item.replay))}</td><td class="px-3 py-2 ${cls}">${evolutionEscapeHtml(String(item.delta))}</td></tr>`;
+            }).join('');
+            const tradeHtml = tradeItems.slice(0, 20).map(item => {
+                const mismatch = Boolean(item.mismatch);
+                const liveDir = String(item.live?.direction || '--');
+                const replayDir = String(item.replay?.direction || '--');
+                const liveTime = formatClockTime(item.live?.dt) || String(item.live?.dt || '--');
+                const replayTime = formatClockTime(item.replay?.dt) || String(item.replay?.dt || '--');
+                const reasonBits = [];
+                if (item.direction_mismatch) reasonBits.push('方向不同');
+                if (item.quantity_mismatch) reasonBits.push('数量不同');
+                if (item.slippage_mismatch) reasonBits.push('价格不同');
+                if (item.timing_mismatch) reasonBits.push('时间不同');
+                if (item.pnl_mismatch) reasonBits.push('盈亏不同');
+                const reasonText = reasonBits.length ? reasonBits.join('、') : '基本一致';
+                return `
+                    <div class="rounded-lg border ${mismatch ? 'border-rose-500/30 bg-rose-950/10' : 'border-emerald-500/30 bg-emerald-950/10'} px-3 py-3">
+                        <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+                            <div class="text-sm font-semibold ${mismatch ? 'text-rose-200' : 'text-emerald-200'}">第 ${Number(item.index || 0) + 1} 笔：${evolutionEscapeHtml(reasonText)}</div>
+                            <div class="text-xs ${mismatch ? 'text-rose-300' : 'text-emerald-300'}">${mismatch ? '存在差异' : '基本一致'}</div>
+                        </div>
+                        <div class="grid md:grid-cols-2 gap-3 text-sm">
+                            <div class="rounded bg-slate-950/40 px-3 py-2">
+                                <div class="text-slate-400 mb-1">实盘记录</div>
+                                <div>方向：<span class="text-white">${evolutionEscapeHtml(liveDir)}</span></div>
+                                <div>时间：<span class="text-white">${evolutionEscapeHtml(String(liveTime))}</span></div>
+                                <div>价格：<span class="text-white">${evolutionEscapeHtml(String(item.live?.price ?? '--'))}</span></div>
+                                <div>数量：<span class="text-white">${evolutionEscapeHtml(String(item.live?.qty ?? '--'))}</span></div>
+                            </div>
+                            <div class="rounded bg-slate-950/40 px-3 py-2">
+                                <div class="text-slate-400 mb-1">回测结果</div>
+                                <div>方向：<span class="text-white">${evolutionEscapeHtml(replayDir)}</span></div>
+                                <div>时间：<span class="text-white">${evolutionEscapeHtml(String(replayTime))}</span></div>
+                                <div>价格：<span class="text-white">${evolutionEscapeHtml(String(item.replay?.price ?? '--'))}</span></div>
+                                <div>数量：<span class="text-white">${evolutionEscapeHtml(String(item.replay?.qty ?? '--'))}</span></div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            el.innerHTML = `
+                <div class="space-y-4">
+                    <div class="rounded-xl border ${summaryColor} p-4">
+                        <div class="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                                <div class="text-lg font-bold text-white">${evolutionEscapeHtml(conclusionTitle)}</div>
+                                <div class="text-sm mt-1 text-slate-200">${evolutionEscapeHtml(conclusionDesc)}</div>
+                            </div>
+                            <div class="px-3 py-1.5 rounded-full border ${summaryColor} text-sm font-semibold">结论：${evolutionEscapeHtml(summaryLevel)}</div>
+                        </div>
+                    </div>
+                    <div class="grid md:grid-cols-4 gap-3">
+                        <div class="rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-3"><div class="text-slate-400 text-sm">实盘成交次数</div><div class="text-2xl font-bold text-white">${evolutionEscapeHtml(String(liveTradeCount))}</div></div>
+                        <div class="rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-3"><div class="text-slate-400 text-sm">回测成交次数</div><div class="text-2xl font-bold text-white">${evolutionEscapeHtml(String(replayTradeCount))}</div></div>
+                        <div class="rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-3"><div class="text-slate-400 text-sm">不一致笔数</div><div class="text-2xl font-bold text-rose-300">${evolutionEscapeHtml(String(mismatchCount))}</div></div>
+                        <div class="rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-3"><div class="text-slate-400 text-sm">风控拦截次数</div><div id="consistency-risk-intercept-count" class="text-2xl font-bold text-amber-300">${evolutionEscapeHtml(String(riskInterceptCount))}</div></div>
+                    </div>
+                    <div class="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+                        <div class="text-base font-semibold text-white mb-2">主要原因</div>
+                        <div id="consistency-root-cause-badges" class="grid md:grid-cols-2 gap-2">${reasonCards}</div>
+                    </div>
+                    <div class="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+                        <div class="text-base font-semibold text-white mb-2">给用户的判断建议</div>
+                        <ul class="list-disc pl-5 space-y-1 text-sm text-slate-200">${suggestionList.map(text => `<li>${evolutionEscapeHtml(text)}</li>`).join('')}</ul>
+                    </div>
+                    <div class="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+                        <div class="text-base font-semibold text-white mb-3">基础信息</div>
+                        <div class="grid md:grid-cols-2 gap-3 text-sm">
+                            <div class="rounded bg-slate-950/40 px-3 py-2"><span class="text-slate-400">报告编号：</span><span class="text-white break-all">${evolutionEscapeHtml(String(data.report_id || '--'))}</span></div>
+                            <div class="rounded bg-slate-950/40 px-3 py-2"><span class="text-slate-400">标的代码：</span><span class="text-white">${evolutionEscapeHtml(String(data.code || '--'))}</span></div>
+                            <div class="rounded bg-slate-950/40 px-3 py-2"><span class="text-slate-400">对比日期：</span><span class="text-white">${evolutionEscapeHtml(String(summary.snapshot_date || '--'))}</span></div>
+                            <div class="rounded bg-slate-950/40 px-3 py-2"><span class="text-slate-400">对比方式：</span><span class="text-white">${comparisonMode === 'simplified_from_live_fund_pool' ? '历史实盘简化对比' : '标准一致性对比'}</span></div>
+                        </div>
+                        ${noteText ? `<div class="mt-3 rounded border border-amber-500/30 bg-amber-950/10 px-3 py-2 text-sm text-amber-100">说明：${evolutionEscapeHtml(noteText)}</div>` : ''}
+                    </div>
+                    <div class="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+                        <div class="text-base font-semibold text-white mb-3">关键指标对照</div>
+                        <table class="w-full text-left text-sm"><thead class="text-slate-400"><tr><th class="px-3 py-2">指标</th><th class="px-3 py-2">实盘</th><th class="px-3 py-2">回测</th><th class="px-3 py-2">差值</th></tr></thead><tbody>${metricHtml || '<tr><td colspan="4" class="px-3 py-3 text-slate-500">暂无指标数据</td></tr>'}</tbody></table>
+                    </div>
+                    <div class="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
+                        <div class="flex items-center justify-between gap-3 mb-3">
+                            <div class="text-base font-semibold text-white">逐笔对照</div>
+                            <div class="text-xs text-slate-400">时间差(秒) 与 差异类型 已合并到每笔说明中</div>
+                        </div>
+                        <div class="space-y-3">${tradeHtml || '<div class="text-slate-500 text-sm">暂无逐笔差异</div>'}</div>
+                    </div>
+                </div>
+            `;
+        }
+
         // UI Helpers
         function getTime() {
             return new Date().toLocaleTimeString('en-GB', { hour12: false });
@@ -12116,7 +13317,13 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 const llmText = ` · 模型=${evolutionEscapeHtml(llmProvider)} 路径=${evolutionEscapeHtml(llmPath)} 回退=${evolutionEscapeHtml(llmFallback)}`;
                 const thresholdText = ` · 阈值=${evolutionEscapeHtml(threshold)}`;
                 const rawHint = r.committed ? ` · 原始评分=${evolutionEscapeHtml(scoreRaw)}` : '';
-                return `<div>[${evolutionEscapeHtml(r.time || '--')}] #${evolutionEscapeHtml(r.iteration || '--')} ${evolutionEscapeHtml(statusText)} 评分=${evolutionEscapeHtml(scoreCompact)} 耗时=${evolutionEscapeHtml(evolutionCostTextFromMs(r.cost_ms))}${thresholdText}${rawHint} · 母策略=${evolutionEscapeHtml(parent)} · 周期=${evolutionEscapeHtml(tf)} · 标的=${evolutionEscapeHtml(stock)}${llmText}${reasonHtml}${committed}</div>`;
+                const analysisSummary = String(r.analysis_summary || '').trim();
+                const feedbackTags = Array.isArray(r.feedback_tags) ? r.feedback_tags.slice(0, 4).map(x => String(x || '').trim()).filter(Boolean) : [];
+                const consistencyReportId = String(r.consistency_report_id || '').trim();
+                const analysisHtml = analysisSummary ? ` <span class="text-cyan-300">· 分析=${evolutionEscapeHtml(analysisSummary)}</span>` : '';
+                const feedbackHtml = feedbackTags.length ? ` <span class="text-amber-300">· 标签=${evolutionEscapeHtml(feedbackTags.join(','))}</span>` : '';
+                const reportHtml = consistencyReportId ? ` <span class="text-violet-300">· 一致性=${evolutionEscapeHtml(consistencyReportId)}</span>` : '';
+                return `<div>[${evolutionEscapeHtml(r.time || '--')}] #${evolutionEscapeHtml(r.iteration || '--')} ${evolutionEscapeHtml(statusText)} 评分=${evolutionEscapeHtml(scoreCompact)} 耗时=${evolutionEscapeHtml(evolutionCostTextFromMs(r.cost_ms))}${thresholdText}${rawHint} · 母策略=${evolutionEscapeHtml(parent)} · 周期=${evolutionEscapeHtml(tf)} · 标的=${evolutionEscapeHtml(stock)}${llmText}${reasonHtml}${analysisHtml}${feedbackHtml}${reportHtml}${committed}</div>`;
             }).join('');
         }
 
@@ -12684,7 +13891,13 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 const geneId = String(row?.child_gene_id || '--');
                 const parent = String(row?.parent_strategy_id || '--');
                 const created = String(row?.created_at || '--');
-                return `<button onclick="switchEvolutionPlatformTab('runs');openEvolutionRunDetail(${idx})" class="w-full text-left hover:text-cyan-300">#${idx + 1} ${evolutionEscapeHtml(status)} · score=${evolutionEscapeHtml(score)} · run=${evolutionEscapeHtml(runId)} · gene=${evolutionEscapeHtml(geneId)} · parent=${evolutionEscapeHtml(parent)} · ${evolutionEscapeHtml(created)}</button>`;
+                const analysisSummary = String(row?.analysis_summary || '').trim();
+                const feedbackTags = Array.isArray(row?.feedback_tags) ? row.feedback_tags.slice(0, 3).map(x => String(x || '').trim()).filter(Boolean) : [];
+                const consistencyReportId = String(row?.consistency_report_id || '').trim();
+                const analysisHint = analysisSummary ? ` · 分析=${analysisSummary}` : '';
+                const feedbackHint = feedbackTags.length ? ` · 标签=${feedbackTags.join(',')}` : '';
+                const reportHint = consistencyReportId ? ` · 一致性=${consistencyReportId}` : '';
+                return `<button onclick="switchEvolutionPlatformTab('runs');openEvolutionRunDetail(${idx})" class="w-full text-left hover:text-cyan-300">#${idx + 1} ${evolutionEscapeHtml(status)} · score=${evolutionEscapeHtml(score)} · run=${evolutionEscapeHtml(runId)} · gene=${evolutionEscapeHtml(geneId)} · parent=${evolutionEscapeHtml(parent)} · ${evolutionEscapeHtml(created)}${analysisHint ? ` · ${evolutionEscapeHtml(analysisSummary)}` : ''}${feedbackHint ? ` · ${evolutionEscapeHtml(feedbackTags.join(','))}` : ''}${reportHint ? ` · ${evolutionEscapeHtml(consistencyReportId)}` : ''}</button>`;
             }).join('');
             if (runtimeSummary) {
                 if (!enabled) runtimeSummary.innerHTML = '<div class="text-slate-500">运行记录文件页未启用。</div>';
@@ -12708,6 +13921,16 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 const geneId = String(row?.child_gene_id || '--');
                 const parent = String(row?.parent_strategy_id || '--');
                 const created = String(row?.created_at || '--');
+                const analysisSummary = String(row?.analysis_summary || '').trim();
+                const feedbackTags = Array.isArray(row?.feedback_tags) ? row.feedback_tags.map(x => String(x || '').trim()).filter(Boolean) : [];
+                const consistencyReportId = String(row?.consistency_report_id || '').trim();
+                const analysisStatus = String(row?.analysis_status || '').trim();
+                const analysisConfidenceNum = Number(row?.analysis_confidence);
+                const analysisConfidence = Number.isFinite(analysisConfidenceNum) ? analysisConfidenceNum.toFixed(2) : '--';
+                const analysisHtml = analysisSummary ? `<div class="text-cyan-300 mt-1">分析摘要：${evolutionEscapeHtml(analysisSummary)}</div>` : '<div class="text-slate-500 mt-1">分析摘要：--</div>';
+                const feedbackHtml = feedbackTags.length ? `<div class="text-amber-300 mt-1">反馈标签：${evolutionEscapeHtml(feedbackTags.join(', '))}</div>` : '<div class="text-slate-500 mt-1">反馈标签：--</div>';
+                const consistencyHtml = consistencyReportId ? `<div class="text-violet-300 mt-1">一致性报告：${evolutionEscapeHtml(consistencyReportId)}</div>` : '<div class="text-slate-500 mt-1">一致性报告：--</div>';
+                const analysisMetaHtml = `<div class="text-slate-400 mt-1">analysis=${evolutionEscapeHtml(analysisStatus || '--')} · confidence=${evolutionEscapeHtml(analysisConfidence)}</div>`;
                 return `<div class="border border-slate-700 rounded p-2 bg-slate-900/50">
                     <div class="flex items-start justify-between gap-2">
                         <button onclick="openEvolutionRunDetail(${idx})" class="flex-1 text-left hover:text-cyan-300">#${idx + 1} ${evolutionEscapeHtml(status)} · score=${evolutionEscapeHtml(score)} · run=${evolutionEscapeHtml(runId)} · gene=${evolutionEscapeHtml(geneId)} · parent=${evolutionEscapeHtml(parent)} · ${evolutionEscapeHtml(created)}</button>
@@ -12716,6 +13939,10 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                             <button type="button" onclick="deleteEvolutionRun('${encodeURIComponent(runId)}')" class="bg-rose-700 hover:bg-rose-600 text-white px-2 py-1 rounded border border-rose-500">删除</button>
                         </div>
                     </div>
+                    ${analysisHtml}
+                    ${feedbackHtml}
+                    ${consistencyHtml}
+                    ${analysisMetaHtml}
                 </div>`;
             }).join('');
         }
@@ -12816,10 +14043,26 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 ? row.child_gene_parent_ids
                 : (typeof row?.child_gene_parent_ids === 'string' ? [row.child_gene_parent_ids] : []);
             if (meta) {
-                meta.innerText = `run_id=${row?.run_id || '--'} · status=${row?.status || '--'} · score=${row?.score ?? '--'} · gene=${row?.child_gene_id || '--'} · commit=${row?.committed_strategy_id || '--'} · ${row?.created_at || '--'}`;
+                meta.innerText = `run_id=${row?.run_id || '--'} · status=${row?.status || '--'} · score=${row?.score ?? '--'} · gene=${row?.child_gene_id || '--'} · commit=${row?.committed_strategy_id || '--'} · analysis=${row?.analysis_status || '--'} · consistency=${row?.consistency_report_id || '--'} · ${row?.created_at || '--'}`;
             }
             if (metrics) metrics.innerText = JSON.stringify(row?.metrics || {}, null, 2);
-            if (profile) profile.innerText = JSON.stringify(row?.profile || {}, null, 2);
+            if (profile) {
+                profile.innerText = JSON.stringify(
+                    {
+                        profile: row?.profile || {},
+                        analysis_summary: row?.analysis_summary || '',
+                        analysis_source: row?.analysis_source || '',
+                        analysis_version: row?.analysis_version || '',
+                        analysis_confidence: row?.analysis_confidence ?? null,
+                        feedback_tags: Array.isArray(row?.feedback_tags) ? row.feedback_tags : [],
+                        improvement_suggestions: Array.isArray(row?.improvement_suggestions) ? row.improvement_suggestions : [],
+                        prompt_context_patch: row?.prompt_context_patch || {},
+                        consistency_report_id: row?.consistency_report_id || '',
+                    },
+                    null,
+                    2,
+                );
+            }
             if (lineage) {
                 lineage.innerText = JSON.stringify(
                     {
@@ -12834,6 +14077,9 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                         committed_strategy_name: row?.committed_strategy_name || '',
                         committed_version: row?.committed_version || 0,
                         strategy_code_sha256: row?.strategy_code_sha256 || '',
+                        analysis_id: row?.analysis_id || '',
+                        feedback_tags: Array.isArray(row?.feedback_tags) ? row.feedback_tags : [],
+                        consistency_report_id: row?.consistency_report_id || '',
                     },
                     null,
                     2,

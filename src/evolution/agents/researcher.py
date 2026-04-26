@@ -8,6 +8,7 @@ from src.evolution.adapters.gene_strategy_adapter import GeneStrategyAdapter
 from src.evolution.adapters.strategy_library_adapter import StrategyLibraryAdapter
 from src.evolution.core.event_bus import EventBus
 from src.evolution.core.evolution_profile import EvolutionProfile
+from src.evolution.memory.analysis_store import AnalysisStore
 from src.evolution.memory.strategy_memory import StrategyMemory
 from src.utils.config_loader import ConfigLoader
 
@@ -116,12 +117,14 @@ class Researcher:
         llm_client: Optional[StrategyLLM] = None,
         strategy_library: Optional[StrategyLibraryAdapter] = None,
         gene_adapter: Optional[GeneStrategyAdapter] = None,
+        analysis_store: Optional[AnalysisStore] = None,
     ):
         self.bus = bus
         self.memory = memory
         self.llm_client = llm_client or MockStrategyLLM()
         self.strategy_library = strategy_library or StrategyLibraryAdapter()
         self.gene_adapter = gene_adapter or GeneStrategyAdapter()
+        self.analysis_store = analysis_store or AnalysisStore()
         self._generated_fp = set()
         self.bus.subscribe("Start", self._on_start)
 
@@ -156,6 +159,7 @@ class Researcher:
             seed_code = self._bootstrap_seed_code()
             parent_id = "BOOT"
             parent_name = "Bootstrap"
+        analysis_context = self._load_latest_analysis_context()
         # Prefer the gene-driven generation path in MVP to avoid hard-coding strategy logic.
         if self._is_gene_mode_enabled():
             return self._generate_from_gene_mvp(
@@ -164,6 +168,7 @@ class Researcher:
                 parent_name=parent_name,
                 iteration=iteration,
                 profile=profile,
+                analysis_context=analysis_context,
             )
         return self._generate_via_llm(
             seed_code=seed_code,
@@ -171,6 +176,7 @@ class Researcher:
             parent_name=parent_name,
             iteration=iteration,
             profile=profile,
+            analysis_context=analysis_context,
         )
 
     def _generate_from_gene_mvp(
@@ -180,6 +186,7 @@ class Researcher:
         parent_name: str,
         iteration: int,
         profile: EvolutionProfile,
+        analysis_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         # Build child strategy from structured gene and keep fallback to LLM path if needed.
         try:
@@ -190,6 +197,7 @@ class Researcher:
                 iteration=iteration,
                 timeframes=profile.timeframes,
                 family_adaptive_blend_ratio=profile.family_adaptive_blend_ratio,
+                analysis_context=analysis_context if isinstance(analysis_context, dict) else {},
             )
             strategy_code = self._validate_candidate(str(generated.get("strategy_code", "") or ""))
             seed_fp = self._fingerprint(seed_code)
@@ -223,6 +231,7 @@ class Researcher:
             parent_name=parent_name,
             iteration=iteration,
             profile=profile,
+            analysis_context=analysis_context,
         )
 
     def _generate_via_llm(
@@ -232,6 +241,7 @@ class Researcher:
         parent_name: str,
         iteration: int,
         profile: EvolutionProfile,
+        analysis_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         # Preserve original LLM generation behavior as fallback.
         seed_fp = self._fingerprint(seed_code)
@@ -241,6 +251,7 @@ class Researcher:
             parent_strategy_id=parent_id,
             parent_strategy_name=parent_name,
             profile=profile,
+            analysis_context=analysis_context if isinstance(analysis_context, dict) else {},
         )
         prompt = f"seed_fp={seed_fp}, iteration={iteration}, parent={parent_id}, keep trend+risk shape."
         self.bus.publish(
@@ -316,12 +327,16 @@ class Researcher:
         parent_strategy_id: str,
         parent_strategy_name: str,
         profile: EvolutionProfile,
+        analysis_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         has_macd = "MACD" in seed_code.upper()
         has_rsi = "RSI" in seed_code.upper()
         variant = (max(1, int(iteration)) % 9) + 1
         timeframes = [str(x or "").strip() for x in profile.timeframes if str(x or "").strip()]
         trigger_tf = timeframes[(variant - 1) % len(timeframes)] if timeframes else ("30min" if has_macd else ("15min" if has_rsi else "1min"))
+        analysis = analysis_context if isinstance(analysis_context, dict) else {}
+        prompt_patch = analysis.get("prompt_context_patch") if isinstance(analysis.get("prompt_context_patch"), dict) else {}
+        feedback_tags = [str(x or "").strip() for x in (analysis.get("feedback_tags") or []) if str(x or "").strip()]
         return {
             "seed_code": seed_code,
             "class_name": f"EvolutionStrategyI{variant}_{self._sanitize_token(parent_strategy_id)}",
@@ -336,6 +351,18 @@ class Researcher:
             "stop_loss_pct": 0.02 + variant * 0.002,
             "take_profit_pct": 0.06 + variant * 0.003,
             "min_bars": 60 + variant * 3,
+            "analysis_summary": str(analysis.get("analysis_summary", "") or ""),
+            "analysis_status": str(analysis.get("analysis_status", "") or ""),
+            "analysis_version": str(analysis.get("analysis_version", "") or ""),
+            "analysis_source": str(analysis.get("analysis_source", "") or ""),
+            "analysis_confidence": analysis.get("confidence"),
+            "feedback_tags": feedback_tags,
+            "consistency_report_id": str(analysis.get("consistency_report_id", "") or ""),
+            "prompt_context_patch": prompt_patch,
+            "suspected_failure_modes": prompt_patch.get("suspected_failure_modes", []) if isinstance(prompt_patch.get("suspected_failure_modes"), list) else [],
+            "improvement_actions": prompt_patch.get("improvement_actions", []) if isinstance(prompt_patch.get("improvement_actions"), list) else [],
+            "avoid_patterns": prompt_patch.get("avoid_patterns", []) if isinstance(prompt_patch.get("avoid_patterns"), list) else [],
+            "target_metrics": prompt_patch.get("target_metrics", {}) if isinstance(prompt_patch.get("target_metrics"), dict) else {},
         }
 
     def _validate_candidate(self, strategy_code: str) -> str:
@@ -362,6 +389,16 @@ class Researcher:
 
     def _bootstrap_seed_code(self) -> str:
         return "from src.strategies.implemented_strategies import BaseImplementedStrategy\nclass Bootstrap(BaseImplementedStrategy):\n    def __init__(self):\n        super().__init__('BOOT', 'BOOT', trigger_timeframe='1min')\n    def on_bar(self, kline):\n        return None\n"
+
+    def _load_latest_analysis_context(self) -> Dict[str, Any]:
+        analysis = self.analysis_store.list_analyses(page=1, page_size=1)
+        items = analysis.get("items", []) if isinstance(analysis, dict) else []
+        first = items[0] if items and isinstance(items[0], dict) else {}
+        analysis_id = str(first.get("analysis_id", "") or "")
+        if not analysis_id:
+            return {}
+        detail = self.analysis_store.get_analysis(analysis_id)
+        return detail if isinstance(detail, dict) else {}
 
     def _fingerprint(self, strategy_code: str) -> str:
         normalized = re.sub(r"\s+", "", str(strategy_code or ""))

@@ -12,7 +12,7 @@ akshare
 pytdx
 mootdx
 fastapi
-uvicorn
+uvicorn[standard]
 pydantic
 starlette
 pytest

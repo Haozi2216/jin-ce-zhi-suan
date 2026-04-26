@@ -546,7 +546,7 @@ class LiBuRites:
         scorecard = self._build_scorecard(metrics)
 
         print("\n" + "=" * 55)
-        print("               📊 策略回测报告 📊")
+        print("               策略回测报告")
         print("=" * 55)
         print(f"策略编号：{strategy_id}")
         print(f"回测周期：{start_txt} ~ {end_txt}")

@@ -16,7 +16,26 @@ from src.utils.config_loader import ConfigLoader
 
 
 logger = logging.getLogger("WebhookNotifier")
-FEISHU_LIVE_DISCLAIMER = "本信号为算法计算，非投资建议，仅供研究，不构成买卖依据。"
+FEISHU_LIVE_DISCLAIMER = "本工具仅供量化研究，不构成任何投资建议。回测结果不代表未来表现。使用本工具产生的任何盈亏由用户自行承担。"
+FEISHU_DISCLAIMER_HEADER = "⚠️ **免责声明**：本消息内容仅为系统运行记录，不代表投资建议，不构成买卖依据。历史数据不代表未来表现。"
+
+# 脱敏映射：原文 → 脱敏描述（用于推送消息）
+_SENSITIVE_REPLACE = {
+    "买入": "买入（多头）",
+    "卖出": "卖出（空仓）",
+    "买入-成交信号": "持仓变动通知",
+    "卖出-成交信号": "持仓变动通知",
+    "策略信号": "策略运行通知",
+}
+
+
+def _desensitize(text):
+    if not text:
+        return text
+    s = str(text)
+    for orig, repl in _SENSITIVE_REPLACE.items():
+        s = s.replace(orig, repl)
+    return s
 
 
 class WebhookNotifier:
@@ -368,16 +387,16 @@ class WebhookNotifier:
 
     def _build_feishu_payload(self, event_type, stock_code, data):
         evt_label_map = {
-            "trade_exec": ("成交信号", "green", "✅"),
-            "live_alert": ("实盘告警", "red", "🚨"),
-            "zhongshu": ("策略信号", "blue", "📈"),
+            "trade_exec": ("持仓变动", "wathet", "📋"),
+            "live_alert": ("系统告警", "red", "🚨"),
+            "zhongshu": ("策略运行", "blue", "📈"),
             "menxia": ("风控结果", "orange", "🛡️"),
-            "daily_summary": ("日终汇总", "indigo", "📘"),
+            "daily_summary": ("日终记录", "indigo", "📘"),
             "system": ("系统消息", "wathet", "📣")
         }
         dir_color_map = {
-            "BUY": ("买入", "green"),
-            "SELL": ("卖出", "red")
+            "BUY": ("多头", "grey"),
+            "SELL": ("空仓", "grey")
         }
         level_label_map = {
             "ok": ("正常", "green"),
@@ -395,11 +414,11 @@ class WebhookNotifier:
         now_text = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         if not isinstance(data, dict):
             text_body = (
+                f"<font color='red'>**⚠️ 免责：本消息仅为系统运行记录，不构成任何投资建议，不推荐买卖任何标的。**</font>\n\n"
                 f"**标的**：`{self._safe_text(stock_code)}`\n"
                 f"**时间**：{self._safe_text(now_text)}\n"
                 f"**事件**：{self._safe_text(title)}\n"
-                f"**内容**：{self._safe_text(data)}\n\n"
-                f"<font color='red'>**⚠️ 免责声明：{self._safe_text(FEISHU_LIVE_DISCLAIMER)}**</font>"
+                f"**内容**：{self._desensitize(self._safe_text(data))}"
             )
             return {
                 "msg_type": "interactive",
@@ -421,12 +440,8 @@ class WebhookNotifier:
         direction = str(data.get("direction", "") or "").upper()
         direction_label, direction_color = dir_color_map.get(direction, ("", "grey"))
         if event_type == "trade_exec":
-            if direction == "BUY":
-                title = "买入-成交信号"
-                template = "green"
-            elif direction == "SELL":
-                title = "卖出-成交信号"
-                template = "red"
+            title = "持仓变动通知"
+            template = "wathet"
         if (not strategy_name) and strategy_id:
             strategy_name = self._normalize_strategy_display_name(strategy_id)
         qty_val = self._to_float(data.get("qty", None))
@@ -445,12 +460,12 @@ class WebhookNotifier:
         msg_garbled = self._looks_garbled(msg)
         if msg_garbled:
             if event_type == "zhongshu":
-                msg = f"策略[{strategy_id or '--'}]生成信号：{direction_label or '--'} @ {data.get('price', '--')}"
+                msg = f"策略[{strategy_id or '--'}]已执行{direction_label or '操作'}"
             elif event_type == "menxia":
                 decision = str(data.get("decision", "") or "").lower()
                 msg = "风控审核通过" if decision == "approved" else ("风控审核拒绝" if decision == "rejected" else "风控状态更新")
             elif event_type == "trade_exec":
-                msg = f"执行{direction_label or '--'}成交 @ {data.get('price', '--')}"
+                msg = f"已执行{direction_label or '操作'}"
             elif event_type == "live_alert":
                 msg = f"{metric_label or '指标'}触发{level_label or '告警'}"
             elif event_type == "daily_summary":
@@ -486,12 +501,6 @@ class WebhookNotifier:
                         {"tag": "lark_md", "content": f"**说明**：{self._safe_text(msg)}"}
                     ]
                 })
-            elements.append({
-                "tag": "note",
-                "elements": [
-                    {"tag": "lark_md", "content": f"<font color='red'>**⚠️ 免责声明：{self._safe_text(FEISHU_LIVE_DISCLAIMER)}**</font>"}
-                ]
-            })
             return {
                 "msg_type": "interactive",
                 "card": {
@@ -538,58 +547,20 @@ class WebhookNotifier:
         content_main = "\n".join(kv_lines)
         elements = [{"tag": "div", "text": {"tag": "lark_md", "content": content_main}}]
         if event_type == "daily_summary":
-            win_rate = self._to_percent_number(data.get("win_rate", None))
-            max_dd = self._to_percent_number(data.get("max_drawdown", None))
-            if max_dd is not None and abs(max_dd) <= 1.0:
-                max_dd = max_dd * 100.0
-            net_pnl = self._to_float(data.get("net_pnl", data.get("realized_pnl", None)))
             total_trades = int(data.get("total_trades", 0) or 0)
-            win_rate_text = "--" if win_rate is None else f"{win_rate:.2f}%"
-            max_dd_text = "--" if max_dd is None else f"{max_dd:.2f}%"
-            net_pnl_text = "--" if net_pnl is None else f"{net_pnl:.2f}"
-            win_color = "grey" if win_rate is None else ("red" if win_rate >= 55 else ("orange" if win_rate >= 40 else "green"))
-            dd_color = "grey" if max_dd is None else ("green" if max_dd < 3 else ("orange" if max_dd < 6 else "red"))
-            pnl_color = "grey" if net_pnl is None else ("red" if net_pnl >= 0 else "green")
             elements = [
                 {"tag": "div", "text": {"tag": "lark_md", "content": (
-                    "**📊 日终汇总看板**\n"
+                    "<font color='red'>**⚠️ 免责：本消息仅为系统运行记录，不构成任何投资建议，不推荐买卖任何标的。**</font>\n\n"
+                    "**📋 日终运行记录**\n"
                     f"**汇总日期**：{self._safe_text(str(data.get('date', now_text[:10])))}\n"
                     f"**推送时间**：{self._safe_text(now_text)}\n"
-                    f"**总交易数**：`{total_trades}`\n"
-                    f"**胜率**：<font color='{win_color}'>{self._safe_text(win_rate_text)}</font>\n"
-                    f"**当日净盈亏**：<font color='{pnl_color}'>{self._safe_text(net_pnl_text)}</font>\n"
-                    f"**最大回撤**：<font color='{dd_color}'>{self._safe_text(max_dd_text)}</font>"
+                    f"**总交易笔数**：`{total_trades}`"
                 )}}
             ]
-            detail_rows = data.get("stock_summaries", [])
-            detail_rows = detail_rows if isinstance(detail_rows, list) else []
-            detail_lines = []
-            rank_idx = 0
-            for row in detail_rows:
-                if not isinstance(row, dict):
-                    continue
-                rank_idx += 1
-                row_code = str(row.get("stock_code", "") or "").strip().upper() or "--"
-                row_trades = int(row.get("total_trades", 0) or 0)
-                row_wr = self._to_percent_number(row.get("win_rate", None))
-                row_dd = self._to_percent_number(row.get("max_drawdown", None))
-                if row_dd is not None and abs(row_dd) <= 1.0:
-                    row_dd = row_dd * 100.0
-                row_pnl = self._to_float(row.get("net_pnl", row.get("realized_pnl", None)))
-                row_wr_text = "--" if row_wr is None else f"{row_wr:.2f}%"
-                row_dd_text = "--" if row_dd is None else f"{row_dd:.2f}%"
-                row_pnl_text = "--" if row_pnl is None else f"{row_pnl:.2f}"
-                detail_lines.append(
-                    f"{rank_idx}. `{self._safe_text(row_code)}`｜交易:`{row_trades}`｜胜率:`{self._safe_text(row_wr_text)}`｜净盈亏:`{self._safe_text(row_pnl_text)}`｜回撤:`{self._safe_text(row_dd_text)}`"
-                )
-            if detail_lines:
-                elements.append({
-                    "tag": "div",
-                    "text": {
-                        "tag": "lark_md",
-                        "content": "**📋 按标的明细**\n" + "\n".join(detail_lines)
-                    }
-                })
+        else:
+            kv_lines.insert(0, "<font color='red'>**⚠️ 免责：本消息仅为系统运行记录，不构成任何投资建议，不推荐买卖任何标的。**</font>")
+            content_main = "\n".join(kv_lines)
+            elements = [{"tag": "div", "text": {"tag": "lark_md", "content": content_main}}]
         if msg:
             elements.append({
                 "tag": "note",
@@ -597,12 +568,6 @@ class WebhookNotifier:
                     {"tag": "lark_md", "content": f"**说明**：{self._safe_text(msg)}"}
                 ]
             })
-        elements.append({
-            "tag": "note",
-            "elements": [
-                {"tag": "lark_md", "content": f"<font color='red'>**⚠️ 免责声明：{self._safe_text(FEISHU_LIVE_DISCLAIMER)}**</font>"}
-            ]
-        })
         return {
             "msg_type": "interactive",
             "card": {

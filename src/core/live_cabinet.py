@@ -26,6 +26,7 @@ from src.utils.duckdb_provider import DuckDbProvider
 from src.utils.tdx_provider import TdxProvider
 from src.utils.indicators import Indicators
 from src.utils.config_loader import ConfigLoader
+from src.consistency.collectors.live_snapshot_collector import LiveSnapshotCollector
 try:
     from zoneinfo import ZoneInfo
 except Exception:
@@ -146,6 +147,7 @@ class LiveCabinet:
         self._last_summary_tick_dt = None
         self._daily_auto_stop_day = ""
         self._fund_pool_state_file = os.path.join("data", "live_fund_pool", f"{str(self.stock_code or '').upper()}.json")
+        self.consistency_collector = LiveSnapshotCollector(stock_code=self.stock_code)
         self._restore_virtual_fund_pool()
 
     def _sum_holdings_value(self):
@@ -984,6 +986,11 @@ class LiveCabinet:
         """
         Emit event to frontend via callback (async).
         """
+        try:
+            if self.consistency_collector is not None:
+                self.consistency_collector.record_event(event_type, data, current_dt=self.last_dt)
+        except Exception:
+            pass
         if self.event_callback:
             await self.event_callback(event_type, data)
 
@@ -1575,7 +1582,14 @@ class LiveCabinet:
             await self._emit_event('zhongshu', {
                 'msg': f"策略 [{strategy_name}] 生成信号: {direction} @ {formatted_price}",
                 'details': f"> 策略: {strategy_name}<br>> 方向: {direction}<br>> 价格: {formatted_price}",
-                'status': 'bg-trading-blue'
+                'status': 'bg-trading-blue',
+                'strategy_id': strategy_id,
+                'strategy_name': strategy_name,
+                'code': str(signal.get('code') or self.stock_code or '').upper(),
+                'direction': str(signal.get('direction') or ''),
+                'price': float(signal.get('price', 0.0) or 0.0),
+                'qty': int(signal.get('qty', 0) or 0),
+                'dt': str(current_dt)
             })
             
             print(f"   💡 信号触发! [{strategy_name}] 请求 {direction} {signal['qty']}股 @ {formatted_price}")
@@ -1599,14 +1613,25 @@ class LiveCabinet:
                     'details': "> 风险敞口: 合规<br>> 批准执行",
                     'status': 'bg-trading-green',
                     'decision': 'approved',
-                    'strategy_id': strategy_id
+                    'strategy_id': strategy_id,
+                    'code': str(signal.get('code') or self.stock_code or '').upper(),
+                    'direction': str(signal.get('direction') or ''),
+                    'price': float(signal.get('price', 0.0) or 0.0),
+                    'qty': int(signal.get('qty', 0) or 0),
+                    'dt': str(current_dt)
                 })
                 
                 # 4. Execution (ShangshuSheng) - Virtual Execution
                 await self._emit_event('shangshu', {
                     'msg': "正在下达交易指令...",
                     'details': f"> 目标: {self.stock_code}<br>> 动作: {direction}",
-                    'status': 'bg-trading-yellow'
+                    'status': 'bg-trading-yellow',
+                    'strategy_id': strategy_id,
+                    'code': str(signal.get('code') or self.stock_code or '').upper(),
+                    'direction': str(signal.get('direction') or ''),
+                    'price': float(signal.get('price', 0.0) or 0.0),
+                    'qty': int(signal.get('qty', 0) or 0),
+                    'dt': str(current_dt)
                 })
                 
                 executed = self.state_affairs.execute_order(strategy_id, signal, bar)
@@ -1624,7 +1649,9 @@ class LiveCabinet:
                             realized_pnl = float(last_tx.get('pnl', 0.0))
                     await self._emit_event('trade_exec', {
                         'time': current_dt.strftime("%H:%M:%S"),
+                        'dt': str(current_dt),
                         'strategy_id': strategy_id,
+                        'code': str(signal.get('code') or self.stock_code or '').upper(),
                         'direction': signal.get('direction'),
                         'price': float(signal.get('price', 0.0)),
                         'qty': int(signal.get('qty', 0)),
@@ -1666,7 +1693,12 @@ class LiveCabinet:
                     'status': 'bg-trading-red',
                     'decision': 'rejected',
                     'strategy_id': strategy_id,
-                    'reason': reason
+                    'reason': reason,
+                    'code': str(signal.get('code') or self.stock_code or '').upper(),
+                    'direction': str(signal.get('direction') or ''),
+                    'price': float(signal.get('price', 0.0) or 0.0),
+                    'qty': int(signal.get('qty', 0) or 0),
+                    'dt': str(current_dt)
                 })
 
         # 5. Check Stops
@@ -1677,7 +1709,15 @@ class LiveCabinet:
             await self._emit_event('menxia', {
                     'msg': f"触发风控: {order['type']}",
                     'details': f"> 类型: {order['type']}<br>> 价格: {order['price']:.2f}",
-                    'status': 'bg-trading-red'
+                    'status': 'bg-trading-red',
+                    'decision': 'stop_triggered',
+                    'strategy_id': order.get('strategy_id'),
+                    'code': str(order.get('code') or self.stock_code or '').upper(),
+                    'direction': str(order.get('direction') or 'SELL'),
+                    'price': float(order.get('price', 0.0) or 0.0),
+                    'qty': int(order.get('qty', 0) or 0),
+                    'dt': str(current_dt),
+                    'stop_type': str(order.get('type') or '')
                 })
             self.state_affairs.execute_order(order['strategy_id'], order, bar)
             remaining_qty = self.state_affairs.positions.get(order['strategy_id'], {}).get(order['code'], {}).get('qty', 0)
@@ -1690,7 +1730,9 @@ class LiveCabinet:
                     realized_pnl = float(last_tx.get('pnl', 0.0))
             await self._emit_event('trade_exec', {
                 'time': current_dt.strftime("%H:%M:%S"),
+                'dt': str(current_dt),
                 'strategy_id': order.get('strategy_id'),
+                'code': str(order.get('code') or self.stock_code or '').upper(),
                 'direction': 'SELL',
                 'price': float(order.get('price', 0.0)),
                 'qty': int(order.get('qty', 0)),
@@ -1733,8 +1775,14 @@ class LiveCabinet:
         should_summary = self._is_trading_day(dt_obj) and reached_summary_cutoff and (self._daily_summary_sent_day != day_text)
         if should_summary:
             print(f"🌆 日终汇总时间到 ({dt_obj})，正在归档今日数据...")
+            snapshot_bars = list(self.daily_data_buffer or [])
             await self._emit_daily_summary_if_needed(dt_obj)
             self._archive_data()
+            try:
+                if self.consistency_collector is not None:
+                    self.consistency_collector.archive_day(self, dt_obj, bars=snapshot_bars)
+            except Exception as e:
+                print(f"⚠️ 一致性快照归档失败: {e}")
             self.today_archived = True
 
         should_auto_stop = self._is_trading_day(dt_obj) and reached_stop_cutoff and (self._daily_auto_stop_day != day_text)

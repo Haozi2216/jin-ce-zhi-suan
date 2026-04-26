@@ -68,8 +68,15 @@ from src.evolution.core.runtime_manager import EvolutionRuntimeManager
 from src.evolution.adapters.fundamental_adapter import FundamentalAdapterManager
 from src.evolution.memory.gene_run_store import PostgresGeneRunRepository
 from src.evolution.memory.profile_update_store import PostgresProfileUpdateRepository
+from src.evolution.memory.analysis_store import AnalysisStore
 from src.evolution.adapters.gene_strategy_adapter import GeneStrategyAdapter
 from src.evolution.platform.platform_hub import EvolutionPlatformHub
+from src.consistency.storage.live_snapshot_store import LiveSnapshotStore
+from src.consistency.replay.replay_builder import ReplayBuilder
+from src.consistency.replay.replay_store import ReplayStore
+from src.consistency.reporting.report_store import ConsistencyReportStore
+from src.consistency.reporting.report_builder import ConsistencyReportBuilder
+from src.consistency.adapters.backtest_report_adapter import BacktestReportAdapter
 
 import logging
 
@@ -202,14 +209,25 @@ report_detail_cache = {}
 report_history_mtime = None
 AI_REVIEW_SCHEMA_VERSION = 2
 BUFFETT_REVIEW_SCHEMA_VERSION = 1
+AI_REVIEW_SUMMARY_SCHEMA_VERSION = 1
+BUFFETT_REVIEW_SUMMARY_SCHEMA_VERSION = 1
 report_history = []
+CONSISTENCY_STORAGE_DIR = os.path.join("data", "consistency")
 REPORTS_DIR = os.path.join("data", "reports")
 REPORTS_LEGACY_FILE = os.path.join(REPORTS_DIR, "backtest_reports.json")
 REPORT_FILE_PREFIX = "backtest_report_"
 REPORT_FILE_SUFFIX = ".json"
+consistency_snapshot_store = LiveSnapshotStore(CONSISTENCY_STORAGE_DIR)
+consistency_replay_store = ReplayStore(CONSISTENCY_STORAGE_DIR)
+consistency_replay_builder = ReplayBuilder(snapshot_store=consistency_snapshot_store, replay_store=consistency_replay_store, consistency_root=CONSISTENCY_STORAGE_DIR)
+consistency_report_store = ConsistencyReportStore(CONSISTENCY_STORAGE_DIR)
+consistency_report_builder = ConsistencyReportBuilder()
+consistency_backtest_report_adapter = BacktestReportAdapter(REPORTS_DIR, REPORT_FILE_PREFIX, REPORT_FILE_SUFFIX)
 EVOLUTION_STORAGE_DIR = os.path.join("data", "evolution")
+EVOLUTION_ANALYSIS_DIR = os.path.join(EVOLUTION_STORAGE_DIR, "analysis")
 EVOLUTION_RUNS_DIR = os.path.join(EVOLUTION_STORAGE_DIR, "runs")
 EVOLUTION_FAMILY_DIR = os.path.join(EVOLUTION_STORAGE_DIR, "family")
+EVOLUTION_ANALYSIS_STORE = AnalysisStore(EVOLUTION_ANALYSIS_DIR)
 EVOLUTION_RUN_FILE_PREFIX = "evolution_run_"
 EVOLUTION_FAMILY_FILE_PREFIX = "evolution_family_"
 EVOLUTION_FILE_SUFFIX = ".json"
@@ -1263,6 +1281,8 @@ def _save_split_config(incoming):
 
     public_cfg = json.loads(json.dumps(merged_cfg, ensure_ascii=False))
     for path in secret_paths:
+        if not private_exists:
+            continue
         _set_path_value(public_cfg, path, "")
     for path in private_only_paths:
         if private_exists:
@@ -1273,6 +1293,9 @@ def _save_split_config(incoming):
             continue
 
     _write_json_file(public_path, public_cfg)
+
+    if not private_exists:
+        return ConfigLoader.reload()
 
     if secret_updates or private_only_updates:
         private_cfg = _load_json_with_comments(private_path, silent=True)
@@ -1300,7 +1323,7 @@ def _save_split_config(incoming):
 
 def is_live_enabled():
     cfg = ConfigLoader.reload()
-    return bool(cfg.get("system.enable_live", True)) and _system_mode(cfg) == "live"
+    return _system_mode(cfg) == "live"
 
 def _build_provider_by_source(source: str, cfg=None):
     c = cfg if cfg is not None else ConfigLoader.reload()
@@ -1528,6 +1551,7 @@ def _normalize_evolution_run_row(payload: Dict[str, Any], existing: Optional[Dic
     data = dict(existing or {})
     if isinstance(payload, dict):
         data.update(payload)
+    analysis = data.get("analysis") if isinstance(data.get("analysis"), dict) else {}
     run_id = str(data.get("run_id", "") or "").strip() or _sanitize_file_key("", "run")
     child_gene_family = str(data.get("child_gene_family", "") or data.get("family", "") or "unknown").strip().lower() or "unknown"
     now = datetime.now().isoformat(timespec="seconds")
@@ -1551,6 +1575,18 @@ def _normalize_evolution_run_row(payload: Dict[str, Any], existing: Optional[Dic
         "committed_strategy_name": str(data.get("committed_strategy_name", "") or "").strip(),
         "committed_version": int(data.get("committed_version", 0) or 0),
         "committed_at": _normalize_time_text(data.get("committed_at"), "") if str(data.get("committed_at", "")).strip() else "",
+        "analysis_id": str(data.get("analysis_id", "") or analysis.get("analysis_id", "") or "").strip(),
+        "analysis_status": str(data.get("analysis_status", "") or analysis.get("analysis_status", "") or "").strip(),
+        "analysis_version": str(data.get("analysis_version", "") or analysis.get("analysis_version", "") or "").strip(),
+        "analysis_summary": str(data.get("analysis_summary", "") or analysis.get("analysis_summary", "") or "").strip(),
+        "analysis_source": str(data.get("analysis_source", "") or analysis.get("analysis_source", "") or "").strip(),
+        "analysis_confidence": float(data.get("analysis_confidence")) if data.get("analysis_confidence") is not None and str(data.get("analysis_confidence", "")).strip() != "" else (float(analysis.get("confidence")) if analysis.get("confidence") is not None and str(analysis.get("confidence", "")).strip() != "" else None),
+        "feedback_tags": [str(x or "").strip() for x in (data.get("feedback_tags") or analysis.get("feedback_tags") or []) if str(x or "").strip()],
+        "improvement_suggestions": data.get("improvement_suggestions") if isinstance(data.get("improvement_suggestions"), list) else (analysis.get("improvement_suggestions") if isinstance(analysis.get("improvement_suggestions"), list) else []),
+        "prompt_context_patch": data.get("prompt_context_patch") if isinstance(data.get("prompt_context_patch"), dict) else (analysis.get("prompt_context_patch") if isinstance(analysis.get("prompt_context_patch"), dict) else {}),
+        "consistency_report_id": str(data.get("consistency_report_id", "") or analysis.get("consistency_report_id", "") or "").strip(),
+        "llm_analysis_provider": str(data.get("llm_analysis_provider", "") or analysis.get("llm_provider", "") or "").strip(),
+        "llm_analysis_model": str(data.get("llm_analysis_model", "") or analysis.get("llm_model", "") or "").strip(),
         "created_at": _normalize_time_text(data.get("created_at"), data.get("time") or now),
         "updated_at": _normalize_time_text(data.get("updated_at"), now),
         "note": str(data.get("note", "") or "").strip(),
@@ -1778,13 +1814,60 @@ def _persist_evolution_runtime_event(event: Dict[str, Any]) -> None:
     body = payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
     if event_type == "strategyscored":
         try:
-            row = _save_evolution_run_row(body)
+            existing_analysis = EVOLUTION_ANALYSIS_STORE.get_analysis_by_run_id(str(body.get("run_id", "") or "")) or {}
+            merged_body = dict(body)
+            if existing_analysis:
+                merged_body.update({
+                    "analysis_id": existing_analysis.get("analysis_id", ""),
+                    "analysis_status": existing_analysis.get("analysis_status", ""),
+                    "analysis_version": existing_analysis.get("analysis_version", ""),
+                    "analysis_summary": existing_analysis.get("analysis_summary", ""),
+                    "analysis_source": existing_analysis.get("analysis_source", ""),
+                    "analysis_confidence": existing_analysis.get("confidence"),
+                    "feedback_tags": existing_analysis.get("feedback_tags", []),
+                    "improvement_suggestions": existing_analysis.get("improvement_suggestions", []),
+                    "prompt_context_patch": existing_analysis.get("prompt_context_patch", {}),
+                    "consistency_report_id": existing_analysis.get("consistency_report_id", ""),
+                    "llm_analysis_provider": existing_analysis.get("llm_provider", ""),
+                    "llm_analysis_model": existing_analysis.get("llm_model", ""),
+                    "analysis": existing_analysis,
+                })
+            row = _save_evolution_run_row(merged_body)
             if row.get("child_gene_family"):
                 family_rows = _build_family_stats_from_runs(_load_all_evolution_run_rows())
                 for family_row in family_rows:
                     _save_evolution_family_row(family_row, original_family=str(family_row.get("family") or ""))
         except Exception as e:
             logger.warning("persist evolution scored event failed: %s", e)
+    elif event_type == "strategyanalyzed":
+        run_id = str(body.get("run_id", "") or "").strip()
+        if not run_id:
+            return
+        try:
+            EVOLUTION_ANALYSIS_STORE.save_analysis(body)
+            existing_payload = _load_json_file(_evolution_run_file_path(run_id)) or {}
+            existing_row = existing_payload.get("run") if isinstance(existing_payload.get("run"), dict) else existing_payload
+            merged = dict(existing_row or {})
+            merged.update({
+                "run_id": run_id,
+                "analysis_id": body.get("analysis_id", ""),
+                "analysis_status": body.get("analysis_status", ""),
+                "analysis_version": body.get("analysis_version", ""),
+                "analysis_summary": body.get("analysis_summary", ""),
+                "analysis_source": body.get("analysis_source", ""),
+                "analysis_confidence": body.get("confidence"),
+                "feedback_tags": body.get("feedback_tags", []),
+                "improvement_suggestions": body.get("improvement_suggestions", []),
+                "prompt_context_patch": body.get("prompt_context_patch", {}),
+                "consistency_report_id": body.get("consistency_report_id", ""),
+                "llm_analysis_provider": body.get("llm_provider", ""),
+                "llm_analysis_model": body.get("llm_model", ""),
+                "analysis": body,
+                "updated_at": datetime.now().isoformat(timespec="seconds"),
+            })
+            _save_evolution_run_row(merged, original_run_id=run_id)
+        except Exception as e:
+            logger.warning("persist evolution analysis event failed: %s", e)
     elif event_type == "strategycommitted":
         run_id = str(body.get("run_id", "") or "").strip()
         if not run_id:
@@ -1914,6 +1997,160 @@ def _sample_size_confidence(count):
     if c >= 2:
         return 0.45
     return 0.3
+
+
+def _normalize_text_list(values) -> list[str]:
+    out = []
+    for value in list(values or []):
+        text = str(value or "").strip()
+        if text and text not in out:
+            out.append(text)
+    return out
+
+
+def _sanitize_compare_scope_summary(code: str, start_date: str, end_date: str, strategy_ids=None, timeframes=None, snapshot_ids=None) -> str:
+    strategy_text = "、".join(_normalize_text_list(strategy_ids)) or "全部策略"
+    timeframe_text = "、".join(_normalize_text_list(timeframes)) or "全部周期"
+    snapshot_count = len(_normalize_text_list(snapshot_ids))
+    date_text = start_date if start_date == end_date else f"{start_date} ~ {end_date}"
+    scope = f"标的 {code}，区间 {date_text}，策略 {strategy_text}，周期 {timeframe_text}"
+    if snapshot_count > 0:
+        scope += f"，共 {snapshot_count} 份实盘样本"
+    return scope
+
+
+def _build_consistency_snapshot_detail(replay_request: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(replay_request, dict):
+        return {}
+    detail = replay_request.get("snapshot_detail")
+    return detail if isinstance(detail, dict) else {}
+
+
+def _build_consistency_report_payload(
+    *,
+    market: str,
+    code: str,
+    replay_run_id: str,
+    snapshot_ids: list[str],
+    snapshot_detail: Dict[str, Any],
+    replay_result: Dict[str, Any],
+    backtest_source_type: str,
+    selected_report_id: str = "",
+    linked_report_id: str = "",
+    selected_strategy_ids=None,
+    comparison_scope_summary: str = "",
+    note: str = "",
+) -> Dict[str, Any]:
+    primary_snapshot_id = str(snapshot_ids[0] if snapshot_ids else "")
+    report_payload = consistency_report_builder.build_report(
+        market=market,
+        code=code,
+        snapshot_id=primary_snapshot_id,
+        replay_run_id=replay_run_id,
+        snapshot_detail=snapshot_detail,
+        replay_result=replay_result,
+    )
+    linked_rid = str(linked_report_id or selected_report_id or replay_result.get("report_id", "") or "")
+    summary = report_payload.get("summary") if isinstance(report_payload.get("summary"), dict) else {}
+    summary["comparison_mode"] = "manual_compare"
+    summary["note"] = str(note or "")
+    summary["backtest_source_type"] = str(backtest_source_type or "")
+    summary["comparison_scope_summary"] = str(comparison_scope_summary or "")
+    summary["selected_strategy_ids"] = _normalize_text_list(selected_strategy_ids)
+    summary["selected_snapshot_ids"] = _normalize_text_list(snapshot_ids)
+    summary["snapshot_count"] = len(_normalize_text_list(snapshot_ids))
+    if selected_report_id:
+        summary["selected_report_id"] = str(selected_report_id)
+    if linked_rid:
+        summary["linked_report_id"] = linked_rid
+    report_payload["summary"] = summary
+    report_payload["backtest_source_type"] = str(backtest_source_type or "")
+    report_payload["selected_report_id"] = str(selected_report_id or "")
+    report_payload["linked_report_id"] = linked_rid
+    report_payload["selected_strategy_ids"] = _normalize_text_list(selected_strategy_ids)
+    report_payload["selected_snapshot_ids"] = _normalize_text_list(snapshot_ids)
+    report_payload["snapshot_count"] = len(_normalize_text_list(snapshot_ids))
+    report_payload["comparison_scope_summary"] = str(comparison_scope_summary or "")
+    report_payload["comparison_mode"] = "manual_compare"
+    report_payload["note"] = str(note or "")
+    return report_payload
+
+
+def _find_latest_consistency_report_for_backtest(linked_report_id: str) -> Dict[str, Any]:
+    rid = str(linked_report_id or "").strip()
+    if not rid:
+        return {}
+    payload = consistency_report_store.list_reports(page=1, page_size=200)
+    items = payload.get("items", []) if isinstance(payload, dict) else []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        candidate = str(item.get("linked_report_id", "") or item.get("selected_report_id", "") or "").strip()
+        if candidate != rid:
+            continue
+        detail = consistency_report_store.get_report(str(item.get("report_id", "") or ""))
+        if isinstance(detail, dict) and detail:
+            return detail
+    return {}
+
+
+def _build_report_consistency_summary(report_item: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(report_item, dict):
+        return {}
+    report_id = str(report_item.get("report_id", "") or "").strip()
+    request = report_item.get("request") if isinstance(report_item.get("request"), dict) else {}
+    linked = _find_latest_consistency_report_for_backtest(report_id)
+    if not linked and str(request.get("mode", "") or "").strip().lower() == "consistency_compare":
+        selected = str(request.get("selected_report_id", "") or report_id).strip()
+        linked = _find_latest_consistency_report_for_backtest(selected)
+    if not isinstance(linked, dict) or not linked:
+        return {}
+    summary = linked.get("summary") if isinstance(linked.get("summary"), dict) else {}
+    first_divergence = linked.get("first_divergence") if isinstance(linked.get("first_divergence"), dict) else {}
+    root_cause_candidates = linked.get("root_cause_candidates") if isinstance(linked.get("root_cause_candidates"), list) else []
+    top_candidate = root_cause_candidates[0] if root_cause_candidates and isinstance(root_cause_candidates[0], dict) else {}
+    out = {
+        "consistency_report_id": str(linked.get("report_id", "") or ""),
+        "comparison_scope_summary": str(linked.get("comparison_scope_summary", "") or summary.get("comparison_scope_summary", "") or ""),
+        "comparison_mode": str(linked.get("comparison_mode", "") or summary.get("comparison_mode", "") or ""),
+        "backtest_source_type": str(linked.get("backtest_source_type", "") or summary.get("backtest_source_type", "") or ""),
+        "mismatch_count": int(summary.get("mismatch_count", 0) or 0),
+        "live_trade_count": int(summary.get("live_trade_count", 0) or 0),
+        "replay_trade_count": int(summary.get("replay_trade_count", 0) or 0),
+        "root_cause_tags": [str(x or "").strip() for x in (linked.get("root_cause_tags") or summary.get("root_cause_tags") or []) if str(x or "").strip()],
+        "first_divergence_stage": str(first_divergence.get("stage", "") or summary.get("first_divergence_stage", "") or ""),
+        "first_divergence_reason": str(first_divergence.get("reason_code", "") or summary.get("first_divergence_reason", "") or ""),
+        "top_root_cause": str(top_candidate.get("candidate", "") or ""),
+        "top_root_cause_confidence": top_candidate.get("confidence"),
+        "note": str(linked.get("note", "") or summary.get("note", "") or ""),
+        "linked_report_id": str(linked.get("linked_report_id", "") or summary.get("linked_report_id", "") or ""),
+    }
+    return out
+
+
+def _build_replay_backtest_result(current_report: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "report_id": current_report.get("report_id"),
+        "status": current_report.get("status"),
+        "error_msg": current_report.get("error_msg"),
+        "summary": current_report.get("summary"),
+        "ranking": current_report.get("ranking"),
+        "strategy_reports": current_report.get("strategy_reports"),
+        "request": current_report.get("request"),
+    }
+
+
+def _validate_compare_strategy_scope(requested_strategy_ids, available_strategy_ids) -> str:
+    requested = _normalize_text_list(requested_strategy_ids)
+    if not requested:
+        return ""
+    available = set(_normalize_text_list(available_strategy_ids))
+    if not available:
+        return "所选实盘样本中没有可用于对比的策略"
+    missing = [sid for sid in requested if sid not in available]
+    if missing:
+        return f"以下策略不在当前样本范围内：{'、'.join(missing)}"
+    return ""
 
 
 def _rebuild_strategy_score_cache():
@@ -2192,6 +2429,35 @@ class BacktestRequest(BaseModel):
     end: Optional[str] = None
     capital: Optional[float] = None
     realtime_push: Optional[bool] = True
+
+class ConsistencyReplayRequest(BaseModel):
+    market: str = "ashare"
+    code: str
+    start_date: str
+    end_date: str
+    capital: Optional[float] = None
+    realtime_push: Optional[bool] = False
+
+class ConsistencyNewBacktestRequest(BaseModel):
+    strategy_ids: Optional[list[str]] = None
+    capital: Optional[float] = None
+    strategy_mode: Optional[str] = None
+    combination_config: Optional[dict] = None
+    realtime_push: Optional[bool] = False
+
+class ConsistencyCompareRequest(BaseModel):
+    market: str = "ashare"
+    code: str
+    start_date: str
+    end_date: str
+    strategy_ids: Optional[list[str]] = None
+    timeframes: Optional[list[str]] = None
+    snapshot_selection_mode: str = "auto"
+    selected_snapshot_ids: Optional[list[str]] = None
+    backtest_source_type: str
+    selected_report_id: Optional[str] = None
+    new_backtest_request: Optional[ConsistencyNewBacktestRequest] = None
+    note: Optional[str] = None
 
 class LiveRequest(BaseModel):
     stock_code: Optional[str] = None
@@ -4041,6 +4307,234 @@ def _extract_json_block(text: str) -> Dict[str, Any]:
         return {}
 
 
+def _split_llm_json_and_markdown(text: str) -> tuple[Dict[str, Any], str]:
+    raw = str(text or "").strip()
+    if not raw:
+        return {}, ""
+    lines = raw.splitlines()
+    json_lines = []
+    markdown_start = 0
+    balance = 0
+    started = False
+    for idx, line in enumerate(lines):
+        if not started and "{" not in line:
+            continue
+        if not started:
+            started = True
+        json_lines.append(line)
+        balance += line.count("{") - line.count("}")
+        if started and balance <= 0:
+            markdown_start = idx + 1
+            break
+    json_text = "\n".join(json_lines).strip()
+    parsed = _extract_json_block(json_text)
+    markdown = "\n".join(lines[markdown_start:]).strip() if markdown_start > 0 else raw
+    if parsed and markdown == json_text:
+        markdown = ""
+    return parsed if isinstance(parsed, dict) else {}, markdown.strip()
+
+
+def _extract_markdown_section(text: str, title: str, next_titles: list[str]) -> str:
+    raw = str(text or "")
+    if not raw or not title:
+        return ""
+    pattern = rf"(?:^|\n)\s*(?:#+\s*)?{re.escape(title)}\s*\n([\s\S]*?)$"
+    match = re.search(pattern, raw)
+    if not match:
+        return ""
+    body = match.group(1)
+    for next_title in next_titles:
+        split_pattern = rf"\n\s*(?:#+\s*)?{re.escape(next_title)}\s*\n"
+        split_match = re.search(split_pattern, body)
+        if split_match:
+            body = body[:split_match.start()]
+            break
+    return body.strip()
+
+
+def _extract_bullets(text: str) -> list[str]:
+    out = []
+    for line in str(text or "").splitlines():
+        item = re.sub(r"^\s*(?:[-*•]|\d+[.)])\s*", "", line).strip()
+        if item:
+            out.append(item)
+    return out
+
+
+def _parse_key_value_items(text: str) -> list[Dict[str, Any]]:
+    items = []
+    for line in str(text or "").splitlines():
+        cleaned = re.sub(r"^\s*(?:[-*•]|\d+[.)])\s*", "", line).strip()
+        if not cleaned:
+            continue
+        name, _, rest = cleaned.partition("：")
+        if not rest:
+            name, _, rest = cleaned.partition(":")
+        item = {
+            "name": name.strip() or cleaned,
+            "suggested": rest.strip() or cleaned,
+            "why": cleaned,
+        }
+        items.append(item)
+    return items
+
+
+def _normalize_ai_review_summary(raw: Dict[str, Any]) -> Dict[str, Any]:
+    data = raw if isinstance(raw, dict) else {}
+    title = str(data.get("title", "") or data.get("summary", "") or data.get("core_conclusion", "") or "").strip()
+    verdict = str(data.get("verdict", "") or data.get("stance", "") or "neutral").strip().lower() or "neutral"
+    score = data.get("score")
+    try:
+        score_value = max(0.0, min(100.0, float(score))) if score is not None else None
+    except Exception:
+        score_value = None
+    return {
+        "schema_version": AI_REVIEW_SUMMARY_SCHEMA_VERSION,
+        "source": str(data.get("source", "llm_json") or "llm_json"),
+        "title": title,
+        "verdict": verdict,
+        "score": score_value,
+        "highlights": [str(x or "").strip() for x in (data.get("highlights") or data.get("key_issues") or []) if str(x or "").strip()],
+        "risks": [str(x or "").strip() for x in (data.get("risks") or []) if str(x or "").strip()],
+        "buy_points": [x for x in (data.get("buy_points") or []) if isinstance(x, dict)],
+        "sell_points": [x for x in (data.get("sell_points") or []) if isinstance(x, dict)],
+        "parameter_suggestions": [x for x in (data.get("parameter_suggestions") or []) if isinstance(x, dict)],
+        "next_experiments": [x for x in (data.get("next_experiments") or []) if isinstance(x, dict)],
+    }
+
+
+def _normalize_buffett_review_summary(raw: Dict[str, Any]) -> Dict[str, Any]:
+    data = raw if isinstance(raw, dict) else {}
+    return {
+        "schema_version": BUFFETT_REVIEW_SUMMARY_SCHEMA_VERSION,
+        "source": str(data.get("source", "llm_json") or "llm_json"),
+        "title": str(data.get("title", "") or data.get("summary", "") or "").strip(),
+        "verdict": str(data.get("verdict", "") or "WATCH").strip().upper() or "WATCH",
+        "circle_of_competence": str(data.get("circle_of_competence", "") or "N/A").strip().upper() or "N/A",
+        "key_assumptions": [str(x or "").strip() for x in (data.get("key_assumptions") or []) if str(x or "").strip()],
+        "quality_assessment": [str(x or "").strip() for x in (data.get("quality_assessment") or []) if str(x or "").strip()],
+        "margin_of_safety": [str(x or "").strip() for x in (data.get("margin_of_safety") or []) if str(x or "").strip()],
+        "sell_checklist": [x for x in (data.get("sell_checklist") or []) if isinstance(x, dict)],
+        "top_risks": [str(x or "").strip() for x in (data.get("top_risks") or []) if str(x or "").strip()],
+        "monitoring_metrics": [str(x or "").strip() for x in (data.get("monitoring_metrics") or []) if str(x or "").strip()],
+        "final_note": str(data.get("final_note", "") or "").strip(),
+    }
+
+
+def _parse_ai_review_summary_from_markdown(markdown: str) -> Dict[str, Any]:
+    text = str(markdown or "").strip()
+    if not text:
+        return {}
+    sec1 = _extract_markdown_section(text, "1) 核心结论", ["2) 关键问题", "## 2) 关键问题"])
+    sec2 = _extract_markdown_section(text, "2) 关键问题", ["3) 基于交易明细的买入节点分析", "## 3) 基于交易明细的买入节点分析"])
+    sec3 = _extract_markdown_section(text, "3) 基于交易明细的买入节点分析", ["4) 基于交易明细的卖出节点分析", "## 4) 基于交易明细的卖出节点分析"])
+    sec4 = _extract_markdown_section(text, "4) 基于交易明细的卖出节点分析", ["5) 参数优化建议", "## 5) 参数优化建议"])
+    sec5 = _extract_markdown_section(text, "5) 参数优化建议", ["6) 下一轮实验方案", "## 6) 下一轮实验方案"])
+    sec6 = _extract_markdown_section(text, "6) 下一轮实验方案", [])
+    return _normalize_ai_review_summary({
+        "source": "markdown_parse",
+        "title": sec1.splitlines()[0].strip() if sec1 else "",
+        "verdict": "neutral",
+        "highlights": _extract_bullets(sec2) or ([sec2] if sec2 else []),
+        "risks": _extract_bullets(sec2),
+        "buy_points": [{"reason": item} for item in (_extract_bullets(sec3) or ([sec3] if sec3 else []))],
+        "sell_points": [{"reason": item} for item in (_extract_bullets(sec4) or ([sec4] if sec4 else []))],
+        "parameter_suggestions": _parse_key_value_items(sec5),
+        "next_experiments": [{"label": f"方案{idx + 1}", "expectation": item} for idx, item in enumerate(_extract_bullets(sec6) or ([sec6] if sec6 else []))],
+    })
+
+
+def _parse_buffett_review_summary_from_markdown(markdown: str) -> Dict[str, Any]:
+    text = str(markdown or "").strip()
+    if not text:
+        return {}
+    titles = [
+        "1) 结论（BUY/WATCH/HOLD/AVOID + 一句话理由）",
+        "2) 能力圈判断（IN/BOUNDARY/OUT）",
+        "3) 关键假设（3-5条）",
+        "4) 业务质量代理评估（用收益稳定性、回撤控制、策略一致性）",
+        "5) 安全边际代理评估（用风险收益比、回撤缓冲）",
+        "6) 卖出标准检查（drawdown_break、win_rate_decay、ranking_drop、rule_stability）",
+        "7) 三大风险",
+        "8) 监控指标（季度/每轮回测跟踪项）",
+        "9) 最终结论（必须明确：仅分析，不执行交易）",
+    ]
+    sections = []
+    for idx, title in enumerate(titles):
+        sections.append(_extract_markdown_section(text, title, titles[idx + 1:]))
+    verdict_text = sections[0].splitlines()[0].strip() if sections[0] else "WATCH"
+    coc_text = sections[1].splitlines()[0].strip() if sections[1] else "N/A"
+    checklist = []
+    for item in _extract_bullets(sections[5]) or ([sections[5]] if sections[5] else []):
+        if not item:
+            continue
+        key, _, note = item.partition("：")
+        if not note:
+            key, _, note = item.partition(":")
+        checklist.append({
+            "key": key.strip() or item,
+            "status": "warn",
+            "note": note.strip() or item,
+        })
+    return _normalize_buffett_review_summary({
+        "source": "markdown_parse",
+        "title": verdict_text,
+        "verdict": verdict_text.split()[0].strip().upper() if verdict_text else "WATCH",
+        "circle_of_competence": coc_text.split()[0].strip().upper() if coc_text else "N/A",
+        "key_assumptions": _extract_bullets(sections[2]) or ([sections[2]] if sections[2] else []),
+        "quality_assessment": _extract_bullets(sections[3]) or ([sections[3]] if sections[3] else []),
+        "margin_of_safety": _extract_bullets(sections[4]) or ([sections[4]] if sections[4] else []),
+        "sell_checklist": checklist,
+        "top_risks": _extract_bullets(sections[6]) or ([sections[6]] if sections[6] else []),
+        "monitoring_metrics": _extract_bullets(sections[7]) or ([sections[7]] if sections[7] else []),
+        "final_note": sections[8],
+    })
+
+
+def _read_review_summary(report_item: Dict[str, Any], cache: Dict[str, Any], rid: str, field_name: str, version_field: str, expected_version: int, parser) -> Dict[str, Any]:
+    summary = cache.get(f"{rid}__summary")
+    summary_ver = int(cache.get(f"{rid}__summary_v", 0) or 0)
+    if isinstance(summary, dict) and summary_ver == expected_version:
+        return summary
+    persisted = report_item.get(field_name)
+    persisted_ver = int(report_item.get(version_field, 0) or 0)
+    if isinstance(persisted, dict) and persisted and persisted_ver == expected_version:
+        cache[f"{rid}__summary"] = persisted
+        cache[f"{rid}__summary_v"] = expected_version
+        return persisted
+    markdown = str(report_item.get("ai_review_text" if field_name.startswith("ai_") else "buffett_review_text", "") or "").strip()
+    parsed = parser(markdown) if markdown else {}
+    if isinstance(parsed, dict) and parsed:
+        cache[f"{rid}__summary"] = parsed
+        cache[f"{rid}__summary_v"] = expected_version
+        return parsed
+    return {}
+
+
+def _build_ai_review_payload(report_item: Dict[str, Any], report_id: str) -> Dict[str, Any]:
+    rid = str(report_id or "").strip()
+    text = (str(report_item.get("ai_review_text", "") or "") if int(report_item.get("ai_review_version", 0) or 0) == AI_REVIEW_SCHEMA_VERSION else "") or str(report_ai_review_cache.get(rid, "") or "")
+    summary = _read_review_summary(report_item, report_ai_review_cache, rid, "ai_review_summary", "ai_review_summary_version", AI_REVIEW_SUMMARY_SCHEMA_VERSION, _parse_ai_review_summary_from_markdown)
+    return {
+        "ai_review_text": str(text or ""),
+        "ai_review_version": int(report_item.get("ai_review_version", 0) or 0),
+        "ai_review_summary": summary,
+        "ai_review_summary_version": int(report_item.get("ai_review_summary_version", 0) or (AI_REVIEW_SUMMARY_SCHEMA_VERSION if summary else 0)),
+    }
+
+
+def _build_buffett_review_payload(report_item: Dict[str, Any], report_id: str) -> Dict[str, Any]:
+    rid = str(report_id or "").strip()
+    text = (str(report_item.get("buffett_review_text", "") or "") if int(report_item.get("buffett_review_version", 0) or 0) == BUFFETT_REVIEW_SCHEMA_VERSION else "") or str(report_buffett_review_cache.get(rid, "") or "")
+    summary = _read_review_summary(report_item, report_buffett_review_cache, rid, "buffett_review_summary", "buffett_review_summary_version", BUFFETT_REVIEW_SUMMARY_SCHEMA_VERSION, _parse_buffett_review_summary_from_markdown)
+    return {
+        "buffett_review_text": str(text or ""),
+        "buffett_review_version": int(report_item.get("buffett_review_version", 0) or 0),
+        "buffett_review_summary": summary,
+        "buffett_review_summary_version": int(report_item.get("buffett_review_summary_version", 0) or (BUFFETT_REVIEW_SUMMARY_SCHEMA_VERSION if summary else 0)),
+    }
+
+
 def _recommend_batch_combination_by_llm(strategy_ids: List[str], strategy_profiles: List[Dict[str, Any]], max_tokens: int, temperature: float) -> Dict[str, Any]:
     cfg = ConfigLoader.reload()
     api_key = str(cfg.get("data_provider.llm_api_key", "") or "").strip()
@@ -5114,17 +5608,38 @@ async def api_test_tdx_connectivity(req: TdxConnectivityTestRequest):
             autodetected = True
 
         if not _is_valid_tdxdir(tdxdir):
+            provider = TdxProvider(tdxdir=tdxdir)
+            ok, detail = provider.check_connectivity(stock_code)
+            mode_info = provider.describe_mode() if hasattr(provider, "describe_mode") else {}
+            if ok:
+                return {
+                    "status": "success",
+                    "ok": True,
+                    "msg": "TDX(Mootdx) 连通性校验通过（当前使用网络镜像模式）",
+                    "stock_code": stock_code,
+                    "tdxdir_used": "",
+                    "autodetected": autodetected,
+                    "candidates": candidates,
+                    "detail": str(detail or "ok"),
+                    "provider_mode": mode_info.get("provider_mode", "network_mirror"),
+                    "cache_dir": mode_info.get("cache_dir", ""),
+                    "has_vipdoc": bool(mode_info.get("has_vipdoc", False)),
+                }
             return {
                 "status": "error",
                 "ok": False,
-                "msg": "未找到可用通达信数据目录（需包含 vipdoc）",
+                "msg": str(detail or provider.last_error or "未找到可用通达信数据目录（需包含 vipdoc），且网络镜像模式不可用"),
                 "stock_code": stock_code,
                 "tdxdir_used": "",
                 "candidates": candidates,
+                "provider_mode": mode_info.get("provider_mode", "network_mirror"),
+                "cache_dir": mode_info.get("cache_dir", ""),
+                "has_vipdoc": bool(mode_info.get("has_vipdoc", False)),
             }
 
         provider = TdxProvider(tdxdir=tdxdir)
         ok, detail = provider.check_connectivity(stock_code)
+        mode_info = provider.describe_mode() if hasattr(provider, "describe_mode") else {}
         if ok:
             return {
                 "status": "success",
@@ -5135,6 +5650,9 @@ async def api_test_tdx_connectivity(req: TdxConnectivityTestRequest):
                 "autodetected": autodetected,
                 "candidates": candidates,
                 "detail": str(detail or "ok"),
+                "provider_mode": mode_info.get("provider_mode", "local_vipdoc"),
+                "cache_dir": mode_info.get("cache_dir", ""),
+                "has_vipdoc": bool(mode_info.get("has_vipdoc", True)),
             }
         return {
             "status": "error",
@@ -5144,6 +5662,9 @@ async def api_test_tdx_connectivity(req: TdxConnectivityTestRequest):
             "tdxdir_used": tdxdir,
             "autodetected": autodetected,
             "candidates": candidates,
+            "provider_mode": mode_info.get("provider_mode", "local_vipdoc"),
+            "cache_dir": mode_info.get("cache_dir", ""),
+            "has_vipdoc": bool(mode_info.get("has_vipdoc", True)),
         }
     except Exception as e:
         logger.error(f"/api/config/test_tdx_connectivity failed: {e}", exc_info=True)
@@ -5247,7 +5768,10 @@ async def api_latest_report():
             "summary": summary,
             "ranking": ranking if isinstance(ranking, list) else [],
             "strategy_reports": reports,
-            "fundamental_profile": first.get("fundamental_profile") if isinstance(first, dict) and isinstance(first.get("fundamental_profile"), dict) else {}
+            "fundamental_profile": first.get("fundamental_profile") if isinstance(first, dict) and isinstance(first.get("fundamental_profile"), dict) else {},
+            "consistency_summary": _build_report_consistency_summary(first if isinstance(first, dict) else {}),
+            **_build_ai_review_payload(first if isinstance(first, dict) else {}, first.get("report_id") if isinstance(first, dict) else ""),
+            **_build_buffett_review_payload(first if isinstance(first, dict) else {}, first.get("report_id") if isinstance(first, dict) else ""),
         }
         payload = _sanitize_non_finite(payload)
         safe_payload = _safe_json_obj(payload)
@@ -5318,16 +5842,9 @@ async def api_report_detail(report_id: str):
                     "ranking": ranking,
                     "strategy_reports": reports,
                     "fundamental_profile": r.get("fundamental_profile") if isinstance(r.get("fundamental_profile"), dict) else {},
-                    "ai_review_text": (
-                        (str(r.get("ai_review_text", "") or "") if int(r.get("ai_review_version", 0) or 0) == AI_REVIEW_SCHEMA_VERSION else "")
-                        or str(report_ai_review_cache.get(str(report_id), "") or "")
-                    ),
-                    "ai_review_version": int(r.get("ai_review_version", 0) or 0),
-                    "buffett_review_text": (
-                        (str(r.get("buffett_review_text", "") or "") if int(r.get("buffett_review_version", 0) or 0) == BUFFETT_REVIEW_SCHEMA_VERSION else "")
-                        or str(report_buffett_review_cache.get(str(report_id), "") or "")
-                    ),
-                    "buffett_review_version": int(r.get("buffett_review_version", 0) or 0)
+                    "consistency_summary": _build_report_consistency_summary(r),
+                    **_build_ai_review_payload(r, report_id),
+                    **_build_buffett_review_payload(r, report_id),
                 }
                 payload = _sanitize_non_finite(payload)
                 safe_payload = _safe_json_obj(payload)
@@ -5347,13 +5864,374 @@ async def api_report_detail(report_id: str):
         return {"summary": None, "ranking": [], "strategy_reports": []}
 
 
+@app.get("/api/consistency/snapshots")
+async def api_consistency_snapshots(
+    market: str = "",
+    code: str = "",
+    strategy_id: str = "",
+    strategy_ids: Optional[List[str]] = None,
+    timeframe: str = "",
+    timeframes: Optional[List[str]] = None,
+    start_date: str = "",
+    end_date: str = "",
+    page: int = 1,
+    page_size: int = 20,
+):
+    try:
+        payload = consistency_snapshot_store.list_snapshots(
+            market=market,
+            code=code,
+            strategy_id=strategy_id,
+            strategy_ids=strategy_ids,
+            timeframe=timeframe,
+            timeframes=timeframes,
+            start_date=start_date,
+            end_date=end_date,
+            page=page,
+            page_size=page_size,
+        )
+        return {"status": "success", **payload}
+    except Exception as e:
+        logger.error("/api/consistency/snapshots failed: %s", e, exc_info=True)
+        return {"status": "error", "msg": str(e), "items": [], "total": 0, "page": page, "page_size": page_size}
+
+
+@app.get("/api/consistency/snapshots/{snapshot_id}")
+async def api_consistency_snapshot_detail(snapshot_id: str, include_rows: bool = True):
+    try:
+        payload = consistency_snapshot_store.get_snapshot(snapshot_id, include_rows=bool(include_rows))
+        if not isinstance(payload, dict) or not payload:
+            raise HTTPException(status_code=404, detail="snapshot not found")
+        return {"status": "success", **payload}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("/api/consistency/snapshots/%s failed: %s", snapshot_id, e, exc_info=True)
+        return {"status": "error", "msg": str(e)}
+
+
+@app.get("/api/consistency/replay_runs")
+async def api_consistency_replay_runs(
+    market: str = "",
+    code: str = "",
+    start_date: str = "",
+    end_date: str = "",
+    page: int = 1,
+    page_size: int = 20,
+):
+    try:
+        payload = consistency_replay_store.list_replay_runs(
+            market=market,
+            code=code,
+            start_date=start_date,
+            end_date=end_date,
+            page=page,
+            page_size=page_size,
+        )
+        return {"status": "success", **payload}
+    except Exception as e:
+        logger.error("/api/consistency/replay_runs failed: %s", e, exc_info=True)
+        return {"status": "error", "msg": str(e), "items": [], "total": 0, "page": page, "page_size": page_size}
+
+
+@app.get("/api/consistency/replay_runs/{run_id}")
+async def api_consistency_replay_run_detail(run_id: str):
+    try:
+        payload = consistency_replay_store.get_replay_run(run_id)
+        if not isinstance(payload, dict) or not payload:
+            raise HTTPException(status_code=404, detail="replay run not found")
+        return {"status": "success", **payload}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("/api/consistency/replay_runs/%s failed: %s", run_id, e, exc_info=True)
+        return {"status": "error", "msg": str(e)}
+
+
+@app.post("/api/consistency/replay_runs")
+async def api_consistency_replay_run(req: ConsistencyReplayRequest):
+    try:
+        market = str(req.market or "ashare").strip().lower() or "ashare"
+        code = str(req.code or "").strip().upper()
+        start_date = str(req.start_date or "").strip()
+        end_date = str(req.end_date or "").strip()
+        if not code or not start_date or not end_date:
+            return {"status": "error", "msg": "code/start_date/end_date are required"}
+        replay_request = consistency_replay_builder.build_replay_request_from_filters(
+            market=market,
+            code=code,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        snapshot_ids = replay_request.get("snapshot_ids", []) if isinstance(replay_request, dict) else []
+        if not snapshot_ids:
+            return {"status": "error", "msg": "指定区间无可用实盘快照"}
+        report_id = start_new_backtest_report(
+            code,
+            "all",
+            request_payload={
+                "mode": "consistency_replay",
+                "market": market,
+                "code": code,
+                "start_date": start_date,
+                "end_date": end_date,
+                "snapshot_ids": snapshot_ids,
+                "segment_count": int(replay_request.get("segment_count", 0) or 0),
+            },
+        )
+        replay_manifest = consistency_replay_store.save_replay_run(
+            market=market,
+            code=code,
+            start_date=start_date,
+            end_date=end_date,
+            snapshot_ids=snapshot_ids,
+            status="running",
+        )
+        try:
+            await run_backtest_task(
+                stock_code=code,
+                strategy_id="all",
+                strategy_mode=None,
+                start=start_date,
+                end=end_date,
+                capital=req.capital,
+                strategy_ids=replay_request.get("strategy_ids") or None,
+                combination_config=None,
+                report_id=report_id,
+                realtime_push=bool(req.realtime_push),
+                provider_override=replay_request.get("provider"),
+                provider_source_override="consistency_snapshot",
+            )
+            detail = consistency_replay_store.get_replay_run(replay_manifest.get("replay_run_id", ""))
+            current_report = current_backtest_report if isinstance(current_backtest_report, dict) else {}
+            backtest_result = _build_replay_backtest_result(current_report)
+            consistency_replay_store.update_replay_run(
+                replay_manifest.get("replay_run_id", ""),
+                status=str(current_report.get("status", "success") or "success"),
+                error_msg=str(current_report.get("error_msg", "") or ""),
+                backtest_result=backtest_result,
+            )
+            snapshot_detail = _build_consistency_snapshot_detail(replay_request)
+            report_payload = {}
+            if isinstance(snapshot_detail, dict) and snapshot_detail:
+                report_payload = consistency_report_builder.build_report(
+                    market=market,
+                    code=code,
+                    snapshot_id=str(snapshot_ids[0] if snapshot_ids else ""),
+                    replay_run_id=str(replay_manifest.get("replay_run_id", "") or ""),
+                    snapshot_detail=snapshot_detail,
+                    replay_result=backtest_result,
+                )
+                report_payload = consistency_report_store.save_report(report_payload)
+            return {
+                "status": "success",
+                "replay_run_id": replay_manifest.get("replay_run_id"),
+                "report_id": report_id,
+                "consistency_report_id": report_payload.get("report_id") if isinstance(report_payload, dict) else None,
+                "snapshot_ids": snapshot_ids,
+                "segment_count": replay_request.get("segment_count", 0),
+            }
+        except Exception as e:
+            consistency_replay_store.update_replay_run(replay_manifest.get("replay_run_id", ""), status="failed", error_msg=str(e))
+            raise
+    except Exception as e:
+        logger.error("/api/consistency/replay_runs POST failed: %s", e, exc_info=True)
+        return {"status": "error", "msg": str(e)}
+
+
+@app.post("/api/consistency/compare")
+async def api_consistency_compare(req: ConsistencyCompareRequest):
+    try:
+        market = str(req.market or "ashare").strip().lower() or "ashare"
+        code = str(req.code or "").strip().upper()
+        start_date = str(req.start_date or "").strip()
+        end_date = str(req.end_date or "").strip()
+        strategy_ids = _normalize_text_list(req.strategy_ids)
+        timeframes = _normalize_text_list(req.timeframes)
+        snapshot_selection_mode = str(req.snapshot_selection_mode or "auto").strip().lower() or "auto"
+        backtest_source_type = str(req.backtest_source_type or "").strip().lower()
+        selected_report_id = str(req.selected_report_id or "").strip()
+        note_text = str(req.note or "").strip()
+        if not code or not start_date or not end_date:
+            return {"status": "error", "msg": "code/start_date/end_date are required"}
+        if backtest_source_type not in {"existing_report", "new_backtest"}:
+            return {"status": "error", "msg": "backtest_source_type must be existing_report or new_backtest"}
+        if snapshot_selection_mode == "manual":
+            selected_snapshot_ids = _normalize_text_list(req.selected_snapshot_ids)
+            if not selected_snapshot_ids:
+                return {"status": "error", "msg": "请先选择参与对比的实盘记录"}
+            replay_request = consistency_replay_builder.build_replay_request_from_snapshot_ids(
+                market=market,
+                code=code,
+                start_date=start_date,
+                end_date=end_date,
+                snapshot_ids=selected_snapshot_ids,
+                strategy_ids=strategy_ids,
+                timeframes=timeframes,
+            )
+        else:
+            replay_request = consistency_replay_builder.build_replay_request_from_filters(
+                market=market,
+                code=code,
+                start_date=start_date,
+                end_date=end_date,
+                strategy_ids=strategy_ids,
+                timeframes=timeframes,
+            )
+        snapshot_ids = replay_request.get("snapshot_ids", []) if isinstance(replay_request, dict) else []
+        snapshot_detail = _build_consistency_snapshot_detail(replay_request)
+        if not snapshot_ids or not snapshot_detail:
+            return {"status": "error", "msg": "指定条件下无可用实盘快照"}
+        scope_error = _validate_compare_strategy_scope(strategy_ids, (snapshot_detail.get("meta", {}) or {}).get("strategy_ids"))
+        if scope_error:
+            return {"status": "error", "msg": scope_error}
+        replay_run_id = ""
+        report_id = ""
+        if backtest_source_type == "existing_report":
+            if not selected_report_id:
+                return {"status": "error", "msg": "请先选择已有回测任务"}
+            backtest_result = consistency_backtest_report_adapter.adapt_report(selected_report_id, strategy_ids=strategy_ids)
+            if not backtest_result:
+                return {"status": "error", "msg": "所选回测任务不存在，或与当前策略筛选不匹配"}
+            replay_manifest = consistency_replay_store.save_replay_run(
+                market=market,
+                code=code,
+                start_date=start_date,
+                end_date=end_date,
+                snapshot_ids=snapshot_ids,
+                backtest_result=backtest_result,
+                status=str(backtest_result.get("status", "success") or "success"),
+            )
+            replay_run_id = str(replay_manifest.get("replay_run_id", "") or "")
+            report_id = str(backtest_result.get("report_id", "") or selected_report_id)
+        else:
+            nb = req.new_backtest_request or ConsistencyNewBacktestRequest()
+            new_strategy_ids = _normalize_text_list(nb.strategy_ids) or strategy_ids or _normalize_text_list(replay_request.get("strategy_ids"))
+            if strategy_ids:
+                missing = [sid for sid in strategy_ids if sid not in new_strategy_ids]
+                if missing:
+                    new_strategy_ids.extend(missing)
+            scope_error = _validate_compare_strategy_scope(new_strategy_ids, (snapshot_detail.get("meta", {}) or {}).get("strategy_ids"))
+            if scope_error:
+                return {"status": "error", "msg": scope_error}
+            report_id = start_new_backtest_report(
+                code,
+                "all",
+                request_payload={
+                    "mode": "consistency_compare",
+                    "market": market,
+                    "code": code,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "snapshot_ids": snapshot_ids,
+                    "segment_count": int(replay_request.get("segment_count", 0) or 0),
+                    "backtest_source_type": backtest_source_type,
+                    "selected_strategy_ids": new_strategy_ids,
+                },
+            )
+            replay_manifest = consistency_replay_store.save_replay_run(
+                market=market,
+                code=code,
+                start_date=start_date,
+                end_date=end_date,
+                snapshot_ids=snapshot_ids,
+                status="running",
+            )
+            replay_run_id = str(replay_manifest.get("replay_run_id", "") or "")
+            try:
+                await run_backtest_task(
+                    stock_code=code,
+                    strategy_id="all",
+                    strategy_mode=nb.strategy_mode,
+                    start=start_date,
+                    end=end_date,
+                    capital=nb.capital,
+                    strategy_ids=new_strategy_ids or None,
+                    combination_config=nb.combination_config,
+                    report_id=report_id,
+                    realtime_push=bool(nb.realtime_push),
+                    provider_override=replay_request.get("provider"),
+                    provider_source_override="consistency_snapshot",
+                )
+                current_report = current_backtest_report if isinstance(current_backtest_report, dict) else {}
+                backtest_result = _build_replay_backtest_result(current_report)
+                consistency_replay_store.update_replay_run(
+                    replay_run_id,
+                    status=str(current_report.get("status", "success") or "success"),
+                    error_msg=str(current_report.get("error_msg", "") or ""),
+                    backtest_result=backtest_result,
+                )
+            except Exception as e:
+                consistency_replay_store.update_replay_run(replay_run_id, status="failed", error_msg=str(e))
+                raise
+        comparison_scope_summary = _sanitize_compare_scope_summary(
+            code=code,
+            start_date=start_date,
+            end_date=end_date,
+            strategy_ids=strategy_ids or replay_request.get("strategy_ids"),
+            timeframes=timeframes,
+            snapshot_ids=snapshot_ids,
+        )
+        report_payload = _build_consistency_report_payload(
+            market=market,
+            code=code,
+            replay_run_id=replay_run_id,
+            snapshot_ids=snapshot_ids,
+            snapshot_detail=snapshot_detail,
+            replay_result=backtest_result,
+            backtest_source_type=backtest_source_type,
+            selected_report_id=report_id if backtest_source_type == "existing_report" else selected_report_id,
+            linked_report_id=report_id,
+            selected_strategy_ids=strategy_ids or replay_request.get("strategy_ids"),
+            comparison_scope_summary=comparison_scope_summary,
+            note=note_text,
+        )
+        report_payload = consistency_report_store.save_report(report_payload)
+        return {
+            "status": "success",
+            "replay_run_id": replay_run_id,
+            "report_id": report_id,
+            "consistency_report_id": report_payload.get("report_id"),
+            "snapshot_ids": snapshot_ids,
+            "segment_count": replay_request.get("segment_count", 0),
+            "comparison_scope_summary": comparison_scope_summary,
+        }
+    except Exception as e:
+        logger.error("/api/consistency/compare POST failed: %s", e, exc_info=True)
+        return {"status": "error", "msg": str(e)}
+
+
+@app.get("/api/consistency/reports")
+async def api_consistency_reports(market: str = "", code: str = "", page: int = 1, page_size: int = 20):
+    try:
+        payload = consistency_report_store.list_reports(market=market, code=code, page=page, page_size=page_size)
+        return {"status": "success", **payload}
+    except Exception as e:
+        logger.error("/api/consistency/reports failed: %s", e, exc_info=True)
+        return {"status": "error", "msg": str(e), "items": [], "total": 0, "page": page, "page_size": page_size}
+
+
+@app.get("/api/consistency/reports/{report_id}")
+async def api_consistency_report_detail(report_id: str):
+    try:
+        payload = consistency_report_store.get_report(report_id)
+        if not isinstance(payload, dict) or not payload:
+            raise HTTPException(status_code=404, detail="consistency report not found")
+        return {"status": "success", **payload}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("/api/consistency/reports/%s failed: %s", report_id, e, exc_info=True)
+        return {"status": "error", "msg": str(e)}
+
+
 def _build_ai_report_review(report_item):
     cfg = ConfigLoader.reload()
     api_key = str(cfg.get("data_provider.llm_api_key", "") or "").strip()
     base_url = str(cfg.get("data_provider.llm_api_url", "") or "").strip()
     model_name = str(cfg.get("data_provider.llm_model", "") or "gpt-4o-mini").strip()
     if not api_key or not base_url:
-        return ""
+        return {"markdown": "", "summary": {}}
     summary = report_item.get("summary") if isinstance(report_item.get("summary"), dict) else {}
     strategy_reports = report_item.get("strategy_reports") if isinstance(report_item.get("strategy_reports"), dict) else {}
     compact_reports = []
@@ -5408,7 +6286,20 @@ def _build_ai_report_review(report_item):
             url = f"{url}/v1/chat/completions"
     system_prompt = "你是A股量化复盘分析师，请根据回测摘要与交易明细给出结构化复盘，必须具体到交易节点与参数值。"
     user_prompt = (
-        "请输出简洁Markdown，必须严格包含六段：\n"
+        "请先输出一个JSON对象，再输出一行 --- 分隔线，最后输出简洁Markdown。\n"
+        "JSON结构固定：\n"
+        "{\n"
+        "  \"title\": \"一句话结论\",\n"
+        "  \"verdict\": \"positive|neutral|negative\",\n"
+        "  \"score\": 0-100,\n"
+        "  \"highlights\": [\"关键问题1\", \"关键问题2\"],\n"
+        "  \"risks\": [\"风险1\", \"风险2\"],\n"
+        "  \"buy_points\": [{\"dt\": \"时间\", \"reason\": \"原因\", \"signal_logic\": \"逻辑\"}],\n"
+        "  \"sell_points\": [{\"dt\": \"时间\", \"reason\": \"原因\", \"signal_logic\": \"逻辑\"}],\n"
+        "  \"parameter_suggestions\": [{\"name\": \"参数名\", \"suggested\": \"建议值\", \"why\": \"原因\"}],\n"
+        "  \"next_experiments\": [{\"label\": \"A\", \"params\": {\"参数\": \"值\"}, \"expectation\": \"预期\"}]\n"
+        "}\n"
+        "Markdown必须严格包含六段：\n"
         "1) 核心结论\n"
         "2) 关键问题\n"
         "3) 基于交易明细的买入节点分析（逐条说明买入核心依据、信号逻辑、触发原因）\n"
@@ -5421,7 +6312,7 @@ def _build_ai_report_review(report_item):
     payload = {
         "model": model_name,
         "temperature": 0.2,
-        "max_tokens": 1000,
+        "max_tokens": 1400,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
@@ -5437,10 +6328,17 @@ def _build_ai_report_review(report_item):
         with urllib.request.urlopen(req, timeout=45) as resp:
             raw = resp.read().decode("utf-8")
         obj = json.loads(raw)
-        return str(obj.get("choices", [{}])[0].get("message", {}).get("content", "")).strip()
+        content = str(obj.get("choices", [{}])[0].get("message", {}).get("content", "")).strip()
+        parsed, markdown = _split_llm_json_and_markdown(content)
+        normalized = _normalize_ai_review_summary({**parsed, "source": "llm_json"} if isinstance(parsed, dict) else {})
+        if not markdown:
+            markdown = content
+        if not normalized.get("title") and markdown:
+            normalized = _parse_ai_review_summary_from_markdown(markdown)
+        return {"markdown": str(markdown or "").strip(), "summary": normalized if isinstance(normalized, dict) else {}}
     except Exception as e:
         logger.error(f"ai_review llm call failed url={url} model={model_name} err={e}", exc_info=True)
-        return ""
+        return {"markdown": "", "summary": {}}
 
 
 def _build_ai_report_review_buffett(report_item):
@@ -5449,7 +6347,7 @@ def _build_ai_report_review_buffett(report_item):
     base_url = str(cfg.get("data_provider.llm_api_url", "") or "").strip()
     model_name = str(cfg.get("data_provider.llm_model", "") or "gpt-4o-mini").strip()
     if not api_key or not base_url:
-        return ""
+        return {"markdown": "", "summary": {}}
     summary = report_item.get("summary") if isinstance(report_item.get("summary"), dict) else {}
     strategy_reports = report_item.get("strategy_reports") if isinstance(report_item.get("strategy_reports"), dict) else {}
     compact_reports = []
@@ -5504,7 +6402,21 @@ def _build_ai_report_review_buffett(report_item):
             url = f"{url}/v1/chat/completions"
     system_prompt = "你是巴菲特风格的A股回测复盘顾问。仅基于给定回测报告做投资风格点评，禁止给出自动下单或实盘执行指令。"
     user_prompt = (
-        "请输出简洁Markdown，必须严格包含以下九段：\n"
+        "请先输出一个JSON对象，再输出一行 --- 分隔线，最后输出简洁Markdown。\n"
+        "JSON结构固定：\n"
+        "{\n"
+        "  \"title\": \"一句话结论\",\n"
+        "  \"verdict\": \"BUY|WATCH|HOLD|AVOID\",\n"
+        "  \"circle_of_competence\": \"IN|BOUNDARY|OUT|N/A\",\n"
+        "  \"key_assumptions\": [\"假设1\"],\n"
+        "  \"quality_assessment\": [\"评估1\"],\n"
+        "  \"margin_of_safety\": [\"评估1\"],\n"
+        "  \"sell_checklist\": [{\"key\": \"drawdown_break\", \"status\": \"pass|warn|fail|na\", \"note\": \"说明\"}],\n"
+        "  \"top_risks\": [\"风险1\"],\n"
+        "  \"monitoring_metrics\": [\"指标1\"],\n"
+        "  \"final_note\": \"仅分析，不执行交易\"\n"
+        "}\n"
+        "Markdown必须严格包含以下九段：\n"
         "1) 结论（BUY/WATCH/HOLD/AVOID + 一句话理由）\n"
         "2) 能力圈判断（IN/BOUNDARY/OUT）\n"
         "3) 关键假设（3-5条）\n"
@@ -5522,7 +6434,7 @@ def _build_ai_report_review_buffett(report_item):
     payload = {
         "model": model_name,
         "temperature": 0.2,
-        "max_tokens": 1200,
+        "max_tokens": 1600,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
@@ -5538,10 +6450,17 @@ def _build_ai_report_review_buffett(report_item):
         with urllib.request.urlopen(req, timeout=45) as resp:
             raw = resp.read().decode("utf-8")
         obj = json.loads(raw)
-        return str(obj.get("choices", [{}])[0].get("message", {}).get("content", "")).strip()
+        content = str(obj.get("choices", [{}])[0].get("message", {}).get("content", "")).strip()
+        parsed, markdown = _split_llm_json_and_markdown(content)
+        normalized = _normalize_buffett_review_summary({**parsed, "source": "llm_json"} if isinstance(parsed, dict) else {})
+        if not markdown:
+            markdown = content
+        if not normalized.get("title") and markdown:
+            normalized = _parse_buffett_review_summary_from_markdown(markdown)
+        return {"markdown": str(markdown or "").strip(), "summary": normalized if isinstance(normalized, dict) else {}}
     except Exception as e:
         logger.error(f"buffett_ai_review llm call failed url={url} model={model_name} err={e}", exc_info=True)
-        return ""
+        return {"markdown": "", "summary": {}}
 
 
 @app.post("/api/report/{report_id}/ai_review")
@@ -5557,14 +6476,17 @@ async def api_report_ai_review(report_id: str, force: bool = False):
             if not force:
                 cached = str(report_ai_review_cache.get(rid, "") or "").strip()
                 cached_ver = int(report_ai_review_cache.get(f"{rid}__v", 0) or 0)
+                cached_summary = report_ai_review_cache.get(f"{rid}__summary")
                 if cached and cached_ver == AI_REVIEW_SCHEMA_VERSION:
-                    return {"status": "success", "report_id": report_id, "analysis": cached, "cached": True}
+                    return {"status": "success", "report_id": report_id, "analysis": cached, "analysis_summary": cached_summary if isinstance(cached_summary, dict) else {}, "cached": True}
                 cached = str(r.get("ai_review_text", "") or "").strip()
                 persisted_ver = int(r.get("ai_review_version", 0) or 0)
                 if cached and persisted_ver == AI_REVIEW_SCHEMA_VERSION:
                     report_ai_review_cache[rid] = cached
                     report_ai_review_cache[f"{rid}__v"] = AI_REVIEW_SCHEMA_VERSION
-                    return {"status": "success", "report_id": report_id, "analysis": cached, "cached": True}
+                    report_ai_review_cache[f"{rid}__summary"] = r.get("ai_review_summary") if isinstance(r.get("ai_review_summary"), dict) else {}
+                    report_ai_review_cache[f"{rid}__summary_v"] = int(r.get("ai_review_summary_version", 0) or 0)
+                    return {"status": "success", "report_id": report_id, "analysis": cached, "analysis_summary": report_ai_review_cache.get(f"{rid}__summary") if isinstance(report_ai_review_cache.get(f"{rid}__summary"), dict) else {}, "cached": True}
             cfg = ConfigLoader.reload()
             missing = []
             if not str(cfg.get("data_provider.llm_api_url", "") or "").strip():
@@ -5573,15 +6495,21 @@ async def api_report_ai_review(report_id: str, force: bool = False):
                 missing.append("llm_api_key")
             if missing:
                 return {"status": "error", "msg": f"AI复盘未配置：请先在配置中填写 {', '.join(missing)}"}
-            analysis = _build_ai_report_review(r)
+            bundle = _build_ai_report_review(r)
+            analysis = str((bundle or {}).get("markdown", "") or "").strip()
+            analysis_summary = (bundle or {}).get("summary") if isinstance((bundle or {}).get("summary"), dict) else {}
             if not analysis:
                 return {"status": "error", "msg": "AI复盘生成失败：模型调用超时、鉴权失败或返回空内容，请检查模型配置与服务日志"}
             report_history[idx]["ai_review_text"] = analysis
             report_history[idx]["ai_review_version"] = AI_REVIEW_SCHEMA_VERSION
+            report_history[idx]["ai_review_summary"] = analysis_summary
+            report_history[idx]["ai_review_summary_version"] = AI_REVIEW_SUMMARY_SCHEMA_VERSION if analysis_summary else 0
             report_ai_review_cache[rid] = analysis
             report_ai_review_cache[f"{rid}__v"] = AI_REVIEW_SCHEMA_VERSION
+            report_ai_review_cache[f"{rid}__summary"] = analysis_summary
+            report_ai_review_cache[f"{rid}__summary_v"] = AI_REVIEW_SUMMARY_SCHEMA_VERSION if analysis_summary else 0
             persist_report_history()
-            return {"status": "success", "report_id": report_id, "analysis": analysis, "cached": False}
+            return {"status": "success", "report_id": report_id, "analysis": analysis, "analysis_summary": analysis_summary, "cached": False}
         return {"status": "error", "msg": "report not found"}
     except Exception as e:
         logger.error(f"/api/report/{report_id}/ai_review failed: {e}", exc_info=True)
@@ -5601,14 +6529,17 @@ async def api_report_ai_review_buffett(report_id: str, force: bool = False):
             if not force:
                 cached = str(report_buffett_review_cache.get(rid, "") or "").strip()
                 cached_ver = int(report_buffett_review_cache.get(f"{rid}__v", 0) or 0)
+                cached_summary = report_buffett_review_cache.get(f"{rid}__summary")
                 if cached and cached_ver == BUFFETT_REVIEW_SCHEMA_VERSION:
-                    return {"status": "success", "report_id": report_id, "analysis": cached, "cached": True}
+                    return {"status": "success", "report_id": report_id, "analysis": cached, "analysis_summary": cached_summary if isinstance(cached_summary, dict) else {}, "cached": True}
                 cached = str(r.get("buffett_review_text", "") or "").strip()
                 persisted_ver = int(r.get("buffett_review_version", 0) or 0)
                 if cached and persisted_ver == BUFFETT_REVIEW_SCHEMA_VERSION:
                     report_buffett_review_cache[rid] = cached
                     report_buffett_review_cache[f"{rid}__v"] = BUFFETT_REVIEW_SCHEMA_VERSION
-                    return {"status": "success", "report_id": report_id, "analysis": cached, "cached": True}
+                    report_buffett_review_cache[f"{rid}__summary"] = r.get("buffett_review_summary") if isinstance(r.get("buffett_review_summary"), dict) else {}
+                    report_buffett_review_cache[f"{rid}__summary_v"] = int(r.get("buffett_review_summary_version", 0) or 0)
+                    return {"status": "success", "report_id": report_id, "analysis": cached, "analysis_summary": report_buffett_review_cache.get(f"{rid}__summary") if isinstance(report_buffett_review_cache.get(f"{rid}__summary"), dict) else {}, "cached": True}
             cfg = ConfigLoader.reload()
             missing = []
             if not str(cfg.get("data_provider.llm_api_url", "") or "").strip():
@@ -5617,15 +6548,21 @@ async def api_report_ai_review_buffett(report_id: str, force: bool = False):
                 missing.append("llm_api_key")
             if missing:
                 return {"status": "error", "msg": f"Buffett复盘未配置：请先在配置中填写 {', '.join(missing)}"}
-            analysis = _build_ai_report_review_buffett(r)
+            bundle = _build_ai_report_review_buffett(r)
+            analysis = str((bundle or {}).get("markdown", "") or "").strip()
+            analysis_summary = (bundle or {}).get("summary") if isinstance((bundle or {}).get("summary"), dict) else {}
             if not analysis:
                 return {"status": "error", "msg": "Buffett复盘生成失败：模型调用超时、鉴权失败或返回空内容，请检查模型配置与服务日志"}
             report_history[idx]["buffett_review_text"] = analysis
             report_history[idx]["buffett_review_version"] = BUFFETT_REVIEW_SCHEMA_VERSION
+            report_history[idx]["buffett_review_summary"] = analysis_summary
+            report_history[idx]["buffett_review_summary_version"] = BUFFETT_REVIEW_SUMMARY_SCHEMA_VERSION if analysis_summary else 0
             report_buffett_review_cache[rid] = analysis
             report_buffett_review_cache[f"{rid}__v"] = BUFFETT_REVIEW_SCHEMA_VERSION
+            report_buffett_review_cache[f"{rid}__summary"] = analysis_summary
+            report_buffett_review_cache[f"{rid}__summary_v"] = BUFFETT_REVIEW_SUMMARY_SCHEMA_VERSION if analysis_summary else 0
             persist_report_history()
-            return {"status": "success", "report_id": report_id, "analysis": analysis, "cached": False}
+            return {"status": "success", "report_id": report_id, "analysis": analysis, "analysis_summary": analysis_summary, "cached": False}
         return {"status": "error", "msg": "report not found"}
     except Exception as e:
         logger.error(f"/api/report/{report_id}/ai_review_buffett failed: {e}", exc_info=True)
@@ -5757,10 +6694,12 @@ async def api_report_delete(req: ReportDeleteRequest):
         report_history = [r for r in report_history if str(r.get("report_id")) != rid] if isinstance(report_history, list) else []
         deleted = len(report_history) != before
         if deleted:
-            report_ai_review_cache.pop(rid, None)
-            report_ai_review_cache.pop(f"{rid}__v", None)
+            report_ai_review_cache.pop(f"{rid}__summary", None)
+            report_ai_review_cache.pop(f"{rid}__summary_v", None)
             report_buffett_review_cache.pop(rid, None)
             report_buffett_review_cache.pop(f"{rid}__v", None)
+            report_buffett_review_cache.pop(f"{rid}__summary", None)
+            report_buffett_review_cache.pop(f"{rid}__summary_v", None)
             report_detail_cache.pop(rid, None)
             report_strategy_kline_cache = {k: v for k, v in report_strategy_kline_cache.items() if not str(k).startswith(f"{rid}|")}
             persist_report_history()
@@ -6386,7 +7325,7 @@ async def api_start_backtest(req: BacktestRequest):
 async def api_start_live(req: LiveRequest):
     """Start a live simulation task"""
     if not is_live_enabled():
-        return {"status": "error", "msg": "Live功能已禁用（需 system.enable_live=true 且 system.mode=live）"}
+        return {"status": "error", "msg": "Live功能已禁用（需 system.mode=live）"}
     global cabinet_task
     if cabinet_task and not cabinet_task.done():
         if current_backtest_report and str(current_backtest_report.get("status", "")).lower() == "running":
@@ -7441,7 +8380,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 elif cmd.get("type") == "start_simulation":
                     if not is_live_enabled():
-                        await manager.broadcast({"type": "system", "data": {"msg": "Live功能已禁用（需 system.enable_live=true 且 system.mode=live）"}})
+                        await manager.broadcast({"type": "system", "data": {"msg": "Live功能已禁用（需 system.mode=live）"}})
                         continue
                     if cabinet_task and not cabinet_task.done():
                         if current_backtest_report and str(current_backtest_report.get("status", "")).lower() == "running":
@@ -7662,6 +8601,8 @@ async def run_backtest_task(
     combination_config=None,
     report_id=None,
     realtime_push=True,
+    provider_override=None,
+    provider_source_override=None,
 ):
     """Wrapper to run backtest"""
     logger.info(
@@ -7677,15 +8618,16 @@ async def run_backtest_task(
         realtime_push,
     )
     emit_to_frontend = bool(realtime_push)
-    precheck_ok, precheck_source, precheck_reason = await _run_backtest_provider_precheck(
-        stock_code=stock_code,
-        start=start,
-        end=end,
-        broadcast_ws=emit_to_frontend,
-    )
-    if not precheck_ok:
-        fail_current_backtest_report(f"backtest precheck failed source={precheck_source} reason={precheck_reason}")
-        return
+    if provider_override is None:
+        precheck_ok, precheck_source, precheck_reason = await _run_backtest_provider_precheck(
+            stock_code=stock_code,
+            start=start,
+            end=end,
+            broadcast_ws=emit_to_frontend,
+        )
+        if not precheck_ok:
+            fail_current_backtest_report(f"backtest precheck failed source={precheck_source} reason={precheck_reason}")
+            return
     await _maybe_prefetch_fundamental_before_backtest(stock_code=stock_code, emit_to_frontend=emit_to_frontend)
     baseline_result = apply_backtest_baseline(
         stock_code=stock_code,
@@ -7706,7 +8648,7 @@ async def run_backtest_task(
         if emit_to_frontend:
             await manager.broadcast({"type": "system", "data": {"msg": msg}})
     initial_capital = float(capital) if capital is not None else float(cfg.get("system.initial_capital", 1000000.0) or 1000000.0)
-    
+
     task_report_id = str(report_id or "").strip()
     async def _emit_event_scoped(event_type, data, stock_code=None):
         await emit_event_to_ws(event_type, data, stock_code=stock_code, report_id=task_report_id, broadcast_ws=emit_to_frontend)
@@ -7718,8 +8660,10 @@ async def run_backtest_task(
         strategy_mode=strategy_mode,
         strategy_ids=strategy_ids,
         combination_config=combination_config,
+        provider_override=provider_override,
+        provider_source_override=provider_source_override,
     )
-    
+
     try:
         from datetime import datetime
         start_dt = None

@@ -138,9 +138,23 @@ flowchart LR
 
 ### 2. 安装依赖（下方有一键启动方式）
 
+推荐直接安装项目依赖：
+
 ```bash
 pip install -r requirements.txt
-pip install tushare akshare fastapi uvicorn
+```
+
+说明：
+
+- `requirements.txt` 已包含 `uvicorn[standard]`，会一并安装 WebSocket 运行依赖。
+- 如果你只安装基础版 `uvicorn`，启动 `server.py` 时可能出现：
+  - `No supported WebSocket library detected`
+- 若你是在指定 Python 环境中运行，请使用对应解释器安装，例如：
+
+```bash
+python -m pip install -r requirements.txt
+# 或
+H:\Python\python.exe -m pip install -r requirements.txt
 ```
 
 ### 3. 配置说明

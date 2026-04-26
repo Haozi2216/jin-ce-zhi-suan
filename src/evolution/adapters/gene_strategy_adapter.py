@@ -315,6 +315,7 @@ class {cname}(BaseImplementedStrategy):
         iteration: int,
         timeframes: Optional[List[str]] = None,
         family_adaptive_blend_ratio: Optional[float] = None,
+        analysis_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Build seed gene, evolve once, and render runnable strategy code."""
         seed_gene = self.build_seed_gene(
@@ -323,8 +324,9 @@ class {cname}(BaseImplementedStrategy):
             parent_name=parent_strategy_name,
             timeframes=timeframes,
         )
+        adjusted_seed_gene = self._apply_analysis_feedback(seed_gene, analysis_context)
         child = self.evolve_gene(
-            parent_gene=seed_gene,
+            parent_gene=adjusted_seed_gene,
             iteration=iteration,
             family_adaptive_blend_ratio=family_adaptive_blend_ratio,
         )
@@ -338,13 +340,30 @@ class {cname}(BaseImplementedStrategy):
             class_name=class_name,
         )
         return {
-            "seed_gene": seed_gene,
+            "seed_gene": adjusted_seed_gene,
             "child_gene": child,
             "strategy_code": code,
             "strategy_id": strategy_id,
             "strategy_name": strategy_name,
             "class_name": class_name,
         }
+
+    def _apply_analysis_feedback(self, seed_gene: StrategyGene, analysis_context: Optional[Dict[str, Any]] = None) -> StrategyGene:
+        analysis = analysis_context if isinstance(analysis_context, dict) else {}
+        tags = [str(x or "").strip() for x in (analysis.get("feedback_tags") or []) if str(x or "").strip()]
+        if not tags:
+            return seed_gene.normalized()
+        gene = seed_gene.normalized()
+        if "first_divergence_risk" in tags or "risk_rule_drift" in tags:
+            gene.risk.stop_loss_pct = min(0.08, round(gene.risk.stop_loss_pct * 0.9, 4))
+            gene.risk.take_profit_pct = max(gene.risk.stop_loss_pct + 0.01, round(gene.risk.take_profit_pct * 0.95, 4))
+        if "first_divergence_signal" in tags or "signal_count_drift" in tags:
+            gene.signal.rsi_buy = min(80.0, round(gene.signal.rsi_buy + 1.0, 2))
+            gene.signal.rsi_sell = max(20.0, round(gene.signal.rsi_sell - 1.0, 2))
+            gene.execution.min_history_bars = min(300, int(gene.execution.min_history_bars) + 5)
+        if "timing_drift" in tags or "slippage_drift" in tags:
+            gene.execution.trigger_timeframe = str(gene.execution.trigger_timeframe or "1min")
+        return gene.normalized()
 
     def _extract_seed_hint(self, seed_code: str) -> Dict[str, Any]:
         """Extract lightweight hints from seed code using regex-based heuristics."""

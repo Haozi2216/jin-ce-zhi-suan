@@ -39,6 +39,8 @@ class BacktestCabinet:
         strategy_mode=None,
         strategy_ids=None,
         combination_config=None,
+        provider_override=None,
+        provider_source_override=None,
     ):
         self.stock_code = stock_code
         self.strategy_id = strategy_id
@@ -47,6 +49,8 @@ class BacktestCabinet:
         self.strategy_mode = strategy_mode
         self.strategy_ids = strategy_ids
         self.combination_config = self._normalize_combination_config(combination_config)
+        self.provider_override = provider_override
+        self.provider_source_override = str(provider_source_override or "").strip()
         self.config = ConfigLoader.reload()
         self.baseline_meta = {
             "profile_name": str(self.config.get("global_backtest_baseline.last_applied_profile", "") or ""),
@@ -626,9 +630,9 @@ class BacktestCabinet:
             })
             await self._emit('backtest_flow', {'module': '工部', 'level': 'system', 'msg': '数据获取阶段：初始化数据源'})
             stage_started_at = perf_counter()
-            provider_source = self.config.get("data_provider.source", "default")
-            enable_fallback = bool(self.config.get("data_provider.enable_fallback", False))
-            provider = self._build_provider(provider_source)
+            provider_source = self.provider_source_override or self.config.get("data_provider.source", "default")
+            enable_fallback = bool(self.config.get("data_provider.enable_fallback", False)) and (self.provider_override is None)
+            provider = self.provider_override if self.provider_override is not None else self._build_provider(provider_source)
             await self._emit('backtest_progress', {
                 'progress': 4,
                 'phase': 'data_fetch',

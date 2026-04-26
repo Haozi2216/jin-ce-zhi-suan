@@ -26,6 +26,7 @@ TABLE_INTERVAL_MAP = {
     "dat_30mins": "30min",
     "dat_60mins": "60min",
     "dat_days": "D",
+    "dat_day": "D",
 }
 
 DEFAULT_SYNC_TABLES = [
@@ -47,6 +48,9 @@ class HistoryDiffSyncService:
         self._last_report: dict[str, Any] = {}
         self._last_record: dict[str, Any] = {}
         self._records_dir = os.path.join("reports", "history_sync")
+
+    def _is_day_table(self, table: str) -> bool:
+        return str(table or "").strip().lower() in {"dat_days", "dat_day"}
 
     def get_status(self) -> dict[str, Any]:
         return {
@@ -319,7 +323,7 @@ class HistoryDiffSyncService:
                         }
                     )
                     continue
-                key_col = "trade_time" if table != "dat_days" else "date"
+                key_col = "trade_time" if not self._is_day_table(table) else "date"
                 if write_mode == "api":
                     existing_keys = self._fetch_existing_keys(
                         session=session,
@@ -338,7 +342,7 @@ class HistoryDiffSyncService:
                         start_time=start_time,
                         end_time=end_time,
                     )
-                source_keys = source_df[key_col].map(lambda x: self._normalize_time_key(x, is_day=(table == "dat_days")))
+                source_keys = source_df[key_col].map(lambda x: self._normalize_time_key(x, is_day=self._is_day_table(table)))
                 missing_mask = ~source_keys.isin(existing_keys)
                 missing_df = source_df.loc[missing_mask].copy()
                 written_rows = 0
@@ -448,6 +452,17 @@ class HistoryDiffSyncService:
                     out.add(key)
         return out
 
+    def _resolve_table_time_range(self, table: str, start_time: datetime, end_time: datetime) -> tuple[datetime, datetime]:
+        if not self._is_day_table(table):
+            return start_time, end_time
+        start_day = pd.to_datetime(start_time, errors="coerce")
+        end_day = pd.to_datetime(end_time, errors="coerce")
+        if pd.isna(start_day) or pd.isna(end_day):
+            return start_time, end_time
+        start_dt = start_day.to_pydatetime().replace(hour=0, minute=0, second=0, microsecond=0)
+        end_dt = end_day.to_pydatetime().replace(hour=23, minute=59, second=59, microsecond=0)
+        return start_dt, end_dt
+
     def _fetch_existing_keys_from_db(
         self,
         provider: Any,
@@ -459,23 +474,24 @@ class HistoryDiffSyncService:
         if provider is None:
             return set()
         interval = TABLE_INTERVAL_MAP.get(table, "1min")
+        query_start, query_end = self._resolve_table_time_range(table, start_time, end_time)
         try:
             if hasattr(provider, "fetch_kline_data_strict"):
-                df = provider.fetch_kline_data_strict(code, start_time, end_time, interval=interval)
+                df = provider.fetch_kline_data_strict(code, query_start, query_end, interval=interval)
             else:
-                df = provider.fetch_kline_data(code, start_time, end_time, interval=interval)
+                df = provider.fetch_kline_data(code, query_start, query_end, interval=interval)
         except Exception as e:
             raise RuntimeError(f"query direct_db existing rows failed table={table} code={code}: {e}")
         provider_err = str(getattr(provider, "last_error", "") or "").strip()
         if provider_err:
             raise RuntimeError(f"query direct_db existing rows failed table={table} code={code}: {provider_err}")
-        return self._extract_time_keys_from_df(df, is_day=(table == "dat_days"))
+        return self._extract_time_keys_from_df(df, is_day=self._is_day_table(table))
 
     def _build_direct_db_upsert_df(self, table: str, df: pd.DataFrame) -> pd.DataFrame:
         if df is None or df.empty:
             return pd.DataFrame()
         out = df.copy()
-        if table == "dat_days":
+        if self._is_day_table(table):
             if "trade_time" not in out.columns and "date" in out.columns:
                 out["trade_time"] = pd.to_datetime(out["date"], errors="coerce")
         return out
@@ -483,11 +499,11 @@ class HistoryDiffSyncService:
     def _build_write_preview(self, table: str, df: pd.DataFrame) -> dict[str, Any]:
         if df is None or df.empty:
             return {"rows": 0}
-        key_col = "date" if table == "dat_days" else "trade_time"
+        key_col = "date" if self._is_day_table(table) else "trade_time"
         if key_col not in df.columns:
             return {"rows": int(len(df))}
         work = df.copy()
-        if table == "dat_days":
+        if self._is_day_table(table):
             keys = pd.to_datetime(work[key_col], errors="coerce")
             keys = keys.dropna().dt.strftime("%Y-%m-%d")
         else:
@@ -631,7 +647,7 @@ class HistoryDiffSyncService:
     def _sanitize_rows_for_post(self, table: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not rows:
             return []
-        is_day = table == "dat_days"
+        is_day = self._is_day_table(table)
         time_key = "date" if is_day else "trade_time"
         required = ["code", time_key, "open", "high", "low", "close", "vol", "amount"]
         sanitized: list[dict[str, Any]] = []
@@ -657,7 +673,7 @@ class HistoryDiffSyncService:
         return sanitized
 
     def _resolve_api_table_candidates(self, table: str) -> list[str]:
-        if table == "dat_days":
+        if self._is_day_table(table):
             return ["dat_day"]
         return [table]
 
@@ -728,7 +744,7 @@ class HistoryDiffSyncService:
         session_only: bool = True,
     ) -> dict[str, pd.DataFrame]:
         frames: dict[str, pd.DataFrame] = {}
-        minute_tables = [t for t in tables if t != "dat_days"]
+        minute_tables = [t for t in tables if not self._is_day_table(t)]
         source_by_interval: dict[str, pd.DataFrame] = {}
         self._check_stop_requested(context=f"build source start code {code}")
         if minute_tables:
@@ -762,15 +778,16 @@ class HistoryDiffSyncService:
                             source_by_interval[interval]["code"] = code
         for table in tables:
             self._check_stop_requested(context=f"build source table {table} code {code}")
-            if table == "dat_days":
-                day_df = provider.fetch_daily_data(code, start_time, end_time)
+            table_start, table_end = self._resolve_table_time_range(table, start_time, end_time)
+            if self._is_day_table(table):
+                day_df = provider.fetch_daily_data(code, table_start, table_end)
                 self._check_stop_requested(context=f"after daily fetch code {code}")
                 if day_df is None or day_df.empty:
                     frames[table] = pd.DataFrame()
                     continue
                 day_df["dt"] = pd.to_datetime(day_df["dt"], errors="coerce")
                 day_df = day_df.dropna(subset=["dt"])
-                day_df = day_df[(day_df["dt"] >= start_time) & (day_df["dt"] <= end_time)]
+                day_df = day_df[(day_df["dt"] >= table_start) & (day_df["dt"] <= table_end)]
                 if day_df.empty:
                     frames[table] = pd.DataFrame()
                     continue
@@ -825,7 +842,7 @@ class HistoryDiffSyncService:
             table_df["pre_close"] = table_df["pre_close"].fillna(table_df["close"])
             table_df["change"] = table_df["change"].fillna(0.0)
             table_df["pct_chg"] = table_df["pct_chg"].replace([float("inf"), float("-inf")], 0.0).fillna(0.0)
-            if table == "dat_days":
+            if self._is_day_table(table):
                 use_cols = [
                     "code",
                     "date",
@@ -888,7 +905,7 @@ class HistoryDiffSyncService:
         api_tables = self._resolve_api_table_candidates(table)
         for api_table in api_tables:
             path = f"{base_url}/tables/{api_table}/rows"
-            if table == "dat_days":
+            if self._is_day_table(table):
                 if api_table == "dat_days":
                     query_plans = [
                         (
@@ -958,7 +975,7 @@ class HistoryDiffSyncService:
                         break
                     for row in rows:
                         if isinstance(row, dict) and row.get(key_col) is not None:
-                            normalized_key = self._normalize_time_key(row.get(key_col), is_day=(table == "dat_days"))
+                            normalized_key = self._normalize_time_key(row.get(key_col), is_day=self._is_day_table(table))
                             if normalized_key:
                                 result.add(normalized_key)
                     if len(rows) < limit:
@@ -991,7 +1008,7 @@ class HistoryDiffSyncService:
             last_error = ""
             for api_table in api_tables:
                 path = f"{base_url}/tables/{api_table}/rows"
-                post_rows = self._build_daily_rows_for_api_table(api_table, batch) if table == "dat_days" else batch
+                post_rows = self._build_daily_rows_for_api_table(api_table, batch) if self._is_day_table(table) else batch
                 if not post_rows:
                     continue
                 payload = {"on_duplicate": on_duplicate, "rows": post_rows}
