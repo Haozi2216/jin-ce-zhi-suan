@@ -1264,7 +1264,7 @@ class LiveCabinet:
             await self._emit_event("live_kline_freshness", self.startup_kline_freshness)
         
         print(f"\n🚀 【三省六部】实时监控已启动")
-        print(f"👁️  监控标的: {self.stock_code}")
+        print(f"👁️  监控祖宗: {self.stock_code}")
         print(f"🛡️  运行策略: 激活 {len(self.active_strategy_ids)} / 总计 {len(self.strategies)} 套")
         if not warmup_success:
             reason = str(self.startup_kline_freshness.get("message", "启动校验失败") or "启动校验失败")
@@ -1290,7 +1290,7 @@ class LiveCabinet:
             st = self.personnel.get_strategy(sid)
             active_names.append(st.name if st else sid)
         await self._emit_event('system', {
-            'msg': f"当前实盘已启动：标的 {self.stock_code}，策略 {('、'.join(active_names) if active_names else '全部')}",
+            'msg': f"当前近似实时已启动：祖宗 {self.stock_code}，策略 {('、'.join(active_names) if active_names else '全部')}",
             'stock': self.stock_code,
             'strategy_ids': active_ids,
             'strategy_names': active_names
@@ -1574,7 +1574,7 @@ class LiveCabinet:
             strategy_name = self.personnel.get_strategy(strategy_id).name
             key = f"{strategy_id}-{strategy_name}"
             self._intraday_signal_counter[key] = int(self._intraday_signal_counter.get(key, 0) or 0) + 1
-            direction = "🟢 买入" if signal['direction'] == 'BUY' else "🔴 卖出"
+            direction = "🟢 硅基" if signal['direction'] == 'BUY' else "🔴 流码"
             
             # Emit Signal Event
             formatted_price = f"{signal['price']:.2f}"

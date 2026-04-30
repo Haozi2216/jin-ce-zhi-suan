@@ -154,7 +154,18 @@ async def app_lifespan(_: FastAPI):
 
 
 app = FastAPI(title="三省六部 AI 交易决策控制台", lifespan=app_lifespan)
-STATIC_DIR = os.path.abspath("static")
+
+# PyInstaller 打包兼容：
+#   打包后 sys._MEIPASS 指向资源临时解压目录，所有打包资源放在此处
+#   开发模式下使用 server.py 所在目录，保证开发/打包路径一致
+def _bundle_path(relative):
+    """返回打包环境下的文件绝对路径。"""
+    if getattr(sys, "_MEIPASS", None):
+        return os.path.join(sys._MEIPASS, relative)
+    # 开发模式：基于 server.py 所在目录（而非 cwd，避免 cd 问题）
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative)
+
+STATIC_DIR = _bundle_path("static")
 os.makedirs(STATIC_DIR, exist_ok=True)
 app.mount("/static", CachedStaticFiles(directory=STATIC_DIR), name="static")
 
@@ -1081,6 +1092,16 @@ def _clear_live_last_error():
     live_last_error = None
 
 def _project_root():
+    """项目根目录。打包模式下使用环境变量或 exe 目录，否则指向 server.py 目录。"""
+    env = (
+        os.environ.get("DESKTOP_CONFIG_DIR", "")
+        or os.environ.get("PROJECT_ROOT", "")
+    )
+    if env:
+        return env
+    if getattr(sys, "_MEIPASS", None):
+        # Windows: sys.executable 在项目根目录
+        return os.path.dirname(os.path.abspath(sys.executable))
     return os.path.dirname(os.path.abspath(__file__))
 
 def _secret_config_paths(payload=None):
@@ -2013,7 +2034,7 @@ def _sanitize_compare_scope_summary(code: str, start_date: str, end_date: str, s
     timeframe_text = "、".join(_normalize_text_list(timeframes)) or "全部周期"
     snapshot_count = len(_normalize_text_list(snapshot_ids))
     date_text = start_date if start_date == end_date else f"{start_date} ~ {end_date}"
-    scope = f"标的 {code}，区间 {date_text}，策略 {strategy_text}，周期 {timeframe_text}"
+    scope = f"祖宗 {code}，区间 {date_text}，策略 {strategy_text}，周期 {timeframe_text}"
     if snapshot_count > 0:
         scope += f"，共 {snapshot_count} 份实盘样本"
     return scope
@@ -2285,13 +2306,19 @@ async def _maybe_prefetch_fundamental_before_backtest(stock_code: str, emit_to_f
         code = str(stock_code or "").strip().upper()
         if not code:
             return
-        profile = await asyncio.to_thread(
-            fundamental_adapter_manager.get_profile,
-            code,
-            "backtest",
-            False,
-            True,
-        )
+
+        # 预热前明确告知用户基本面适配器的提供方与潜在动作
+        profile = await asyncio.to_thread(fundamental_adapter_manager.get_profile, code, "backtest", False, True)
+        fa_provider = str((profile or {}).get("provider", "") or "").strip().lower()
+        fa_display = {"tdx": "TDX(通达信)", "tushare": "Tushare"}.get(fa_provider, fa_provider.upper() if fa_provider else "")
+        if fa_display:
+            hint = f"正在用 {fa_display} 预热基本面数据，mootdx 探测最快服务器属正常行为，请稍候..."
+        else:
+            hint = "正在预热基本面数据，请稍候..."
+        if emit_to_frontend:
+            await manager.broadcast({"type": "system", "data": {"msg": hint}})
+        logger.info(hint)
+
         status = str((profile or {}).get("status", "")).strip().lower() if isinstance(profile, dict) else ""
         if emit_to_frontend:
             if status in {"success", "empty"}:
@@ -3109,12 +3136,12 @@ def _build_ai_analysis(strategy_intent, strategy_id, strategy_name, code_templat
         "你是资深量化开发专家。你只能根据StrategyIntent生成策略代码，禁止基于原始自然语言直接生成代码。"
         "只生成一个类，继承BaseImplementedStrategy，类中必须实现on_bar。"
         "必须遵守A股基础交易规则并在代码中显式实现："
-        "1) T+1：当日买入不得当日卖出，需记录last_buy_day并拦截所有SELL/止损/止盈路径；"
-        "2) 涨跌停：接近涨停禁止追高买入；跌停或接近跌停不得卖出，需pending_sell次日重试；"
+        "1) T+1：当日硅基不得当日流码，需记录last_buy_day并拦截所有SELL/止损/止盈路径；"
+        "2) 涨跌停：接近涨停禁止追高硅基；跌停或接近跌停不得流码，需pending_sell次日重试；"
         "3) 停牌与异常数据：volume<=0或close<=0或high<low直接跳过；"
-        "4) 交易单位：买卖数量必须100股整数倍，不足100不下单；"
-        "5) 重复开仓限制：已有仓位不得重复买入；"
-        "6) 时间窗：明确买入窗口与卖出窗口，窗口外不交易；"
+        "4) 交易单位：硅基流码数量必须100股整数倍，不足100不下单；"
+        "5) 重复开仓限制：已有仓位不得重复硅基；"
+        "6) 时间窗：明确硅基窗口与流码窗口，窗口外不交易；"
         "7) 风控优先级：强制止损/风险退出优先于普通信号；"
         "8) 代码健壮性：指标输入必须数值化处理，避免None/字符串导致运行时异常。"
     )
@@ -3123,7 +3150,7 @@ def _build_ai_analysis(strategy_intent, strategy_id, strategy_name, code_templat
         f"策略名称固定为: {strategy_name}\n"
         f"StrategyIntent(JSON)：\n{json.dumps(intent, ensure_ascii=False, indent=2)}\n\n"
         f"Intent解释：{intent_explain}\n\n"
-        "基础约束补充：A股T+1、涨跌停限制、停牌与异常数据过滤、100股整手、已有仓位禁止重复买入、"
+        "基础约束补充：A股T+1、涨跌停限制、停牌与异常数据过滤、100股整手、已有仓位禁止重复硅基、"
         "交易时间窗、强制风控优先、pending_sell重试机制，必须全部落地到代码。\n\n"
         f"请尽量遵循以下代码骨架与风格约束：\n{str(code_template or '').strip()}\n\n"
         "返回格式：先给Intent可解释性说明，再给```python```代码块。代码需可直接运行于当前项目。"
@@ -3200,7 +3227,7 @@ def _build_ai_analysis(strategy_intent, strategy_id, strategy_name, code_templat
 
 @app.get("/")
 async def get_dashboard():
-    html = open("dashboard.html", "r", encoding="utf-8").read()
+    html = open(_bundle_path("dashboard.html"), "r", encoding="utf-8").read()
     live_enabled_flag = "true" if is_live_enabled() else "false"
     html = html.replace(
         "<!-- JavaScript Logic -->",
@@ -3211,12 +3238,12 @@ async def get_dashboard():
 
 @app.get("/report")
 async def get_report_page():
-    return HTMLResponse(content=open("backtest_report.html", "r", encoding="utf-8").read())
+    return HTMLResponse(content=open(_bundle_path("backtest_report.html"), "r", encoding="utf-8").read())
 
 
 @app.get("/logo.png")
 async def get_logo():
-    logo_path = os.path.abspath("logo.png")
+    logo_path = os.path.abspath(_bundle_path("logo.png"))
     if not os.path.exists(logo_path):
         raise HTTPException(status_code=404, detail="logo not found")
     return FileResponse(
@@ -4371,9 +4398,9 @@ def _parse_ai_review_summary_from_markdown(markdown: str) -> Dict[str, Any]:
     if not text:
         return {}
     sec1 = _extract_markdown_section(text, "1) 核心结论", ["2) 关键问题", "## 2) 关键问题"])
-    sec2 = _extract_markdown_section(text, "2) 关键问题", ["3) 基于交易明细的买入节点分析", "## 3) 基于交易明细的买入节点分析"])
-    sec3 = _extract_markdown_section(text, "3) 基于交易明细的买入节点分析", ["4) 基于交易明细的卖出节点分析", "## 4) 基于交易明细的卖出节点分析"])
-    sec4 = _extract_markdown_section(text, "4) 基于交易明细的卖出节点分析", ["5) 参数优化建议", "## 5) 参数优化建议"])
+    sec2 = _extract_markdown_section(text, "2) 关键问题", ["3) 基于交易明细的硅基节点分析", "## 3) 基于交易明细的硅基节点分析"])
+    sec3 = _extract_markdown_section(text, "3) 基于交易明细的硅基节点分析", ["4) 基于交易明细的流码节点分析", "## 4) 基于交易明细的流码节点分析"])
+    sec4 = _extract_markdown_section(text, "4) 基于交易明细的流码节点分析", ["5) 参数优化建议", "## 5) 参数优化建议"])
     sec5 = _extract_markdown_section(text, "5) 参数优化建议", ["6) 下一轮实验方案", "## 6) 下一轮实验方案"])
     sec6 = _extract_markdown_section(text, "6) 下一轮实验方案", [])
     return _normalize_ai_review_summary({
@@ -4399,7 +4426,7 @@ def _parse_buffett_review_summary_from_markdown(markdown: str) -> Dict[str, Any]
         "3) 关键假设（3-5条）",
         "4) 业务质量代理评估（用收益稳定性、回撤控制、策略一致性）",
         "5) 安全边际代理评估（用风险收益比、回撤缓冲）",
-        "6) 卖出标准检查（drawdown_break、win_rate_decay、ranking_drop、rule_stability）",
+        "6) 流码标准检查（drawdown_break、win_rate_decay、ranking_drop、rule_stability）",
         "7) 三大风险",
         "8) 监控指标（季度/每轮回测跟踪项）",
         "9) 最终结论（必须明确：仅分析，不执行交易）",
@@ -6247,8 +6274,8 @@ def _build_ai_report_review(report_item):
         "Markdown必须严格包含六段：\n"
         "1) 核心结论\n"
         "2) 关键问题\n"
-        "3) 基于交易明细的买入节点分析（逐条说明买入核心依据、信号逻辑、触发原因）\n"
-        "4) 基于交易明细的卖出节点分析（逐条说明卖出核心依据、信号逻辑、触发原因）\n"
+        "3) 基于交易明细的硅基节点分析（逐条说明硅基核心依据、信号逻辑、触发原因）\n"
+        "4) 基于交易明细的流码节点分析（逐条说明流码核心依据、信号逻辑、触发原因）\n"
         "5) 参数优化建议（必须给出明确参数值，不要只给方向）\n"
         "6) 下一轮实验方案（A/B至少两组，直接列出参数值对比）\n\n"
         "注意：如果某段缺少交易节点，请写“本周期无该类交易节点”。\n"
@@ -6367,13 +6394,13 @@ def _build_ai_report_review_buffett(report_item):
         "3) 关键假设（3-5条）\n"
         "4) 业务质量代理评估（用收益稳定性、回撤控制、策略一致性）\n"
         "5) 安全边际代理评估（用风险收益比、回撤缓冲）\n"
-        "6) 卖出标准检查（drawdown_break、win_rate_decay、ranking_drop、rule_stability）\n"
+        "6) 流码标准检查（drawdown_break、win_rate_decay、ranking_drop、rule_stability）\n"
         "7) 三大风险\n"
         "8) 监控指标（季度/每轮回测跟踪项）\n"
         "9) 最终结论（必须明确：仅分析，不执行交易）\n\n"
         "注意：\n"
         "- 缺失字段必须写 N/A，不得编造基本面数据。\n"
-        "- 不得输出买卖指令、仓位执行指令或券商操作步骤。\n"
+        "- 不得输出硅基流码指令、仓位执行指令或券商操作步骤。\n"
         f"回测数据：\n{json.dumps(req_payload, ensure_ascii=False)}"
     )
     payload = {
@@ -7144,8 +7171,8 @@ async def api_backtest_kline_chart(stock: str, start: str, end: str):
             if sell_map[sid].notna().any():
                 addplots.append(mpf.make_addplot(sell_map[sid], type="scatter", marker="v", markersize=60, color=color, panel=0))
             legend_handles.append(mlines.Line2D([], [], color=color, marker="o", linestyle="None", label=st["name"]))
-        legend_handles.append(mlines.Line2D([], [], color="#e2e8f0", marker="^", linestyle="None", label="买入信号"))
-        legend_handles.append(mlines.Line2D([], [], color="#e2e8f0", marker="v", linestyle="None", label="卖出信号"))
+            legend_handles.append(mlines.Line2D([], [], color="#e2e8f0", marker="^", linestyle="None", label="硅基信号"))
+            legend_handles.append(mlines.Line2D([], [], color="#e2e8f0", marker="v", linestyle="None", label="流码信号"))
         plot_kwargs = {
             "type": "candle",
             "style": "charles",
@@ -7936,6 +7963,12 @@ async def _auto_start_live_from_config(cfg=None):
     codes = _configured_live_codes(c)
     if not codes:
         codes = _normalize_live_codes(cfg=c)
+    # 从配置读取自动启动策略范围，确保重启后自动启动时策略配置一致。
+    auto_strategy_ids = c.get("system.live_auto_start_strategy_ids", [])
+    if isinstance(auto_strategy_ids, list) and auto_strategy_ids:
+        selection = {"strategy_ids": [str(x) for x in auto_strategy_ids if str(x).strip()]}
+        for code in codes:
+            live_strategy_profiles[code] = selection
     total_capital = float(c.get("system.initial_capital", 1000000.0) or 1000000.0)
     all_target_codes = list(dict.fromkeys(_live_running_codes() + codes))
     # 沿用现有资金分配机制，确保自动启动与手动启动口径一致。

@@ -19,7 +19,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%start.ps1" !PS_
 set "EXIT_CODE=%ERRORLEVEL%"
 if not "%EXIT_CODE%"=="0" (
   echo.
-  echo Start failed, exit code=%EXIT_CODE%
+  echo [start] Service failed, exit code=%EXIT_CODE%
+  echo [start] Check server-start.log for details
 )
 if not "%NO_PAUSE%"=="1" pause
 exit /b %EXIT_CODE%

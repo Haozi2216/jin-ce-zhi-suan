@@ -218,19 +218,6 @@
             display: inline-block;
         }
 
-        .scan-line {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 2px;
-            background: rgba(16, 185, 129, 0.3);
-            animation: scan 3s linear infinite;
-            opacity: 0.5;
-            pointer-events: none;
-            z-index: 50;
-        }
-
         .metric-pop-up {
             animation: metricPopUp 420ms cubic-bezier(0.22, 1, 0.36, 1);
         }
@@ -249,11 +236,6 @@
             0% { transform: translateY(0) scale(1); filter: brightness(1); }
             45% { transform: translateY(3px) scale(0.96); filter: brightness(0.9); }
             100% { transform: translateY(0) scale(1); filter: brightness(1); }
-        }
-
-        @keyframes scan {
-            0% { top: 0%; }
-            100% { top: 100%; }
         }
 
         @keyframes ministryBorderFlash {
@@ -333,8 +315,8 @@
                 <p>3. 本工具不属于荐股软件、不属于投资咨询软件、不属于智能交易决策软件。</p>
                 <p class="text-white font-semibold">二、风险提示</p>
                 <p>1. 证券、期货、基金等投资行为存在高风险，历史回测结果不代表未来收益，不代表策略有效性。</p>
-                <p>2. 任何基于本工具生成的回测报告、指标结果、信号图表、策略参数，均不能作为实盘交易依据。</p>
-                <p>3. 用户因使用本工具进行实盘交易所产生的任何盈利、亏损、纠纷、损失、民事赔偿、行政处罚、刑事责任，均由用户自行承担全部责任。</p>
+                <p>2. 任何基于本工具生成的回测报告、指标结果、信号图表、策略参数，均不能作为近似实时交易依据。</p>
+                <p>3. 用户因使用本工具进行近似实时交易所产生的任何盈利、亏损、纠纷、损失、民事赔偿、行政处罚、刑事责任，均由用户自行承担全部责任。</p>
                 <p class="text-white font-semibold">三、开发者责任免除（含民宿、茶馆、线下场所）</p>
                 <p>1. 本工具开发者（金策智算及相关主体）不具备证券投资咨询业务资质，不对外开展证券投资咨询活动，不提供任何形式的投资建议。</p>
                 <p>2. 开发者不对任何第三方使用本工具的行为承担法律责任，包括但不限于：个人用户、机构用户、散户社群；茶馆、会所、股民交流场所、线下投研空间；民宿、酒店、公寓、出租屋等住宿经营场所；经销商、合作方、代理商、推广渠道；任何商业或非商业场所、平台、社群。</p>
@@ -378,7 +360,7 @@
             <button onclick="closeBacktest()" class="absolute top-4 right-4 text-slate-400 hover:text-white"><i class="fa-solid fa-times text-xl"></i></button>
             <a href="/report" target="_blank" class="absolute top-4 right-14 text-xs bg-blue-600 hover:bg-blue-500 text-white px-2 py-1 rounded">回测报告页</a>
             <h2 class="text-2xl font-bold text-white mb-1 border-b border-slate-700 pb-2"><i class="fa-solid fa-chart-line text-trading-blue mr-2"></i>回测绩效报告</h2>
-            <div class="text-xs text-slate-400 mb-4 font-mono">标的代码: <span id="bt-code" class="text-white">--</span> | 回测区间: <span id="bt-period" class="text-white">--</span></div>
+            <div class="text-xs text-slate-400 mb-4 font-mono">祖宗代码: <span id="bt-code" class="text-white">--</span> | 回测区间: <span id="bt-period" class="text-white">--</span></div>
             
             <div class="grid grid-cols-4 gap-4 mb-6">
                 <div class="bg-slate-800/50 p-3 rounded border border-slate-700">
@@ -434,7 +416,7 @@
                     <div class="text-xs text-slate-400">查看历史报告，并在需要时发起新的对比。</div>
                 </div>
                 <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full lg:w-auto lg:max-w-[720px]">
-                    <input id="consistency-report-filter-code" type="text" placeholder="按标的代码筛选，例如 600000.SH" onkeydown="if (event.key === 'Enter') loadConsistencyReportList()" class="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-xs text-slate-100 font-mono" />
+                    <input id="consistency-report-filter-code" type="text" placeholder="按祖宗代码筛选，例如 600000.SH" onkeydown="if (event.key === 'Enter') loadConsistencyReportList()" class="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-xs text-slate-100 font-mono" />
                     <button onclick="loadConsistencyReportList()" class="bg-slate-700 hover:bg-slate-600 text-white px-3 py-2 rounded text-xs border border-slate-500 whitespace-nowrap">查询</button>
                     <button id="consistency-open-compare-drawer-btn" onclick="openConsistencyCompareDrawer()" class="bg-emerald-700 hover:bg-emerald-600 text-white px-3 py-2 rounded text-xs border border-emerald-500 whitespace-nowrap">发起新对比</button>
                     <button onclick="closeConsistencyReportModal()" class="bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-2 rounded text-xs border border-slate-600 whitespace-nowrap">关闭</button>
@@ -475,8 +457,8 @@
                     </div>
                     <div class="flex-1 overflow-y-auto p-4 space-y-4">
                         <div class="rounded-xl border border-slate-700 bg-slate-900/50 p-4 space-y-3">
-                            <div class="text-sm font-semibold text-white">实盘范围</div>
-                            <label class="block text-xs text-slate-300">标的代码
+                            <div class="text-sm font-semibold text-white">近似实时范围</div>
+                            <label class="block text-xs text-slate-300">祖宗代码
                                 <input id="consistency-compare-code" type="text" placeholder="例如 600000.SH" class="mt-1 w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white font-mono uppercase" />
                             </label>
                             <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -487,7 +469,7 @@
                                     <input id="consistency-compare-end-date" type="date" class="mt-1 w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white" />
                                 </label>
                             </div>
-                            <label class="block text-xs text-slate-300">实盘周期
+                            <label class="block text-xs text-slate-300">近似实时周期
                                 <select id="consistency-compare-timeframes" class="mt-1 w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white">
                                     <option value="">全部周期</option>
                                     <option value="1min">1分钟</option>
@@ -517,7 +499,7 @@
                                 </div>
                             </div>
                             <div>
-                                <div class="text-xs text-slate-300 mb-2">实盘样本选择方式</div>
+                                <div class="text-xs text-slate-300 mb-2">近似实时样本选择方式</div>
                                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                                     <button id="consistency-snapshot-mode-auto" onclick="setConsistencySnapshotSelectionMode('auto')" class="rounded border border-emerald-500 bg-emerald-950/20 text-emerald-200 px-3 py-2">系统自动匹配</button>
                                     <button id="consistency-snapshot-mode-manual" onclick="setConsistencySnapshotSelectionMode('manual')" class="rounded border border-slate-700 bg-slate-900/60 text-slate-300 px-3 py-2">我手动挑选</button>
@@ -532,8 +514,8 @@
                             </div>
                             <div id="consistency-existing-report-filters" class="space-y-2">
                                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                                    <label class="block text-xs text-slate-300">筛选标的
-                                        <input id="consistency-backtest-filter-code" type="text" placeholder="跟随上方标的" class="mt-1 w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white font-mono uppercase" />
+                                    <label class="block text-xs text-slate-300">筛选祖宗
+                                        <input id="consistency-backtest-filter-code" type="text" placeholder="跟随上方祖宗" class="mt-1 w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white font-mono uppercase" />
                                     </label>
                                     <label class="block text-xs text-slate-300">状态
                                         <select id="consistency-backtest-filter-status" class="mt-1 w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white">
@@ -550,7 +532,7 @@
                                 <label class="block text-xs text-slate-300">回测资金
                                     <input id="consistency-new-backtest-capital" type="number" min="10000" step="10000" value="1000000" class="mt-1 w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white font-mono" />
                                 </label>
-                                <div class="text-[11px] text-slate-400">现场新回测会默认继承上方的标的、日期和策略范围。</div>
+                                <div class="text-[11px] text-slate-400">现场新回测会默认继承上方的祖宗、日期和策略范围。</div>
                             </div>
                             <label class="block text-xs text-slate-300">备注（可选）
                                 <input id="consistency-compare-note" type="text" placeholder="例如：排查 4 月中旬为何未复现" class="mt-1 w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white" />
@@ -558,8 +540,8 @@
                         </div>
                         <div id="consistency-snapshot-picker-wrap" class="rounded-xl border border-slate-700 bg-slate-900/40 p-4 space-y-3 hidden">
                             <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                                <div class="text-sm font-semibold text-white">可选实盘记录</div>
-                                <button onclick="loadConsistencyCompareSnapshots()" class="bg-slate-700 hover:bg-slate-600 text-white px-3 py-1.5 rounded text-xs border border-slate-500 whitespace-nowrap">刷新实盘记录</button>
+                                <div class="text-sm font-semibold text-white">可选近似实时记录</div>
+                                <button onclick="loadConsistencyCompareSnapshots()" class="bg-slate-700 hover:bg-slate-600 text-white px-3 py-1.5 rounded text-xs border border-slate-500 whitespace-nowrap">刷新近似实时记录</button>
                             </div>
                             <div id="consistency-snapshot-picker-meta" class="text-[11px] text-slate-400">--</div>
                             <div id="consistency-snapshot-picker-list" class="max-h-64 overflow-auto space-y-2 text-xs"></div>
@@ -574,7 +556,7 @@
                         </div>
                     </div>
                     <div class="px-4 py-3 border-t border-slate-700 space-y-3 shrink-0 bg-slate-950/60">
-                        <div id="consistency-compare-status" class="rounded border border-slate-700 bg-slate-950/40 px-3 py-3 text-xs text-slate-300 min-h-[86px] leading-6">请先选择实盘范围和回测来源。</div>
+                        <div id="consistency-compare-status" class="rounded border border-slate-700 bg-slate-950/40 px-3 py-3 text-xs text-slate-300 min-h-[86px] leading-6">请先选择近似实时范围和回测来源。</div>
                         <div class="grid grid-cols-2 gap-2">
                             <button onclick="closeConsistencyCompareDrawer()" class="w-full bg-slate-800 hover:bg-slate-700 text-slate-200 py-2.5 rounded text-sm font-semibold border border-slate-600">取消</button>
                             <button id="consistency-compare-submit-btn" onclick="startConsistencyCompare()" class="w-full bg-emerald-700 hover:bg-emerald-600 text-white py-2.5 rounded text-sm font-semibold border border-emerald-500">开始对比</button>
@@ -596,7 +578,7 @@
                 <span class="text-xs text-slate-400">查看策略</span>
                 <select id="strategy-doc-selector" onchange="renderStrategyDoc(this.value)" class="bg-slate-800 border border-slate-600 text-white py-1 px-2 rounded text-xs">
                     <option value="all">全部策略总览</option>
-                    <option value="00">00 长期持有一次买入</option>
+                    <option value="00">00 长期持有一次硅基</option>
                     <option value="01">01 三周期共振波段</option>
                     <option value="02">02 短线弱转强烂板</option>
                     <option value="03">03 ETF行业轮动</option>
@@ -682,9 +664,7 @@
     </header>
 
     <!-- Main Layout -->
-    <main class="flex-1 flex overflow-hidden p-4 gap-4 relative">
-        <!-- Scanline Effect -->
-        <div class="scan-line"></div>
+    <main class="flex-1 flex overflow-hidden p-4 gap-4">
 
         <!-- LEFT: Three Departments (Decision Hub) -->
         <section class="min-w-0 flex-[1] flex flex-col gap-4">
@@ -833,12 +813,12 @@
                         <div class="flex items-center gap-2 text-red-500 font-bold"><i class="fa-solid fa-person-rifle"></i> 兵部 - 操盘部</div>
                         <div class="text-[10px] bg-red-900/50 text-red-300 px-1 rounded animate-pulse">交易信号</div>
                     </div>
-                    <div class="text-[10px] text-slate-500 mt-1 relative z-10">买卖信号执行</div>
+                    <div class="text-[10px] text-slate-500 mt-1 relative z-10">硅基流码信号执行</div>
                     <div class="text-[10px] text-slate-500 mt-1 relative z-10">参数: 滑点 <span id="cfg-bing-slippage" class="text-slate-300">--</span></div>
                     <div class="mt-2 relative z-10 bg-slate-900/80 p-2 rounded border border-red-900/30">
                         <div class="flex justify-between text-xs">
                             <span class="text-slate-400">交易方向</span>
-                            <span class="font-bold text-trading-green" id="war-action">买入</span>
+                            <span class="font-bold text-trading-green" id="war-action">硅基</span>
                         </div>
                         <div class="flex justify-between text-xs mt-1">
                             <span class="text-slate-400">成交价格</span>
@@ -936,7 +916,7 @@
                 <div id="right-bottom-stack" class="h-full min-h-0 flex flex-col gap-3">
                     <div id="live-console-panel" class="hidden glass-panel rounded-lg p-3 border border-slate-700/70 shrink-0 min-h-[180px] max-h-[58%] overflow-y-auto">
                         <div class="flex items-center justify-between mb-2">
-                            <div class="text-xs uppercase tracking-widest text-slate-400">实盘控制台</div>
+                            <div class="text-xs uppercase tracking-widest text-slate-400">近似实时控制台</div>
                             <div class="flex items-center gap-1">
                                 <span id="live-run-state" class="text-[10px] px-2 py-0.5 rounded bg-slate-700 text-slate-200">待机</span>
                                 <button onclick="openFundPoolModal()" class="text-[10px] px-2 py-0.5 rounded bg-indigo-800 hover:bg-indigo-700 text-indigo-100 border border-indigo-700">资金池弹窗</button>
@@ -1066,7 +1046,7 @@
                                             <thead class="text-slate-500">
                                                 <tr>
                                                     <th class="text-left py-0.5">策略</th>
-                                                    <th class="text-left py-0.5">标的</th>
+                                                    <th class="text-left py-0.5">祖宗</th>
                                                     <th class="text-right py-0.5">数量</th>
                                                     <th class="text-right py-0.5">成本</th>
                                                     <th class="text-right py-0.5">市值</th>
@@ -1082,8 +1062,8 @@
                                         <div class="flex items-center gap-1">
                                             <select id="fund-trade-dir-filter" onchange="renderFundPoolTrades()" class="bg-slate-800 border border-slate-600 text-slate-200 rounded px-1 py-0.5 text-[10px]">
                                                 <option value="all">全部方向</option>
-                                                <option value="BUY">买入</option>
-                                                <option value="SELL">卖出</option>
+                                                <option value="BUY">硅基</option>
+                                                <option value="SELL">流码</option>
                                             </select>
                                             <input id="fund-trade-strategy-filter" oninput="renderFundPoolTrades()" class="bg-slate-800 border border-slate-600 text-slate-200 rounded px-1 py-0.5 text-[10px] w-16" placeholder="策略ID" />
                                         </div>
@@ -1108,10 +1088,10 @@
                             </div>
                             <div id="live-exception-panel" class="hidden mt-2 bg-rose-950/35 border border-rose-700 rounded p-2">
                                 <div class="flex items-center justify-between mb-1">
-                                    <div class="text-[10px] text-rose-300 uppercase tracking-wider">最近一次实盘异常</div>
+                                    <div class="text-[10px] text-rose-300 uppercase tracking-wider">最近一次近似实时异常</div>
                                     <span id="live-exception-time" class="text-[10px] text-rose-200 font-mono">--</span>
                                 </div>
-                                <div class="text-[10px] text-rose-200 font-mono mb-1">标的：<span id="live-exception-stock">--</span> ｜阶段：<span id="live-exception-stage">--</span></div>
+                                <div class="text-[10px] text-rose-200 font-mono mb-1">祖宗：<span id="live-exception-stock">--</span> ｜阶段：<span id="live-exception-stage">--</span></div>
                                 <div id="live-exception-message" class="text-[10px] text-rose-100 font-mono bg-slate-950/60 border border-rose-900 rounded p-1 mb-1">--</div>
                                 <pre id="live-exception-stack" class="max-h-28 overflow-auto text-[10px] leading-4 text-rose-200 font-mono bg-slate-950/70 border border-rose-900 rounded p-1 whitespace-pre-wrap break-words">--</pre>
                             </div>
@@ -1183,7 +1163,7 @@
             <div id="live-status-wrap" class="hidden text-xs text-slate-500 font-mono whitespace-nowrap">系统状态：<span id="system-status-text" class="text-slate-300">待机</span></div>
             <button id="live-toggle-btn" onclick="toggleLive()" class="hidden bg-trading-green hover:bg-emerald-600 text-white px-4 py-2 rounded font-bold text-sm transition-all border border-emerald-500 hover:-translate-y-0.5 active:scale-95 min-w-[92px] lg:min-w-[108px]">
                 <i id="live-toggle-icon" class="fa-solid fa-satellite-dish"></i>
-                <span id="live-toggle-label">启动实盘</span>
+                <span id="live-toggle-label">启动近似实时</span>
             </button>
             <button id="backtest-trigger-btn" onclick="startBacktest()" class="bg-trading-blue hover:bg-blue-600 text-white px-4 py-2 rounded font-bold text-sm transition-all shadow-[0_0_10px_rgba(59,130,246,0.3)] border border-blue-500 min-w-[92px] lg:min-w-[108px]">
                 <i id="backtest-trigger-icon" class="fa-solid fa-play"></i>
@@ -1253,8 +1233,8 @@
                             <label class="text-xs text-slate-300">平票策略
                                 <select id="bt-combo-tie-policy" class="mt-1 w-full bg-slate-800 text-white border border-slate-700 rounded px-2 py-1 text-xs">
                                     <option value="skip" selected>跳过信号</option>
-                                    <option value="buy">按买入处理</option>
-                                    <option value="sell">按卖出处理</option>
+                                    <option value="buy">按硅基处理</option>
+                                    <option value="sell">按流码处理</option>
                                 </select>
                             </label>
                         </div>
@@ -1366,7 +1346,7 @@
                                     </select>
                                 </div>
                                 <div>
-                                    <div class="text-slate-400 mb-1">评估标的</div>
+                                    <div class="text-slate-400 mb-1">评估祖宗</div>
                                     <input id="evolution-target-stock-codes" type="text" placeholder="例如 000001.SZ,600036.SH" class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-slate-100 font-mono text-[11px]" />
                                 </div>
                                 <div>
@@ -1683,17 +1663,17 @@
         <div class="w-[640px] max-w-[92vw] bg-slate-900 border border-amber-500 rounded-lg shadow-2xl flex flex-col overflow-hidden">
             <div class="px-5 py-4 border-b border-amber-500/50 bg-amber-900/30 flex items-center gap-3">
                 <i class="fa-solid fa-exclamation-triangle text-amber-400 text-xl"></i>
-                <div class="text-amber-200 font-bold text-lg">实盘合规提醒</div>
+                <div class="text-amber-200 font-bold text-lg">近似实时合规提醒</div>
             </div>
             <div class="px-5 py-4 space-y-4 text-slate-200 text-sm leading-relaxed">
                 <div class="bg-slate-950/60 rounded p-4 border border-slate-700">
                     <div class="text-amber-300 font-semibold mb-2">⚠️ 重要：程序化交易合规义务</div>
-                    <p>您正在启用<strong>通达信数据源 + 实盘模式</strong>，这涉及自动下单功能（程序化交易）。根据中国证监会《证券期货市场程序化交易管理办法》及相关规定，您需完成以下合规步骤：</p>
+                    <p>您正在启用<strong>通达信数据源 + 近似实时模式</strong>，本模式不提供交易相关功能以及和任何券商的对接！但如您修改本项目用于任何与程序化交易相关用途，需根据中国证监会《证券期货市场程序化交易管理办法》及相关规定，您需完成以下合规步骤：</p>
                 </div>
                 <div class="space-y-2">
                     <div class="flex items-start gap-2">
                         <span class="text-cyan-400 font-bold">①</span>
-                        <span><strong>向开户券商报备</strong>：启用实盘前，需向开户券商提交程序化交易策略报备表，说明策略类型、参数范围、风控设置。</span>
+                        <span><strong>向开户券商报备</strong>：启用近似实时前，需向开户券商提交程序化交易策略报备表，说明策略类型、参数范围、风控设置。</span>
                     </div>
                     <div class="flex items-start gap-2">
                         <span class="text-cyan-400 font-bold">②</span>
@@ -1710,7 +1690,7 @@
                 </div>
                 <div class="bg-rose-950/40 rounded p-3 border border-rose-700/50 text-rose-200">
                     <div class="font-semibold mb-1">法律风险提示</div>
-                    <p>因使用本工具进行实盘交易产生的任何盈亏、纠纷、行政处罚、刑事责任，均由用户自行承担。开发者不具备证券投资咨询资质，不提供任何投资建议。</p>
+                    <p>因使用本工具进行近似实时交易产生的任何盈亏、纠纷、行政处罚、刑事责任，均由用户自行承担。开发者不具备证券投资咨询资质，不提供任何投资建议。</p>
                 </div>
             </div>
             <label class="px-5 py-3 flex items-start gap-3 cursor-pointer border-t border-slate-700">
@@ -1859,20 +1839,20 @@
                 <div class="text-white font-bold"><i class="fa-solid fa-layer-group mr-2 text-cyan-400"></i>BLK 批量任务工具</div>
                 <button onclick="closeBlkToolsModal()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
             </div>
-            <div class="px-4 py-2 text-xs text-slate-400 border-b border-slate-700">支持上传 BLK、解析预览、写入标的池并生成批量任务（不触发单票回测）</div>
+            <div class="px-4 py-2 text-xs text-slate-400 border-b border-slate-700">支持上传 BLK、解析预览、写入祖宗池并生成批量任务（不触发单票回测）</div>
             <div class="flex-1 p-4 overflow-y-auto space-y-3">
-                <div class="text-[11px] text-slate-500">模式区分：这里是批量任务链路；底部蓝色按钮是单票回测链路。操作建议：先“解析预览”确认数量，再“写入标的池”；最后点“一键生成任务”。</div>
+                <div class="text-[11px] text-slate-500">模式区分：这里是批量任务链路；底部蓝色按钮是单票回测链路。操作建议：先“解析预览”确认数量，再“写入祖宗池”；最后点“一键生成任务”。</div>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <input id="blk-file-path" type="text" placeholder="或填服务端可访问的 BLK 文件路径" class="bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-slate-100 font-mono" />
-                    <input id="blk-stock-pool-csv" type="text" value="data/任务生成_标的池.csv" placeholder="标的池CSV路径" class="bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-slate-100 font-mono" />
+                    <input id="blk-stock-pool-csv" type="text" value="data/任务生成_祖宗池.csv" placeholder="祖宗池CSV路径" class="bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-slate-100 font-mono" />
                 </div>
                 <div class="flex items-center gap-3 text-xs text-slate-300">
                     <label class="flex items-center gap-2"><span>本地上传:</span><input id="blk-file-input" type="file" accept=".blk,.txt" class="text-xs" /></label>
                     <label class="flex items-center gap-2"><span>编码</span><input id="blk-encoding" type="text" value="auto" class="bg-slate-800 border border-slate-700 rounded px-2 py-1 w-20 font-mono" /></label>
-                    <label class="flex items-center gap-2"><span>标的池写入模式</span><select id="blk-import-mode" class="bg-slate-800 border border-slate-700 rounded px-2 py-1"><option value="append">追加（append）</option><option value="replace">重建（replace）</option></select></label>
+                    <label class="flex items-center gap-2"><span>祖宗池写入模式</span><select id="blk-import-mode" class="bg-slate-800 border border-slate-700 rounded px-2 py-1"><option value="append">追加（append）</option><option value="replace">重建（replace）</option></select></label>
                     <label class="flex items-center gap-2"><input id="blk-normalize-symbol" type="checkbox" checked />规范代码</label>
                 </div>
-                <div class="text-[11px] text-slate-500">标的池写入模式说明：追加=保留原标的并增量写入；重建=清空原标的池后重写。</div>
+                <div class="text-[11px] text-slate-500">祖宗池写入模式说明：追加=保留原祖宗并增量写入；重建=清空原祖宗池后重写。</div>
                 <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
                     <input id="blk-market-tag" type="text" value="主板" placeholder="市场标签" class="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-100" />
                     <input id="blk-industry-tag" type="text" value="BLK导入" placeholder="行业标签" class="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-100" />
@@ -1925,7 +1905,7 @@
                 </div>
                 <div class="flex items-center gap-2">
                     <button onclick="parseBlkPreview()" class="bg-cyan-700 hover:bg-cyan-600 text-white px-3 py-2 rounded text-xs border border-cyan-500">解析预览</button>
-                    <button onclick="importBlkToStockPool()" class="bg-emerald-700 hover:bg-emerald-600 text-white px-3 py-2 rounded text-xs border border-emerald-500">写入标的池</button>
+                    <button onclick="importBlkToStockPool()" class="bg-emerald-700 hover:bg-emerald-600 text-white px-3 py-2 rounded text-xs border border-emerald-500">写入祖宗池</button>
                     <button onclick="syncBatchStrategyPoolFromUi()" class="bg-indigo-700 hover:bg-indigo-600 text-white px-3 py-2 rounded text-xs border border-indigo-500">同步策略池</button>
                     <button onclick="generateBatchTasksQuick()" class="bg-violet-700 hover:bg-violet-600 text-white px-3 py-2 rounded text-xs border border-violet-500">一键生成任务</button>
                     <span id="blk-tools-status" class="text-xs text-slate-400">待操作</span>
@@ -2031,8 +2011,8 @@
                             <label class="text-slate-300">平票策略
                                 <select id="batch-combo-tie-policy" class="mt-1 w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-200">
                                     <option value="skip" selected>跳过信号</option>
-                                    <option value="buy">按买入处理</option>
-                                    <option value="sell">按卖出处理</option>
+                                    <option value="buy">按硅基处理</option>
+                                    <option value="sell">按流码处理</option>
                                 </select>
                             </label>
                             <div class="text-slate-300 flex items-end">
@@ -2204,7 +2184,7 @@
                                 <th class="px-2 py-2 text-left w-10"><input id="webhook-failed-select-all" type="checkbox" onchange="toggleWebhookFailedSelectAll(this.checked)" /></th>
                                 <th class="px-2 py-2 text-left">创建时间</th>
                                 <th class="px-2 py-2 text-left">事件</th>
-                                <th class="px-2 py-2 text-left">标的</th>
+                                <th class="px-2 py-2 text-left">祖宗</th>
                                 <th class="px-2 py-2 text-left">通道</th>
                                 <th class="px-2 py-2 text-left">重试次数</th>
                                 <th class="px-2 py-2 text-left">错误</th>
@@ -2845,16 +2825,16 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 example: '示例：若07与01同向看多，信号一致性提升；若方向分歧，置信度会下降。'
             },
             '00': {
-                name: '00 长期持有一次买入',
+                name: '00 长期持有一次硅基',
                 trigger: '日线',
                 entry_rules: [
-                    '仅在首次触发时买入一次。',
-                    '买入后不再重复加仓。'
+                    '仅在首次触发时硅基一次。',
+                    '硅基后不再重复加仓。'
                 ],
-                exit_rules: ['到达回测最后一根K线时一次性全部卖出。'],
+                exit_rules: ['到达回测最后一根K线时一次性全部流码。'],
                 params: ['下单数量：默认1000股'],
-                note: '该策略仅用于回测基准对照，模拟买入并持有到回测结束。',
-                example: '示例：第一根K线买入后全程持有，最后一根K线自动平仓。'
+                note: '该策略仅用于回测基准对照，模拟硅基并持有到回测结束。',
+                example: '示例：第一根K线硅基后全程持有，最后一根K线自动平仓。'
             },
             '01': {
                 name: '01 三周期共振波段',
@@ -2865,16 +2845,16 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     '60分钟MACD金叉：当前DIF > DEA 且上一根DIF <= DEA。',
                     '60分钟放量：当前成交量 > 近5根60分钟均量。'
                 ],
-                exit_rules: ['持仓后若日线收盘价 < 日线MA20，则卖出离场。'],
-                params: ['止损价：买入价 * 0.97', '止盈：无固定止盈'],
+                exit_rules: ['持仓后若日线收盘价 < 日线MA20，则流码离场。'],
+                params: ['止损价：硅基价 * 0.97', '止盈：无固定止盈'],
                 note: '数据窗口要求较高：至少500根基础K线、20根日线/周线、35根60分钟线。',
-                example: '示例：周线趋势向上 + 日线靠近MA10 + 60分钟金叉放量 -> 触发买入。'
+                example: '示例：周线趋势向上 + 日线靠近MA10 + 60分钟金叉放量 -> 触发硅基。'
             },
             '02': {
                 name: '02 短线弱转强烂板',
                 trigger: '1分钟',
-                entry_rules: ['当前代码实现中无入场条件（不会主动买入）。'],
-                exit_rules: ['已有持仓时，持仓bar数 >= 240则卖出（Next Day Exit）。'],
+                entry_rules: ['当前代码实现中无入场条件（不会主动硅基）。'],
+                exit_rules: ['已有持仓时，持仓bar数 >= 240则流码（Next Day Exit）。'],
                 params: ['最大持有：240个触发bar'],
                 note: '该策略当前版本主要保留离场框架，入场逻辑待补充。',
                 example: '示例：若外部已有仓位，达到240个bar后强制离场。'
@@ -2882,10 +2862,10 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             '03': {
                 name: '03 ETF行业轮动',
                 trigger: '日线',
-                entry_rules: ['日线收盘价 > 日线MA10 -> 买入。'],
-                exit_rules: ['持仓后若日线收盘价 < 日线MA10 -> 卖出。'],
-                params: ['止损价：买入价 * 0.95', '止盈：无固定止盈'],
-                note: '至少需要10根日线数据；当前实现名称为ETF轮动，但对单标的也可运行。',
+                entry_rules: ['日线收盘价 > 日线MA10 -> 硅基。'],
+                exit_rules: ['持仓后若日线收盘价 < 日线MA10 -> 流码。'],
+                params: ['止损价：硅基价 * 0.95', '止盈：无固定止盈'],
+                note: '至少需要10根日线数据；当前实现名称为ETF轮动，但对单祖宗也可运行。',
                 example: '示例：日线重新站上MA10建仓，跌破MA10离场。'
             },
             '04': {
@@ -2905,9 +2885,9 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     '30分钟放量：当前成交量 > 近5根30分钟均量 * 1.5。'
                 ],
                 exit_rules: ['持仓后若持有bar数 >= 1200，则按时间离场（Time 5 Days）。'],
-                params: ['止损价：买入价 * 0.95', '止盈价：买入价 * 1.10'],
+                params: ['止损价：硅基价 * 0.95', '止盈价：硅基价 * 1.10'],
                 note: '至少需要20根30分钟数据。',
-                example: '示例：30分钟水上金叉且明显放量时买入，达到时长或止盈止损后离场。'
+                example: '示例：30分钟水上金叉且明显放量时硅基，达到时长或止盈止损后离场。'
             },
             '06': {
                 name: '06 海豚交易法',
@@ -2917,8 +2897,8 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     'MACD金叉：当前DIF > DEA 且上一根DIF <= 上一根DEA。',
                     '水上金叉：当前DIF > 0 且 当前DEA > 0。'
                 ],
-                exit_rules: ['持仓后使用1%追踪止损：当前低点 <= 追踪止损价则卖出。'],
-                params: ['初始止损：买入价 * 0.99', '追踪止损：最高价 * 0.99'],
+                exit_rules: ['持仓后使用1%追踪止损：当前低点 <= 追踪止损价则流码。'],
+                params: ['初始止损：硅基价 * 0.99', '追踪止损：最高价 * 0.99'],
                 note: '至少需要50根基础K线。',
                 example: '示例：上穿MA26并出现水上金叉入场，后续按最高价动态抬升止损线。'
             },
@@ -2929,8 +2909,8 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     '跳空低开：当前15分钟open < 上一根15分钟close * 0.998。',
                     '阳线确认：当前15分钟close > 当前15分钟open。'
                 ],
-                exit_rules: ['持仓后使用1%追踪止损：当前价 <= 追踪止损价则卖出。'],
-                params: ['初始止损：买入价 * 0.99', '追踪止损：最高价 * 0.99'],
+                exit_rules: ['持仓后使用1%追踪止损：当前价 <= 追踪止损价则流码。'],
+                params: ['初始止损：硅基价 * 0.99', '追踪止损：最高价 * 0.99'],
                 note: '至少需要20根15分钟数据。',
                 example: '示例：15分钟出现低开反包阳线后入场，随后按追踪止损管理仓位。'
             },
@@ -2941,8 +2921,8 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     '九连条件：最近9根K线均满足 close[i] > close[i-4]。',
                     '强化校验：第5根 > 第1根，且第9根 > 第5根。'
                 ],
-                exit_rules: ['持仓后使用1%追踪止损：当前收盘价 <= 追踪止损价则卖出。'],
-                params: ['初始止损：买入价 * 0.99', '追踪止损：最高价 * 0.99'],
+                exit_rules: ['持仓后使用1%追踪止损：当前收盘价 <= 追踪止损价则流码。'],
+                params: ['初始止损：硅基价 * 0.99', '追踪止损：最高价 * 0.99'],
                 note: '至少需要13根基础K线（9根序列 + 4根比较滞后）。',
                 example: '示例：九连条件和强化校验同时满足后入场，回落触发追踪止损时离场。'
             },
@@ -2955,7 +2935,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     '机动低吸：价格接近下轨且RSI超卖时，分批加机动仓。'
                 ],
                 exit_rules: [
-                    '机动高抛：价格接近上轨且RSI超买时，优先卖出机动仓。',
+                    '机动高抛：价格接近上轨且RSI超买时，优先流码机动仓。',
                     '跌破止损：价格跌破箱体下轨一定比例时，清仓并停用该策略。',
                     '上破停用：价格突破箱体上轨一定比例时，停止继续加减仓。'
                 ],
@@ -2965,7 +2945,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             }
         };
         const STRATEGY_FALLBACK = [
-            { id: '00', name: '长期持有一次买入' },
+            { id: '00', name: '长期持有一次硅基' },
             { id: '01', name: '三周期共振波段' },
             { id: '02', name: '短线弱转强烂板' },
             { id: '03', name: 'ETF行业轮动' },
@@ -3756,7 +3736,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             if (!liveEnabled) return;
             const targets = resolveLiveStartTargets();
             if (!targets.length) {
-                logMessage('SYSTEM', '未找到可用监控标的：请先在配置中心填写监控标的列表，或在输入框填写有效股票代码', 'danger');
+                logMessage('SYSTEM', '未找到可用监控祖宗：请先在配置中心填写监控祖宗列表，或在输入框填写有效股票代码', 'danger');
                 return false;
             }
             const picked = Array.isArray(selectedStrategyIds) ? selectedStrategyIds.slice() : [];
@@ -3771,9 +3751,9 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             if (!useAll) payload.strategy_ids = picked;
             payload.allocation_mode = allocation.mode;
             if (Object.keys(allocation.weights).length) payload.allocation_weights = allocation.weights;
-            const targetSummary = targets.length > 1 ? `${targets.length}只标的` : targets[0];
+            const targetSummary = targets.length > 1 ? `${targets.length}只祖宗` : targets[0];
             const strategySummary = useAll ? '全部策略' : `${picked.length}个策略`;
-            logMessage('SYSTEM', `正在启动实盘监控：${targetSummary}，${strategySummary}`, 'system');
+            logMessage('SYSTEM', `正在启动近似实时监控：${targetSummary}，${strategySummary}`, 'system');
             try {
                 const { res, data } = await fetchJsonWithTimeout('/api/control/start_live', {
                     method: 'POST',
@@ -3795,7 +3775,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     }
                     logMessage('SYSTEM', '启动请求超时，请检查数据源连通性或服务负载', 'danger');
                 } else {
-                    logMessage('SYSTEM', `启动实盘失败: ${e}`, 'danger');
+                    logMessage('SYSTEM', `启动近似实时失败: ${e}`, 'danger');
                 }
                 liveRunning = false;
                 renderLiveStatus();
@@ -3814,7 +3794,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             const targets = resolveLiveStartTargets();
             if (!targets.length) {
                 const raw = document.getElementById('stock-search-input').value || '';
-                logMessage('SYSTEM', `未找到有效监控标的（输入: ${raw || '空'}）`, 'danger');
+                logMessage('SYSTEM', `未找到有效监控祖宗（输入: ${raw || '空'}）`, 'danger');
                 return;
             }
             setLiveActionPending(true);
@@ -4008,7 +3988,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
 
         async function restartSimulation(code) {
             if (!liveEnabled) return;
-            logMessage('SYSTEM', `正在切换监控标的: ${code}...`, 'warning');
+            logMessage('SYSTEM', `正在切换监控祖宗: ${code}...`, 'warning');
             const picked = Array.isArray(selectedStrategyIds) ? selectedStrategyIds.slice() : [];
             const useAll = picked.length === 0 || picked.length === strategyCatalog.length;
             const allocation = readLiveAllocationSettings();
@@ -4044,7 +4024,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     logMessage('SYSTEM', '切换请求超时，请检查服务负载或数据源连通性', 'danger');
                     return;
                 }
-                logMessage('SYSTEM', `切换监控标的失败: ${e}`, 'danger');
+                logMessage('SYSTEM', `切换监控祖宗失败: ${e}`, 'danger');
             }
         }
 
@@ -4066,7 +4046,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                         logMessage('SYSTEM', '停止请求超时，请稍后重试', 'danger');
                     }
                 } else {
-                    logMessage('SYSTEM', `停止实盘失败: ${e}`, 'danger');
+                    logMessage('SYSTEM', `停止近似实时失败: ${e}`, 'danger');
                 }
             }
             liveRunning = false;
@@ -4091,7 +4071,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             const btnMin = compact ? 'min-w-[108px]' : 'min-w-[128px]';
             if (!liveEnabled && !liveRunning) {
                 text.className = 'text-slate-500';
-                text.innerText = '实盘已关闭';
+                text.innerText = '近似实时已关闭';
                 badge.className = 'text-[10px] px-2 py-0.5 rounded bg-slate-700 text-slate-400';
                 badge.innerText = '已关闭';
                 btn.disabled = true;
@@ -4115,7 +4095,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 badge.innerText = '运行中';
                 btn.className = `bg-trading-red hover:bg-rose-600 text-white px-4 py-2 rounded font-bold text-sm transition-all border border-rose-500 hover:-translate-y-0.5 active:scale-95 ${btnMin}`;
                 icon.className = 'fa-solid fa-stop';
-                label.innerText = compact ? '实盘停' : '停止实盘';
+                label.innerText = compact ? '近似实时停' : '停止近似实时';
                 btn.disabled = false;
             } else {
                 text.className = 'text-slate-300';
@@ -4124,7 +4104,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 badge.innerText = '待机';
                 btn.className = `bg-trading-green hover:bg-emerald-600 text-white px-4 py-2 rounded font-bold text-sm transition-all border border-emerald-500 hover:-translate-y-0.5 active:scale-95 ${btnMin}`;
                 icon.className = 'fa-solid fa-satellite-dish';
-                label.innerText = compact ? '实盘开' : '启动实盘';
+                label.innerText = compact ? '近似实时开' : '启动近似实时';
                 btn.disabled = false;
             }
         }
@@ -4282,7 +4262,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 if (level === 'warn') statusMenxia.className = 'status-dot bg-trading-yellow shadow-[0_0_8px_currentColor]';
             }
             const txt = `${formatLiveMetricLabel(metric)} ${formatLiveMetricValue(metric, value)}`;
-            logMessage('风控中心', `实盘告警(${level.toUpperCase()}): ${txt}`, level === 'critical' ? 'danger' : 'warning');
+            logMessage('风控中心', `近似实时告警(${level.toUpperCase()}): ${txt}`, level === 'critical' ? 'danger' : 'warning');
             pulsePanel('panel-xing');
         }
 
@@ -4413,7 +4393,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 const unitCost = Number(r?.unit_cost || 0);
                 const color = sellable > 0 ? 'text-emerald-300' : 'text-amber-300';
                 row.className = `${color} border border-slate-700/70 rounded px-1 py-0.5`;
-                row.innerText = `S${strategyId} | 买入日 ${buyDay} | 持仓 ${(qty/100).toFixed(0)}手 | 可卖 ${(sellable/100).toFixed(0)}手 | 冻结 ${(locked/100).toFixed(0)}手 | 成本 ${unitCost.toFixed(3)}`;
+                row.innerText = `S${strategyId} | 硅基日 ${buyDay} | 持仓 ${(qty/100).toFixed(0)}手 | 可流码 ${(sellable/100).toFixed(0)}手 | 冻结 ${(locked/100).toFixed(0)}手 | 成本 ${unitCost.toFixed(3)}`;
                 list.appendChild(row);
             });
         }
@@ -4955,7 +4935,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
         async function resetFundPoolByUI() {
             const selected = String(liveFundPoolSelectedCode || fundPoolSelectedCodeFallback() || '').toUpperCase();
             if (!selected) {
-                logMessage('SYSTEM', '请先选择资金池标的', 'warning');
+                logMessage('SYSTEM', '请先选择资金池祖宗', 'warning');
                 return;
             }
             const panelCapInput = document.getElementById('fund-pool-capital-input');
@@ -4981,10 +4961,10 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     .map(x => String(x || '').toUpperCase())
                     .filter(x => x && x !== FUND_POOL_PORTFOLIO_KEY);
                 if (!codes.length) {
-                    logMessage('SYSTEM', '组合内暂无可重置标的', 'warning');
+                    logMessage('SYSTEM', '组合内暂无可重置祖宗', 'warning');
                     return;
                 }
-                if (!window.confirm(`确认重置组合内全部 ${codes.length} 只标的的虚拟资金池吗？`)) return;
+                if (!window.confirm(`确认重置组合内全部 ${codes.length} 只祖宗的虚拟资金池吗？`)) return;
                 const failed = [];
                 for (const code of codes) {
                     try {
@@ -5351,7 +5331,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             const liveWeightsRow = document.getElementById('runtime-live-allocation-weights-row');
             const drawer = document.getElementById('live-params-drawer');
             if (btnLabel) btnLabel.innerText = liveEnabled ? '运行参数' : '回测参数';
-            if (title) title.innerText = liveEnabled ? '运行参数（实盘）' : '运行参数（回测）';
+            if (title) title.innerText = liveEnabled ? '运行参数（近似实时）' : '运行参数（回测）';
             if (liveModeRow) liveModeRow.classList.toggle('hidden', !liveEnabled);
             if (liveWeightsRow) liveWeightsRow.classList.toggle('hidden', !liveEnabled);
             if (!liveEnabled && drawer && !drawer.classList.contains('pointer-events-none')) {
@@ -5556,7 +5536,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
         let fundamentalModuleDetailKey = '';
         let currentConfigMode = 'wizard';
         let configPreviewBound = false;
-        let tdxLiveCompliancePending = false;  // 标记待确认的TDX+实盘合规
+        let tdxLiveCompliancePending = false;  // 标记待确认的TDX+近似实时合规
         let tdxLiveComplianceAcknowledged = false;  // 标记是否已确认过本会话
 
         function normalizeFundamentalInterfaceOptions(catalog) {
@@ -5586,20 +5566,21 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 title: '系统总控',
                 subtitle: '运行模式与全局开关',
                 fields: [
-                    { path: 'system.mode', label: '运行模式', type: 'select', options: [{ value: 'backtest', label: '回测模式' }, { value: 'live', label: '实盘模式' }], desc: '选择实盘模式即启用实盘监控与交易' },
-                    // 自动实盘启动：默认开启，默认时间 09:20，可按运营需要在配置中心改动。
-                    { path: 'system.live_auto_start_enabled', label: '自动开启实盘', type: 'boolean', default: true, desc: '开启后在指定时间自动拉起实盘任务（仅在运行模式=实盘且启用实盘时触发）' },
-                    { path: 'system.live_auto_start_time', label: '自动开启时间', type: 'text', default: '09:20', placeholder: 'HH:MM，例如 09:20', desc: '24小时制，格式 HH:MM；配置非法时服务端会回退到 09:20' },
+                    { path: 'system.mode', label: '运行模式', type: 'select', options: [{ value: 'backtest', label: '回测模式' }, { value: 'live', label: '近似实时模式' }], desc: '选择近似实时模式即启用近似实时监控与交易' },
+                    // 自动近似实时启动：默认开启，默认时间 09:20，可按运营需要在配置中心改动。
+                    { path: 'system.live_auto_start_enabled', label: '自动开启近似实时', type: 'boolean', default: true, desc: '开启后在指定时间自动拉起近似实时任务（仅在运行模式=近似实时且启用近似实时时触发）' },
+                    { path: 'system.live_auto_start_time', label: '自动开启时间', type: 'time', default: '09:20', desc: '24小时制；配置非法时服务端会回退到 09:20' },
+                    { path: 'system.live_auto_start_strategy_ids', label: '自动启动策略范围', type: 'strategy_multi_select', desc: '自动开启近似实时时使用的策略，多选勾选后保存，留空使用默认规则' },
                     { path: 'system.initial_capital', label: '系统初始资金', type: 'number', unit: '元', min: 10000, max: 100000000, step: 10000, slider: true },
-                    { path: 'system.live_kline_log_on_change_only', label: 'K线明细仅变化时打印', type: 'boolean', desc: '开启后仅在分钟K线数据变化时打印明细，减少并发标的日志噪声' },
+                    { path: 'system.live_kline_log_on_change_only', label: 'K线明细仅变化时打印', type: 'boolean', desc: '开启后仅在分钟K线数据变化时打印明细，减少并发祖宗日志噪声' },
                     { path: 'system.log_level', label: '日志级别', type: 'select', options: [{ value: 'DEBUG', label: '调试' }, { value: 'INFO', label: '信息' }, { value: 'WARNING', label: '警告' }, { value: 'ERROR', label: '错误' }] }
                 ]
             },
             {
-                title: '太子院标的池',
-                subtitle: '标的列表与监控对象',
+                title: '太子院祖宗池',
+                subtitle: '祖宗列表与监控对象',
                 fields: [
-                    { path: 'targets', label: '监控标的列表', type: 'lines', itemType: 'string', hint: '每行一个股票代码，例如 301227.SZ' }
+                    { path: 'targets', label: '监控祖宗列表', type: 'lines', itemType: 'string', hint: '每行一个股票代码，例如 301227.SZ' }
                 ]
             },
             {
@@ -5608,7 +5589,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 fields: [
                     { path: 'data_provider.source', label: '主数据源', type: 'select', options: [{ value: 'default', label: 'default' }, { value: 'akshare', label: 'akshare' }, { value: 'tushare', label: 'tushare' }, { value: 'mysql', label: 'mysql' }, { value: 'postgresql', label: 'postgresql' }, { value: 'duckdb', label: 'duckdb' }, { value: 'tdx', label: 'tdx' }] },
                     { path: 'data_provider.enable_fallback', label: '启用数据回退', type: 'boolean' },
-                    { path: 'live_monitoring.minute_close_confirm.enabled', label: '分钟收盘确认触发', type: 'boolean', desc: '开启后实盘信号在下一分钟到来时，按上一分钟已收盘K线触发，减少分钟内抖动误触发。' },
+                    { path: 'live_monitoring.minute_close_confirm.enabled', label: '分钟收盘确认触发', type: 'boolean', desc: '开启后近似实时信号在下一分钟到来时，按上一分钟已收盘K线触发，减少分钟内抖动误触发。' },
                     { path: 'data_provider.backtest_cache_db_source', label: '回测缓存落库源', type: 'select', options: [{ value: '', label: '关闭' }, { value: 'mysql', label: 'mysql' }, { value: 'postgresql', label: 'postgresql' }, { value: 'duckdb', label: 'duckdb' }] },
                     { path: 'data_provider.tushare_api_url', label: 'Tushare接口地址', type: 'text', when: [{ path: 'data_provider.source', equals: 'tushare' }] },
                     { path: 'data_provider.tushare_token', label: 'Tushare令牌', type: 'password', secret: true, when: [{ path: 'data_provider.source', equals: 'tushare' }] },
@@ -5673,13 +5654,13 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             },
             {
                 title: '基本面适配器',
-                subtitle: '全局可插拔（回测/实盘共用，按接口勾选）',
+                subtitle: '全局可插拔（回测/近似实时共用，按接口勾选）',
                 fields: [
                     { path: 'fundamental_adapter.enabled', label: '启用基本面适配器', type: 'boolean' },
                     { path: 'fundamental_adapter.apply_in_backtest', label: '回测阶段启用', type: 'boolean' },
-                    { path: 'fundamental_adapter.apply_in_live', label: '实盘阶段启用', type: 'boolean' },
+                    { path: 'fundamental_adapter.apply_in_live', label: '近似实时阶段启用', type: 'boolean' },
                     { path: 'fundamental_adapter.prefetch_on_backtest_start', label: '回测启动前自动预热', type: 'boolean' },
-                    { path: 'fundamental_adapter.provider', label: '提供方', type: 'select', options: [{ value: 'tushare', label: 'tushare' }, { value: 'tdx', label: 'tdx' }] },
+                    { path: 'fundamental_adapter.provider', label: '提供方', type: 'select', options: [{ value: 'tushare', label: 'tushare', desc: '提供完整基本面数据（PE/PB/ROE等），需要Tushare积分账号' }, { value: 'tdx', label: 'tdx', desc: '仅提供行情数据（最新价/日线变化），基本面字段为空' }] },
                     { path: 'fundamental_adapter.cache_ttl_sec', label: '缓存TTL(秒)', type: 'number', min: 60, max: 604800, step: 60, slider: true },
                     { path: 'fundamental_adapter.min_refresh_interval_sec', label: '最小刷新间隔(秒)', type: 'number', min: 30, max: 43200, step: 30, slider: true },
                     { path: 'fundamental_adapter.disk_persist_enabled', label: '开启落盘缓存', type: 'boolean', desc: '开启后将每次抓取结果写入项目目录，便于人工核对与复盘。' },
@@ -5723,7 +5704,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     { path: 'history_sync.custom_end_time', label: '自定义结束时间', type: 'text', placeholder: '例如：2026-03-31 15:00:00', desc: '格式：YYYY-MM-DD HH:MM:SS；time_mode=custom时生效' },
                     { path: 'history_sync.session_only', label: '仅交易时段(09:30-15:00)', type: 'boolean' },
                     { path: 'history_sync.intraday_mode', label: '盘中窗口模式', type: 'boolean' },
-                    { path: 'history_sync.max_codes', label: '默认标的上限', type: 'number', min: 1, max: 50000, step: 1, slider: true },
+                    { path: 'history_sync.max_codes', label: '默认祖宗上限', type: 'number', min: 1, max: 50000, step: 1, slider: true },
                     { path: 'history_sync.batch_size', label: '默认分批条数', type: 'number', min: 1, max: 5000, step: 1, slider: true },
                     { path: 'history_sync.dry_run', label: '默认仅预演（不写库）', type: 'boolean', desc: '开启=只统计缺失与预计写入，不执行落库；关闭=真实写入数据库' }
                 ]
@@ -5804,15 +5785,15 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     {
                         title: '先选主数据源',
                         fields: [
-                            { path: 'data_provider.source', label: '主数据源', type: 'select', options: [{ value: 'default', label: 'default' }, { value: 'akshare', label: 'akshare' }, { value: 'tushare', label: 'tushare' }, { value: 'mysql', label: 'mysql' }, { value: 'postgresql', label: 'postgresql' }, { value: 'duckdb', label: 'duckdb' }, { value: 'tdx', label: 'tdx' }], uiRelations: [{ area: '前台回测/实盘入口', effect: '决定后续所有行情读取来源' }] }
+                            { path: 'data_provider.source', label: '主数据源', type: 'select', options: [{ value: 'default', label: 'default' }, { value: 'akshare', label: 'akshare' }, { value: 'tushare', label: 'tushare' }, { value: 'mysql', label: 'mysql' }, { value: 'postgresql', label: 'postgresql' }, { value: 'duckdb', label: 'duckdb' }, { value: 'tdx', label: 'tdx' }], uiRelations: [{ area: '前台回测/近似实时入口', effect: '决定后续所有行情读取来源' }] }
                         ]
                     },
                     {
                         title: '当前数据源的必填项',
                         fields: [
-                            { path: 'data_provider.default_api_url', label: '默认数据服务地址', type: 'text', when: [{ path: 'data_provider.source', equals: 'default' }], placeholder: 'http://your-api-server:port', uiRelations: [{ area: '回测与实盘', effect: '自建数据服务的 HTTP 接口地址' }] },
-                            { path: 'data_provider.default_api_key', label: '默认数据服务密钥', type: 'password', secret: true, when: [{ path: 'data_provider.source', equals: 'default' }], uiRelations: [{ area: '回测与实盘', effect: '访问自建数据服务的认证密钥' }] },
-                            { path: 'data_provider.duckdb_path', label: 'DuckDB文件路径', type: 'text', when: [{ path: 'data_provider.source', equals: 'duckdb' }], placeholder: '/Users/xxx/duckdb/quantifydata.duckdb 或 G:/duckdb/quantifydata.duckdb', uiRelations: [{ area: '回测与实盘', effect: '直接读取本地 DuckDB 文件' }] },
+                            { path: 'data_provider.default_api_url', label: '默认数据服务地址', type: 'text', when: [{ path: 'data_provider.source', equals: 'default' }], placeholder: 'http://your-api-server:port', uiRelations: [{ area: '回测与近似实时', effect: '自建数据服务的 HTTP 接口地址' }] },
+                            { path: 'data_provider.default_api_key', label: '默认数据服务密钥', type: 'password', secret: true, when: [{ path: 'data_provider.source', equals: 'default' }], uiRelations: [{ area: '回测与近似实时', effect: '访问自建数据服务的认证密钥' }] },
+                            { path: 'data_provider.duckdb_path', label: 'DuckDB文件路径', type: 'text', when: [{ path: 'data_provider.source', equals: 'duckdb' }], placeholder: '/Users/xxx/duckdb/quantifydata.duckdb 或 G:/duckdb/quantifydata.duckdb', uiRelations: [{ area: '回测与近似实时', effect: '直接读取本地 DuckDB 文件' }] },
                             { path: 'data_provider.mysql_host', label: 'MySQL主机', type: 'text', when: [{ path: 'data_provider.source', equals: 'mysql' }], placeholder: 'localhost 或 192.168.x.x' },
                             { path: 'data_provider.mysql_port', label: 'MySQL端口', type: 'number', min: 1, max: 65535, step: 1, when: [{ path: 'data_provider.source', equals: 'mysql' }], placeholder: '3306' },
                             { path: 'data_provider.mysql_user', label: 'MySQL用户', type: 'text', when: [{ path: 'data_provider.source', equals: 'mysql' }], placeholder: 'root' },
@@ -5825,7 +5806,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                             { path: 'data_provider.postgres_database', label: 'PostgreSQL库名', type: 'text', when: [{ path: 'data_provider.source', equals: 'postgresql' }], placeholder: 'quantifydata' },
                             { path: 'data_provider.tushare_api_url', label: 'Tushare接口地址', type: 'text', when: [{ path: 'data_provider.source', equals: 'tushare' }], placeholder: 'http://api.tushare.pro' },
                             { path: 'data_provider.tushare_token', label: 'Tushare令牌', type: 'password', secret: true, when: [{ path: 'data_provider.source', equals: 'tushare' }], placeholder: '在 tushare.pro 注册后获取' },
-                            { path: 'data_provider.tdxdir', label: 'TDX数据目录(vipdoc上级，可留空自动走网络镜像)', type: 'text', when: [{ path: 'data_provider.source', equals: 'tdx' }], placeholder: 'Windows: C:/new_tdx  mac: 留空走网络', uiRelations: [{ area: '实盘与回测', effect: 'Windows 走本地 vipdoc，mac 可留空走网络镜像' }] }
+                            { path: 'data_provider.tdxdir', label: 'TDX数据目录(vipdoc上级，可留空自动走网络镜像)', type: 'text', when: [{ path: 'data_provider.source', equals: 'tdx' }], placeholder: 'Windows: C:/new_tdx  mac: 留空走网络', uiRelations: [{ area: '近似实时与回测', effect: 'Windows 走本地 vipdoc，mac 可留空走网络镜像' }] }
                         ]
                     },
                     {
@@ -5833,7 +5814,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                         advanced: true,
                         defaultOpen: false,
                         fields: [
-                            { path: 'data_provider.enable_fallback', label: '启用数据回退', type: 'boolean', uiRelations: [{ area: '前台回测/实盘入口', effect: '主数据源失败时是否尝试回退' }] },
+                            { path: 'data_provider.enable_fallback', label: '启用数据回退', type: 'boolean', uiRelations: [{ area: '前台回测/近似实时入口', effect: '主数据源失败时是否尝试回退' }] },
                             { path: 'data_provider.backtest_cache_db_source', label: '回测缓存落库源', type: 'select', options: [{ value: '', label: '关闭' }, { value: 'mysql', label: 'mysql' }, { value: 'postgresql', label: 'postgresql' }, { value: 'duckdb', label: 'duckdb' }], uiRelations: [{ area: '回测结果页', effect: '影响重复回测的数据缓存策略' }] }
                         ]
                     }
@@ -5858,28 +5839,29 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             },
             {
                 id: 'live',
-                title: '启用实盘',
-                subtitle: '实盘开关与监控标的',
+                title: '启用近似实时',
+                subtitle: '近似实时开关与监控祖宗',
                 icon: 'fa-rocket',
                 sections: [
-                    { title: '监控标的池', fields: [
-                        { path: 'targets', label: '监控标的列表', type: 'lines', itemType: 'string', hint: '每行一个股票代码，例如 600000.SH', uiRelations: [{ area: '实盘监控', effect: '决定实盘监控与交易的标的范围' }] }
+                    { title: '监控祖宗池', fields: [
+                        { path: 'targets', label: '监控祖宗列表', type: 'lines', itemType: 'string', hint: '每行一个股票代码，例如 600000.SH', uiRelations: [{ area: '近似实时监控', effect: '决定近似实时监控与交易的祖宗范围' }] }
                     ] },
-                    { title: '实盘开关', fields: [
-                        { path: 'system.mode', label: '运行模式', type: 'select', options: [{ value: 'backtest', label: '回测模式' }, { value: 'live', label: '实盘模式' }], uiRelations: [{ area: '前台主面板', effect: '选择实盘模式即启用实盘监控与交易' }] },
-                        { path: 'system.live_auto_start_enabled', label: '自动开启实盘', type: 'boolean', default: true },
-                        { path: 'system.live_auto_start_time', label: '自动开启时间', type: 'text', default: '09:20', placeholder: 'HH:MM' }
+                    { title: '近似实时开关', fields: [
+                        { path: 'system.mode', label: '运行模式', type: 'select', options: [{ value: 'backtest', label: '回测模式' }, { value: 'live', label: '近似实时模式' }], uiRelations: [{ area: '前台主面板', effect: '选择近似实时模式即启用近似实时监控与交易' }] },
+                        { path: 'system.live_auto_start_enabled', label: '自动开启近似实时', type: 'boolean', default: true },
+                        { path: 'system.live_auto_start_time', label: '自动开启时间', type: 'time', default: '09:20' },
+                        { path: 'system.live_auto_start_strategy_ids', label: '自动启动策略范围', type: 'strategy_multi_select', desc: '自动开启近似实时时使用的策略多选，留空使用默认规则', uiRelations: [{ area: '近似实时主面板', effect: '决定自动启动时使用的策略范围' }] }
                     ] }
                 ]
             },
             {
                 id: 'consistency',
                 title: '做一致性对比',
-                subtitle: '控制实盘与回测的一致性检查',
+                subtitle: '控制近似实时与回测的一致性检查',
                 icon: 'fa-balance-scale',
                 sections: [
                     { title: '一致性检查', fields: [
-                        { path: 'live_monitoring.minute_close_confirm.enabled', label: '分钟收盘确认触发', type: 'boolean', desc: '减少分钟内抖动误触发', uiRelations: [{ area: '实盘一致性', effect: '影响实盘信号与回测对齐方式' }] },
+                        { path: 'live_monitoring.minute_close_confirm.enabled', label: '分钟收盘确认触发', type: 'boolean', desc: '减少分钟内抖动误触发', uiRelations: [{ area: '近似实时一致性', effect: '影响近似实时信号与回测对齐方式' }] },
                         { path: 'live_monitoring.consistency_checks.enforce_adjustment_and_settlement_match', label: '强制复权/结算匹配', type: 'boolean', uiRelations: [{ area: '一致性报告', effect: '不一致时直接报错，避免错误对比' }] },
                         { path: 'live_monitoring.consistency_checks.signal_execution_delay_seconds_warn', label: '信号执行延迟告警阈值', type: 'number', min: 0, max: 120, step: 1, uiRelations: [{ area: '一致性报告', effect: '影响延迟告警阈值' }] }
                     ] }
@@ -6022,7 +6004,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             setMetricText('cfg-menxia-dayloss', fmtPct(dayLossPct), dayLossPct * 100);
             setMetricText('cfg-shangshu-slippage', fmtPct(slippage, 3), slippage * 100);
             setText('cfg-shangshu-mode', `${getByPath(cfg, 'system.mode', '--')}`);
-            setText('cfg-li-rites-live', getByPath(cfg, 'system.mode', 'backtest') === 'live' ? '实盘' : '回测');
+            setText('cfg-li-rites-live', getByPath(cfg, 'system.mode', 'backtest') === 'live' ? '近似实时' : '回测');
             setMetricText('cfg-li-capital', `¥ ${capital.toLocaleString()}`, capital);
             setMetricText('cfg-hu-commission', `${commissionRate.toFixed(6)}`, commissionRate);
             setMetricText('cfg-hu-minc', `¥ ${minCommission.toFixed(2)}`, minCommission);
@@ -6245,6 +6227,118 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 const relationHints = createFieldRelationHints(field);
                 if (relationHints) holder.appendChild(relationHints);
                 holder.appendChild(box);
+            } else if (field.type === 'strategy_multi_select') {
+                const box = document.createElement('div');
+                box.className = 'space-y-2';
+                const selected = new Set(Array.isArray(value) ? value.map(x => String(x).trim()) : []);
+                const rows = Array.isArray(strategyCatalog) ? strategyCatalog.filter(x => String(x?.id || '').trim()) : [];
+                if (!rows.length) {
+                    const empty = document.createElement('div');
+                    empty.className = 'text-[10px] text-slate-500';
+                    empty.innerText = '暂无可用策略，请稍后重试。';
+                    box.appendChild(empty);
+                } else {
+                    const searchId = `cfg-strategy-search-${String(field.path).replace(/[^\w]+/g, '-')}`;
+                    const listId = `cfg-strategy-list-${String(field.path).replace(/[^\w]+/g, '-')}`;
+                    const checkClass = `strategy-multi-${String(field.path).replace(/[^\w]+/g, '-')}`;
+                    const searchWrap = document.createElement('div');
+                    searchWrap.className = 'mb-1';
+                    searchWrap.innerHTML = `<input id="${searchId}" type="text" placeholder="搜索策略ID/名称" class="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] text-slate-100 font-mono" />`;
+                    box.appendChild(searchWrap);
+                    const allWrap = document.createElement('label');
+                    allWrap.className = 'flex items-center gap-2 text-[11px] text-slate-300 mb-1';
+                    const allBox = document.createElement('input');
+                    allBox.type = 'checkbox';
+                    allBox.checked = rows.length > 0 && selected.size >= rows.length;
+                    allWrap.appendChild(allBox);
+                    allWrap.appendChild(document.createTextNode('全选'));
+                    box.appendChild(allWrap);
+                    const listWrap = document.createElement('div');
+                    listWrap.id = listId;
+                    listWrap.className = 'h-28 overflow-y-auto space-y-1 border border-slate-700 rounded p-1 bg-slate-900/60';
+                    rows.forEach(row => {
+                        const sid = String(row?.id || '').trim();
+                        if (!sid) return;
+                        const label = document.createElement('label');
+                        label.className = 'flex items-start gap-2 text-xs text-slate-200 px-1 py-0.5 rounded hover:bg-slate-700/50';
+                        const input = document.createElement('input');
+                        input.type = 'checkbox';
+                        input.className = 'accent-purple-500 mt-0.5';
+                        input.checked = selected.has(sid);
+                        input.dataset.path = field.path;
+                        input.dataset.kind = 'strategy_item';
+                        input.dataset.value = sid;
+                        input.classList.add(checkClass);
+                        const txtWrap = document.createElement('span');
+                        txtWrap.className = 'leading-tight';
+                        const ttl = document.createElement('div');
+                        ttl.innerText = sid;
+                        txtWrap.appendChild(ttl);
+                        const name = String(row?.name || '').trim();
+                        if (name) {
+                            const sub = document.createElement('div');
+                            sub.className = 'text-[10px] text-slate-500';
+                            sub.innerText = name;
+                            txtWrap.appendChild(sub);
+                        }
+                        label.appendChild(input);
+                        label.appendChild(txtWrap);
+                        listWrap.appendChild(label);
+                    });
+                    box.appendChild(listWrap);
+                    setTimeout(() => {
+                        const el = document.getElementById(searchId);
+                        if (el) el.addEventListener('input', () => {
+                            const q = el.value.toLowerCase();
+                            listWrap.querySelectorAll('label').forEach(lbl => {
+                                const text = lbl.textContent.toLowerCase();
+                                lbl.style.display = text.includes(q) ? '' : 'none';
+                            });
+                        });
+                    }, 0);
+                    allBox.addEventListener('change', () => {
+                        listWrap.querySelectorAll(`.${checkClass}`).forEach(cb => {
+                            cb.checked = allBox.checked;
+                            const lbl = cb.closest('label');
+                            if (lbl) lbl.style.display = '';
+                        });
+                    });
+                }
+                if (field.desc) {
+                    const desc = document.createElement('div');
+                    desc.className = 'text-[10px] text-slate-500';
+                    desc.innerText = field.desc;
+                    box.appendChild(desc);
+                }
+                const relationHints = createFieldRelationHints(field);
+                if (relationHints) holder.appendChild(relationHints);
+                holder.appendChild(box);
+            } else if (field.type === 'time') {
+                const line = document.createElement('div');
+                line.className = 'flex items-center gap-2';
+                const input = document.createElement('input');
+                input.type = 'time';
+                input.className = 'w-40 bg-slate-900 border border-slate-700 rounded p-2 text-xs text-slate-100 focus:outline-none focus:ring-1 focus:ring-purple-500';
+                input.value = String(value || field.default || '').trim();
+                input.dataset.path = field.path;
+                input.dataset.kind = 'value';
+                input.dataset.valueType = 'string';
+                line.appendChild(input);
+                if (field.placeholder || field.hint) {
+                    const hint = document.createElement('span');
+                    hint.className = 'text-[10px] text-slate-400';
+                    hint.innerText = String(field.placeholder || field.hint || '');
+                    line.appendChild(hint);
+                }
+                holder.appendChild(line);
+                if (field.desc) {
+                    const desc = document.createElement('div');
+                    desc.className = 'text-[10px] text-slate-500';
+                    desc.innerText = field.desc;
+                    holder.appendChild(desc);
+                }
+                const relationHints = createFieldRelationHints(field);
+                if (relationHints) holder.appendChild(relationHints);
             } else {
                 const wrap = document.createElement('div');
                 wrap.className = 'space-y-1';
@@ -6455,6 +6549,9 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 const ops = document.createElement('div');
                 ops.className = 'mt-2 border border-cyan-800/60 rounded p-3 bg-slate-950/50 space-y-2';
                 ops.innerHTML = `
+                    <div class="text-[10px] text-amber-300 bg-amber-900/20 rounded p-2 border border-amber-800/40">
+                        <i class="fa-solid fa-circle-info mr-1"></i>数据范围说明：TDX 仅含行情数据（最新价/日线），基本面字段（PE/PB/ROE等）为空；如需完整基本面数据请切换为 <strong>Tushare</strong> 并配置积分账号。
+                    </div>
                     <div class="text-[11px] text-cyan-300 font-bold">落盘缓存查询台（人工核对）</div>
                     <div class="flex flex-wrap items-center gap-2">
                         <input id="fund-cache-stock" class="bg-slate-900 border border-slate-700 rounded p-2 text-xs text-slate-100 w-36" placeholder="股票代码 600000 或 600000.SH" />
@@ -6625,6 +6722,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             const out = JSON.parse(JSON.stringify(configDraft || {}));
             const checklistMap = {};
             const mapValueMap = {};
+            const strategyItemListMap = {};
             document.querySelectorAll('#config-form-container [data-path]').forEach(el => {
                 const path = el.dataset.path;
                 const kind = el.dataset.kind;
@@ -6661,6 +6759,11 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     if (!key) return;
                     if (!mapValueMap[path]) mapValueMap[path] = {};
                     mapValueMap[path][key] = !!el.checked;
+                } else if (kind === 'strategy_item') {
+                    const v = String(el.dataset.value || '').trim();
+                    if (!strategyItemListMap[path]) strategyItemListMap[path] = [];
+                    if (!v) return;
+                    if (el.checked) strategyItemListMap[path].push(v);
                 }
             });
             Object.keys(checklistMap).forEach(path => {
@@ -6669,6 +6772,10 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             });
             Object.keys(mapValueMap).forEach(path => {
                 setByPath(out, path, mapValueMap[path]);
+            });
+            Object.keys(strategyItemListMap).forEach(path => {
+                const arr = Array.from(new Set((strategyItemListMap[path] || []).map(x => String(x).trim()).filter(Boolean)));
+                setByPath(out, path, arr);
             });
             return out;
         }
@@ -7155,9 +7262,9 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             }
             if (encodingEl) encodingEl.value = encoding;
             const poolEl = document.getElementById('blk-stock-pool-csv');
-            const stockPoolCsv = String(poolEl?.value || 'data/任务生成_标的池.csv').trim() || 'data/任务生成_标的池.csv';
+            const stockPoolCsv = String(poolEl?.value || 'data/任务生成_祖宗池.csv').trim() || 'data/任务生成_祖宗池.csv';
             if (!stockPoolCsv.toLowerCase().endsWith('.csv') || stockPoolCsv.includes('..')) {
-                throw new Error('标的池CSV路径不合法');
+                throw new Error('祖宗池CSV路径不合法');
             }
             if (poolEl) poolEl.value = stockPoolCsv.replace(/\\/g, '/');
             const marketEl = document.getElementById('blk-market-tag');
@@ -7227,7 +7334,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 const source = await _collectBlkSourcePayload();
                 const encoding = String(document.getElementById('blk-encoding')?.value || 'auto').trim() || 'auto';
                 const normalizeSymbol = !!document.getElementById('blk-normalize-symbol')?.checked;
-                const stockPoolCsv = String(document.getElementById('blk-stock-pool-csv')?.value || 'data/任务生成_标的池.csv').trim() || 'data/任务生成_标的池.csv';
+                const stockPoolCsv = String(document.getElementById('blk-stock-pool-csv')?.value || 'data/任务生成_祖宗池.csv').trim() || 'data/任务生成_祖宗池.csv';
                 const importMode = String(document.getElementById('blk-import-mode')?.value || 'append').trim() || 'append';
                 const marketTag = String(document.getElementById('blk-market-tag')?.value || '主板').trim() || '主板';
                 const industryTag = String(document.getElementById('blk-industry-tag')?.value || 'BLK导入').trim() || 'BLK导入';
@@ -7705,7 +7812,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 tasksCsv = _normalizeTaskCsvPath(tasksCsv, DEFAULT_TASKS_CSV);
                 const tasksInput = document.getElementById('blk-tasks-csv');
                 if (tasksInput) tasksInput.value = tasksCsv;
-                const stocksCsv = String(document.getElementById('blk-stock-pool-csv')?.value || 'data/任务生成_标的池.csv').trim() || 'data/任务生成_标的池.csv';
+                const stocksCsv = String(document.getElementById('blk-stock-pool-csv')?.value || 'data/任务生成_祖宗池.csv').trim() || 'data/任务生成_祖宗池.csv';
                 const strategiesCsv = String(document.getElementById('blk-strategies-csv')?.value || 'data/任务生成_策略池.csv').trim() || 'data/任务生成_策略池.csv';
                 await syncBatchStrategyPoolFromUi();
                 const res = await fetch('/api/batch/generate_tasks', {
@@ -8674,8 +8781,8 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 if (!res.ok || data.status !== 'success') throw new Error(data.msg || '重复推送失败');
                 const dayText = String(data.date || '--');
                 const stockCount = Number(data.stock_count || 0);
-                updateWebhookRetryStatus(`已完成手动重复推送：${dayText}（${stockCount}只标的）`);
-                logMessage('SYSTEM', `日终汇总已手动重复推送：${dayText}（${stockCount}只标的）`, 'success');
+                updateWebhookRetryStatus(`已完成手动重复推送：${dayText}（${stockCount}只祖宗）`);
+                logMessage('SYSTEM', `日终汇总已手动重复推送：${dayText}（${stockCount}只祖宗）`, 'success');
             } catch (e) {
                 updateWebhookRetryStatus(`重复推送失败: ${e}`);
                 logMessage('SYSTEM', `手动重复推送日终汇总失败: ${e}`, 'danger');
@@ -8727,7 +8834,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
 
         function openWebhookRetryCenter() {
             if (!liveEnabled) {
-                logMessage('SYSTEM', '当前为回测模式，推送补偿仅在实盘模式可用', 'warning');
+                logMessage('SYSTEM', '当前为回测模式，推送补偿仅在近似实时模式可用', 'warning');
                 return;
             }
             const modal = document.getElementById('webhook-retry-modal');
@@ -8744,6 +8851,16 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             const status = document.getElementById('config-save-status');
             try {
                 if (status) status.innerText = '加载中...理财有风险，投资需谨慎';
+                // 确保策略目录已加载（自动启动策略范围多选需要 strategyCatalog）
+                if (!Array.isArray(strategyCatalog) || strategyCatalog.length === 0) {
+                    try {
+                        const sr = await fetch('/api/strategies');
+                        const sd = await sr.json();
+                        if (sd.status === 'success' && Array.isArray(sd.strategies)) {
+                            strategyCatalog = sd.strategies.map(s => ({ id: String(s.id), name: String(s.name || '') }));
+                        }
+                    } catch (_) {}
+                }
                 const res = await fetch('/api/config');
                 const data = await res.json();
                 if (data.status !== 'success') throw new Error(data.msg || '读取配置失败');
@@ -8802,12 +8919,14 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 updateConfigModeUi();
                 const savedMode = String(data.mode || getByPath(configDraft, 'system.mode', 'backtest'));
                 const liveReady = data.live_enabled === true;
-                if (status) status.innerText = `保存成功，已生效（模式=${savedMode}，实盘生效=${liveReady ? '是' : '否'}）`;
+                if (status) status.innerText = `保存成功，已生效（模式=${savedMode}，近似实时生效=${liveReady ? '是' : '否'}）`;
                 await syncStatus();
-                logMessage('SYSTEM', `配置保存成功并已生效（模式=${savedMode}，实盘生效=${liveReady ? '是' : '否'}）`, 'success');
+                logMessage('SYSTEM', `配置保存成功并已生效（模式=${savedMode}，近似实时生效=${liveReady ? '是' : '否'}）`, 'success');
 
                 // Reset compliance flag after successful save
                 tdxLiveComplianceAcknowledged = false;
+
+                setTimeout(() => closeConfigCenter(), 600);
             } catch (e) {
                 if (status) status.innerText = `保存失败: ${e}`;
             }
@@ -9337,7 +9456,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 const usageNotice = String(r.usage_notice || '').trim();
                 const isBuiltin = !!r.builtin || String(r.source || '').toLowerCase() === 'builtin';
                 const usageHtml = isBuiltin
-                    ? `<span class="inline-flex items-center px-2 py-0.5 rounded border border-rose-500 bg-rose-900/40 text-rose-300 text-[11px] font-semibold">⚠ 内置策略提醒</span><div class="mt-1 text-rose-200">${shortText(usageNotice || '当前为内置策略，仅供测试研究使用，非投资建议，不构成买卖依据。')}</div>`
+                    ? `<span class="inline-flex items-center px-2 py-0.5 rounded border border-rose-500 bg-rose-900/40 text-rose-300 text-[11px] font-semibold">⚠ 内置策略提醒</span><div class="mt-1 text-rose-200">${shortText(usageNotice || '当前为内置策略，仅供测试研究使用，非投资建议，不构成硅基流码依据。')}</div>`
                     : `<span class="text-slate-500">--</span>`;
                 const scoreRaw = r.score_total;
                 const scoreText = (scoreRaw === null || scoreRaw === undefined || !Number.isFinite(Number(scoreRaw))) ? '--' : Number(scoreRaw).toFixed(1);
@@ -10690,8 +10809,8 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             const strategyHtml = (items || []).map(x => `<span class="inline-flex items-center gap-1"><i class="fa-solid fa-circle text-[9px]" style="color:${x.color}"></i>${x.name}</span>`).join('');
             legend.innerHTML = `
                 ${strategyHtml || '<span class="text-slate-500">暂无策略标记</span>'}
-                <span class="inline-flex items-center gap-1 text-slate-400"><i class="fa-solid fa-arrow-up"></i>买入</span>
-                <span class="inline-flex items-center gap-1 text-slate-400"><i class="fa-solid fa-arrow-down"></i>卖出</span>
+                <span class="inline-flex items-center gap-1 text-slate-400"><i class="fa-solid fa-arrow-up"></i>硅基</span>
+                <span class="inline-flex items-center gap-1 text-slate-400"><i class="fa-solid fa-arrow-down"></i>流码</span>
             `;
         }
 
@@ -11185,7 +11304,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             const qty = data.qty || 0;
             const strategy = data.strategy || '--';
             const tradeDt = formatDateTime(data.dt);
-            const dirText = dir === 'BUY' ? '买入' : (dir === 'SELL' ? '卖出' : dir);
+            const dirText = dir === 'BUY' ? '硅基' : (dir === 'SELL' ? '流码' : dir);
             const actionEl = document.getElementById('war-action');
             if (actionEl) {
                 actionEl.innerText = dirText;
@@ -11203,7 +11322,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
 
         function renderLiveTradeExec(data) {
             const dirRaw = String(data?.direction || '--').toUpperCase();
-            const dirText = dirRaw === 'BUY' ? '买入' : (dirRaw === 'SELL' ? '卖出' : dirRaw);
+            const dirText = dirRaw === 'BUY' ? '硅基' : (dirRaw === 'SELL' ? '流码' : dirRaw);
             const priceNum = Number(data?.actual_price ?? data?.price ?? 0);
             const qty = Number(data?.qty || 0);
             const strategy = String(data?.strategy_id || '--');
@@ -11740,9 +11859,9 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             const meta = document.getElementById('consistency-snapshot-picker-meta');
             const listEl = document.getElementById('consistency-snapshot-picker-list');
             if (!listEl) return;
-            if (meta) meta.innerText = `共 ${consistencyCompareSnapshotRows.length} 条实盘记录，已选 ${consistencyCompareSelectedSnapshotIds.length} 条`;
+            if (meta) meta.innerText = `共 ${consistencyCompareSnapshotRows.length} 条近似实时记录，已选 ${consistencyCompareSelectedSnapshotIds.length} 条`;
             if (!consistencyCompareSnapshotRows.length) {
-                listEl.innerHTML = '<div class="text-slate-500">暂无可选实盘记录</div>';
+                listEl.innerHTML = '<div class="text-slate-500">暂无可选近似实时记录</div>';
                 return;
             }
             const selectedSet = new Set(consistencyCompareSelectedSnapshotIds.map(x => String(x)));
@@ -11796,7 +11915,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 const res = await fetch(`/api/consistency/snapshots?${qs.toString()}`);
                 const data = await res.json();
                 if (!res.ok || String(data.status || '').toLowerCase() !== 'success') {
-                    throw new Error(data.msg || '加载实盘记录失败');
+                    throw new Error(data.msg || '加载近似实时记录失败');
                 }
                 consistencyCompareSnapshotRows = Array.isArray(data.items) ? data.items : [];
                 const validIds = new Set(consistencyCompareSnapshotRows.map(x => String(x.snapshot_id || '')));
@@ -11893,14 +12012,14 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             summarizeConsistencyCompareStrategySelection(selectedStrategyIds);
             setConsistencySnapshotSelectionMode('auto');
             setConsistencyBacktestSourceType('existing_report');
-            setConsistencyCompareStatus('请先选择实盘范围和回测来源。');
+            setConsistencyCompareStatus('请先选择近似实时范围和回测来源。');
         }
 
         async function startConsistencyCompare() {
             if (consistencyCompareRunning) return;
             const payload = buildConsistencyComparePayloadBase();
             if (!payload.code || !payload.start_date || !payload.end_date) {
-                setConsistencyCompareStatus('请先填写标的代码、开始日期和结束日期。', 'error');
+                setConsistencyCompareStatus('请先填写祖宗代码、开始日期和结束日期。', 'error');
                 return;
             }
             const snapshotMode = getConsistencySnapshotSelectionMode();
@@ -11910,7 +12029,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             if (snapshotMode === 'manual') {
                 payload.selected_snapshot_ids = consistencyCompareSelectedSnapshotIds.slice();
                 if (!payload.selected_snapshot_ids.length) {
-                    setConsistencyCompareStatus('你已切换为手动挑选，请先勾选至少 1 条实盘记录。', 'error');
+                    setConsistencyCompareStatus('你已切换为手动挑选，请先勾选至少 1 条近似实时记录。', 'error');
                     return;
                 }
             }
@@ -12108,7 +12227,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                             <div class="px-2 py-1 rounded-full border ${headlineCls} text-xs font-semibold">${evolutionEscapeHtml(headline)}</div>
                         </div>
                         <div class="grid grid-cols-3 gap-2 mb-2 text-xs">
-                            <div class="rounded bg-slate-950/40 px-2 py-2"><div class="text-slate-400">实盘</div><div class="text-white font-semibold">${evolutionEscapeHtml(String(liveTradeCount))} 笔</div></div>
+                            <div class="rounded bg-slate-950/40 px-2 py-2"><div class="text-slate-400">近似实时</div><div class="text-white font-semibold">${evolutionEscapeHtml(String(liveTradeCount))} 笔</div></div>
                             <div class="rounded bg-slate-950/40 px-2 py-2"><div class="text-slate-400">回测</div><div class="text-white font-semibold">${evolutionEscapeHtml(String(replayTradeCount))} 笔</div></div>
                             <div class="rounded bg-slate-950/40 px-2 py-2"><div class="text-slate-400">不一致</div><div class="text-rose-300 font-semibold">${evolutionEscapeHtml(String(mismatchCount))} 笔</div></div>
                         </div>
@@ -12163,13 +12282,13 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             const tagLabelMap = {
                 no_material_diff: '没有发现明显差异',
                 execution_mismatch: '执行结果不一致',
-                signal_count_drift: '信号次数和实盘不一样',
-                signal_direction_drift: '买卖方向和实盘不一致',
-                position_size_mismatch: '买卖数量和实盘不一致',
-                slippage_drift: '成交价格和实盘有差别',
-                timing_drift: '成交时间和实盘有差别',
-                live_risk_intercept: '实盘被风控拦截过',
-                pnl_drift: '盈亏结果和实盘不一致',
+                signal_count_drift: '信号次数和近似实时不一样',
+                signal_direction_drift: '硅基流码方向和近似实时不一致',
+                position_size_mismatch: '硅基流码数量和近似实时不一致',
+                slippage_drift: '成交价格和近似实时有差别',
+                timing_drift: '成交时间和近似实时有差别',
+                live_risk_intercept: '近似实时被风控拦截过',
+                pnl_drift: '盈亏结果和近似实时不一致',
                 performance_drift: '整体收益表现不一致',
                 risk_profile_drift: '风险表现不一致'
             };
@@ -12185,25 +12304,25 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             let conclusionTitle = '';
             let conclusionDesc = '';
             if (liveTradeCount > 0 && replayTradeCount === 0) {
-                conclusionTitle = '这次回测没有复现出实盘交易';
-                conclusionDesc = '历史实盘里已经发生了买卖，但按当前回测方式复盘时，没有出现对应成交。';
+                conclusionTitle = '这次回测没有复现出近似实时交易';
+                conclusionDesc = '历史近似实时里已经发生了硅基流码，但按当前回测方式复盘时，没有出现对应成交。';
             } else if (mismatchCount > 0) {
-                conclusionTitle = '回测结果和实盘存在明显差异';
+                conclusionTitle = '回测结果和近似实时存在明显差异';
                 conclusionDesc = '系统找到了相同区间的数据，但成交数量、价格、方向或盈亏并没有完全对上。';
             } else {
-                conclusionTitle = '本次回测和实盘基本一致';
-                conclusionDesc = '从当前可比较的数据看，回测结果与实盘表现接近。';
+                conclusionTitle = '本次回测和近似实时基本一致';
+                conclusionDesc = '从当前可比较的数据看，回测结果与近似实时表现接近。';
             }
             const reasonCards = tags.length
                 ? tags.map(tag => `<div class="rounded-lg border border-amber-500/30 bg-amber-950/15 px-3 py-2 text-sm text-amber-100">${evolutionEscapeHtml(tagLabelMap[tag] || tag)}</div>`).join('')
                 : '<div class="text-slate-400 text-sm">暂无明显异常原因</div>';
             const suggestionList = [];
             if (liveTradeCount > 0 && replayTradeCount === 0) {
-                suggestionList.push('优先检查该策略当前参数、触发周期和历史实盘运行时是否一致。');
+                suggestionList.push('优先检查该策略当前参数、触发周期和历史近似实时运行时是否一致。');
                 suggestionList.push('优先补采信号、风控、委托明细，这样才能继续定位是“没发出信号”还是“被中途拦截”。');
             }
             if (riskInterceptCount > 0) {
-                suggestionList.push('重点查看实盘风控记录，确认是否存在回测未覆盖的限制条件。');
+                suggestionList.push('重点查看近似实时风控记录，确认是否存在回测未覆盖的限制条件。');
             }
             if (comparisonMode === 'simplified_from_live_fund_pool') {
                 suggestionList.push('当前是简化对比，只能说明成交结果不同，不能直接判断具体是哪一层出错。');
@@ -12238,7 +12357,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                         </div>
                         <div class="grid md:grid-cols-2 gap-3 text-sm">
                             <div class="rounded bg-slate-950/40 px-3 py-2">
-                                <div class="text-slate-400 mb-1">实盘记录</div>
+                                <div class="text-slate-400 mb-1">近似实时记录</div>
                                 <div>方向：<span class="text-white">${evolutionEscapeHtml(liveDir)}</span></div>
                                 <div>时间：<span class="text-white">${evolutionEscapeHtml(String(liveTime))}</span></div>
                                 <div>价格：<span class="text-white">${evolutionEscapeHtml(String(item.live?.price ?? '--'))}</span></div>
@@ -12267,7 +12386,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                         </div>
                     </div>
                     <div class="grid md:grid-cols-4 gap-3">
-                        <div class="rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-3"><div class="text-slate-400 text-sm">实盘成交次数</div><div class="text-2xl font-bold text-white">${evolutionEscapeHtml(String(liveTradeCount))}</div></div>
+                        <div class="rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-3"><div class="text-slate-400 text-sm">近似实时成交次数</div><div class="text-2xl font-bold text-white">${evolutionEscapeHtml(String(liveTradeCount))}</div></div>
                         <div class="rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-3"><div class="text-slate-400 text-sm">回测成交次数</div><div class="text-2xl font-bold text-white">${evolutionEscapeHtml(String(replayTradeCount))}</div></div>
                         <div class="rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-3"><div class="text-slate-400 text-sm">不一致笔数</div><div class="text-2xl font-bold text-rose-300">${evolutionEscapeHtml(String(mismatchCount))}</div></div>
                         <div class="rounded-xl border border-slate-700 bg-slate-900/60 px-4 py-3"><div class="text-slate-400 text-sm">风控拦截次数</div><div id="consistency-risk-intercept-count" class="text-2xl font-bold text-amber-300">${evolutionEscapeHtml(String(riskInterceptCount))}</div></div>
@@ -12284,15 +12403,15 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                         <div class="text-base font-semibold text-white mb-3">基础信息</div>
                         <div class="grid md:grid-cols-2 gap-3 text-sm">
                             <div class="rounded bg-slate-950/40 px-3 py-2"><span class="text-slate-400">报告编号：</span><span class="text-white break-all">${evolutionEscapeHtml(String(data.report_id || '--'))}</span></div>
-                            <div class="rounded bg-slate-950/40 px-3 py-2"><span class="text-slate-400">标的代码：</span><span class="text-white">${evolutionEscapeHtml(String(data.code || '--'))}</span></div>
+                            <div class="rounded bg-slate-950/40 px-3 py-2"><span class="text-slate-400">祖宗代码：</span><span class="text-white">${evolutionEscapeHtml(String(data.code || '--'))}</span></div>
                             <div class="rounded bg-slate-950/40 px-3 py-2"><span class="text-slate-400">对比日期：</span><span class="text-white">${evolutionEscapeHtml(String(summary.snapshot_date || '--'))}</span></div>
-                            <div class="rounded bg-slate-950/40 px-3 py-2"><span class="text-slate-400">对比方式：</span><span class="text-white">${comparisonMode === 'simplified_from_live_fund_pool' ? '历史实盘简化对比' : '标准一致性对比'}</span></div>
+                            <div class="rounded bg-slate-950/40 px-3 py-2"><span class="text-slate-400">对比方式：</span><span class="text-white">${comparisonMode === 'simplified_from_live_fund_pool' ? '历史近似实时简化对比' : '标准一致性对比'}</span></div>
                         </div>
                         ${noteText ? `<div class="mt-3 rounded border border-amber-500/30 bg-amber-950/10 px-3 py-2 text-sm text-amber-100">说明：${evolutionEscapeHtml(noteText)}</div>` : ''}
                     </div>
                     <div class="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
                         <div class="text-base font-semibold text-white mb-3">关键指标对照</div>
-                        <table class="w-full text-left text-sm"><thead class="text-slate-400"><tr><th class="px-3 py-2">指标</th><th class="px-3 py-2">实盘</th><th class="px-3 py-2">回测</th><th class="px-3 py-2">差值</th></tr></thead><tbody>${metricHtml || '<tr><td colspan="4" class="px-3 py-3 text-slate-500">暂无指标数据</td></tr>'}</tbody></table>
+                        <table class="w-full text-left text-sm"><thead class="text-slate-400"><tr><th class="px-3 py-2">指标</th><th class="px-3 py-2">近似实时</th><th class="px-3 py-2">回测</th><th class="px-3 py-2">差值</th></tr></thead><tbody>${metricHtml || '<tr><td colspan="4" class="px-3 py-3 text-slate-500">暂无指标数据</td></tr>'}</tbody></table>
                     </div>
                     <div class="rounded-xl border border-slate-700 bg-slate-900/60 p-4">
                         <div class="flex items-center justify-between gap-3 mb-3">
@@ -12836,7 +12955,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 `运行状态: ${state.running ? '运行中' : '已停止'}  轮次: ${state.iteration ?? '--'}  最近状态: ${statusText || '--'}`,
                 `结果分布: 通过=${okCount}, 驳回=${rejectCount}, 异常=${errCount}, 入库=${committedCount}`,
                 `最佳策略: 评分=${topScoreText}, 夏普=${topSharpe}, 胜率=${topWin}`,
-                `最近一轮: 母策略=${latestParent}, 周期=${latestTf}, 标的=${latestStock}, 原因=${latestReason}`,
+                `最近一轮: 母策略=${latestParent}, 周期=${latestTf}, 祖宗=${latestStock}, 原因=${latestReason}`,
             ].join('\n');
         }
 
@@ -13323,7 +13442,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 const analysisHtml = analysisSummary ? ` <span class="text-cyan-300">· 分析=${evolutionEscapeHtml(analysisSummary)}</span>` : '';
                 const feedbackHtml = feedbackTags.length ? ` <span class="text-amber-300">· 标签=${evolutionEscapeHtml(feedbackTags.join(','))}</span>` : '';
                 const reportHtml = consistencyReportId ? ` <span class="text-violet-300">· 一致性=${evolutionEscapeHtml(consistencyReportId)}</span>` : '';
-                return `<div>[${evolutionEscapeHtml(r.time || '--')}] #${evolutionEscapeHtml(r.iteration || '--')} ${evolutionEscapeHtml(statusText)} 评分=${evolutionEscapeHtml(scoreCompact)} 耗时=${evolutionEscapeHtml(evolutionCostTextFromMs(r.cost_ms))}${thresholdText}${rawHint} · 母策略=${evolutionEscapeHtml(parent)} · 周期=${evolutionEscapeHtml(tf)} · 标的=${evolutionEscapeHtml(stock)}${llmText}${reasonHtml}${analysisHtml}${feedbackHtml}${reportHtml}${committed}</div>`;
+                return `<div>[${evolutionEscapeHtml(r.time || '--')}] #${evolutionEscapeHtml(r.iteration || '--')} ${evolutionEscapeHtml(statusText)} 评分=${evolutionEscapeHtml(scoreCompact)} 耗时=${evolutionEscapeHtml(evolutionCostTextFromMs(r.cost_ms))}${thresholdText}${rawHint} · 母策略=${evolutionEscapeHtml(parent)} · 周期=${evolutionEscapeHtml(tf)} · 祖宗=${evolutionEscapeHtml(stock)}${llmText}${reasonHtml}${analysisHtml}${feedbackHtml}${reportHtml}${committed}</div>`;
             }).join('');
         }
 

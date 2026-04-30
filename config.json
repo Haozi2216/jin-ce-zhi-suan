@@ -1,6 +1,6 @@
 {
   "system": {
-    "mode": "backtest",
+    "mode": "live",
     "enable_live": false,
     "initial_capital": 1000000,
     "live_kline_log_on_change_only": true,
@@ -23,12 +23,13 @@
       "evolution.llm.api_key"
     ],
     "live_auto_start_enabled": false,
-    "live_auto_start_time": "09:20"
+    "live_auto_start_time": "09:20",
+    "live_auto_start_strategy_ids": []
   },
   "data_provider": {
-    "source": "duckdb",
+    "source": "",
     "enable_fallback": false,
-    "tushare_api_url": "http://api.tushare.pro",
+    "tushare_api_url": "http://tushare.xyz",
     "tushare_token": "",
     "default_api_key": "",
     "default_api_url": "",
@@ -114,7 +115,7 @@
     "dry_run": false,
     "on_duplicate": "ignore",
     "write_mode": "direct_db",
-    "direct_db_source": "duckdb"
+    "direct_db_source": ""
   },
   "targets": [],
   "strategies": {
@@ -129,7 +130,7 @@
   },
   "trading_cost": {
     "commission_rate": 0.00025,
-    "min_commission": 5.0,
+    "min_commission": 5,
     "stamp_duty": 0.001,
     "transfer_fee": 0
   },
@@ -570,7 +571,7 @@
     "apply_in_backtest": true,
     "apply_in_live": true,
     "prefetch_on_backtest_start": true,
-    "provider": "tdx",
+    "provider": "tushare",
     "cache_ttl_sec": 0,
     "min_refresh_interval_sec": 0,
     "tushare_interfaces": {

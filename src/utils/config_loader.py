@@ -23,6 +23,18 @@ class ConfigLoader:
         "strategies.active_ids",
     }
 
+    @staticmethod
+    def _project_root():
+        """项目根目录。打包模式下优先使用环境变量 DESKTOP_CONFIG_DIR 或 PROJECT_ROOT。"""
+        env = (
+            os.environ.get("DESKTOP_CONFIG_DIR", "")
+            or os.environ.get("PROJECT_ROOT", "")
+        )
+        if env:
+            return env.strip()
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        return os.path.dirname(os.path.dirname(base_dir))
+
     def __new__(cls, config_path="config.json"):
         if cls._instance is None:
             cls._instance = super(ConfigLoader, cls).__new__(cls)
@@ -30,8 +42,10 @@ class ConfigLoader:
         return cls._instance
 
     def load_config(self, config_path):
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        project_root = os.path.dirname(os.path.dirname(base_dir))
+        # 打包模式下 PROJECT_ROOT 由 desktop_launcher.py 设置
+        # macOS .app 模式下 DESKTOP_CONFIG_DIR 指向用户可写目录
+        # dev 模式下基于 __file__ 反推
+        project_root = self._project_root()
         base_config_path = config_path if os.path.exists(config_path) else os.path.join(project_root, "config.json")
         base_config = self._load_json_config(base_config_path)
         private_config_path = str(
@@ -134,10 +148,6 @@ class ConfigLoader:
                 parent.pop(key, None)
             else:
                 break
-
-    def _project_root(self):
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        return os.path.dirname(os.path.dirname(base_dir))
 
     def _private_config_path(self, payload=None):
         override = str(os.environ.get("CONFIG_PRIVATE_PATH", "") or "").strip()

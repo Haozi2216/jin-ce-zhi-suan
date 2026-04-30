@@ -140,7 +140,7 @@
         let lastReportStrategyReports = [];
         let lastConsistencySummary = null;
         const STRATEGY_NAME_MAP = {
-            "00": "长期持有一次买入",
+            "00": "长期持有一次硅基",
             "01": "三周期共振波段",
             "02": "短线弱转强烂板",
             "03": "ETF行业轮动",
@@ -307,8 +307,8 @@
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
                         <div><div class="text-xs text-slate-400 mb-1">关键问题</div>${renderReviewList(s.highlights, '暂无关键问题')}</div>
                         <div><div class="text-xs text-slate-400 mb-1">主要风险</div>${renderReviewList(s.risks, '暂无风险提示')}</div>
-                        <div><div class="text-xs text-slate-400 mb-1">买入节点分析</div>${renderReviewList(buyItems, '本周期无买入节点')}</div>
-                        <div><div class="text-xs text-slate-400 mb-1">卖出节点分析</div>${renderReviewList(sellItems, '本周期无卖出节点')}</div>
+                        <div><div class="text-xs text-slate-400 mb-1">硅基节点分析</div>${renderReviewList(buyItems, '本周期无硅基节点')}</div>
+                        <div><div class="text-xs text-slate-400 mb-1">流码节点分析</div>${renderReviewList(sellItems, '本周期无流码节点')}</div>
                         <div><div class="text-xs text-slate-400 mb-1">参数优化建议</div>${renderReviewList(paramItems, '暂无参数建议')}</div>
                         <div><div class="text-xs text-slate-400 mb-1">下一轮实验方案</div>${renderReviewList(expItems, '暂无实验方案')}</div>
                     </div>
@@ -335,7 +335,7 @@
                         <div><div class="text-xs text-slate-400 mb-1">关键假设</div>${renderReviewList(s.keyAssumptions, '暂无关键假设')}</div>
                         <div><div class="text-xs text-slate-400 mb-1">业务质量代理评估</div>${renderReviewList(s.qualityAssessment, '暂无业务质量评估')}</div>
                         <div><div class="text-xs text-slate-400 mb-1">安全边际代理评估</div>${renderReviewList(s.marginOfSafety, '暂无安全边际评估')}</div>
-                        <div><div class="text-xs text-slate-400 mb-1">卖出标准检查</div>${renderReviewList(checklistItems, '暂无卖出标准检查')}</div>
+                        <div><div class="text-xs text-slate-400 mb-1">流码标准检查</div>${renderReviewList(checklistItems, '暂无流码标准检查')}</div>
                         <div><div class="text-xs text-slate-400 mb-1">三大风险</div>${renderReviewList(s.topRisks, '暂无风险提示')}</div>
                         <div><div class="text-xs text-slate-400 mb-1">监控指标</div>${renderReviewList(s.monitoringMetrics, '暂无监控指标')}</div>
                     </div>
@@ -1149,7 +1149,7 @@
                         const pnl = Number(t.pnl || 0);
                         const reason = String(t.reason || '--');
                         const dirCls = dir === 'BUY' ? 'text-rose-300' : (dir === 'SELL' ? 'text-emerald-300' : 'text-slate-300');
-                        const dirText = dir === 'BUY' ? '买入' : (dir === 'SELL' ? '卖出' : dir);
+                        const dirText = dir === 'BUY' ? '硅基' : (dir === 'SELL' ? '流码' : dir);
                         const pnlCls = pnl >= 0 ? 'text-rose-300' : 'text-emerald-300';
                         return `
                             <tr class="hover:bg-slate-800/40">

@@ -620,7 +620,7 @@ class BacktestCabinet:
                 })
                 return
             await self._emit('system', {'msg': f"开始回测 {self.stock_code} ({start_date.date()} - {end_date.date()})..."})
-            await self._emit('backtest_flow', {'module': '太子院', 'level': 'system', 'msg': f'校验标的与回测区间: {self.stock_code} {start_date.date()}~{end_date.date()}'})
+            await self._emit('backtest_flow', {'module': '太子院', 'level': 'system', 'msg': f'校验祖宗与回测区间: {self.stock_code} {start_date.date()}~{end_date.date()}'})
             await self._emit('backtest_flow', {'module': '工部', 'level': 'system', 'msg': f'装载行情数据: {self.stock_code} {start_date.date()}~{end_date.date()}...'})
             await self._emit('backtest_progress', {
                 'progress': 2,
@@ -944,7 +944,7 @@ class BacktestCabinet:
                     sid = signal['strategy_id']
                     await self._emit('zhongshu', {
                         'msg': f"策略 {sid} 生成信号",
-                        'details': f"> 标的: {signal['code']}<br>> 方向: {signal['direction']}<br>> 价格: {float(signal['price']):.2f}",
+                        'details': f"> 祖宗: {signal['code']}<br>> 方向: {signal['direction']}<br>> 价格: {float(signal['price']):.2f}",
                         'status': 'bg-trading-blue'
                     })
                     account = self.strategy_revenues.get(sid)
