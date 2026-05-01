@@ -1,6 +1,6 @@
 {
   "system": {
-    "mode": "live",
+    "mode": "backtest",
     "enable_live": false,
     "initial_capital": 1000000,
     "live_kline_log_on_change_only": true,
@@ -27,7 +27,7 @@
     "live_auto_start_strategy_ids": []
   },
   "data_provider": {
-    "source": "",
+    "source": "duckdb",
     "enable_fallback": false,
     "tushare_api_url": "http://tushare.xyz",
     "tushare_token": "",
@@ -130,7 +130,7 @@
   },
   "trading_cost": {
     "commission_rate": 0.00025,
-    "min_commission": 5,
+    "min_commission": 5.0,
     "stamp_duty": 0.001,
     "transfer_fee": 0
   },

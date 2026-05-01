@@ -1,6 +1,7 @@
 # src/utils/config_loader.py
 import json
 import os
+import sys
 
 class ConfigLoader:
     _instance = None
@@ -25,13 +26,21 @@ class ConfigLoader:
 
     @staticmethod
     def _project_root():
-        """项目根目录。打包模式下优先使用环境变量 DESKTOP_CONFIG_DIR 或 PROJECT_ROOT。"""
+        """项目根目录。打包模式下优先使用环境变量 DESKTOP_CONFIG_DIR 或 PROJECT_ROOT，
+        或回退到 sys._MEIPASS（_internal 目录）或 exe 所在目录。"""
         env = (
             os.environ.get("DESKTOP_CONFIG_DIR", "")
             or os.environ.get("PROJECT_ROOT", "")
         )
         if env:
             return env.strip()
+        if getattr(sys, "frozen", False):
+            meipass = getattr(sys, "_MEIPASS", None)
+            if meipass and os.path.isdir(meipass):
+                return meipass
+            exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+            if os.path.isdir(exe_dir):
+                return exe_dir
         base_dir = os.path.dirname(os.path.abspath(__file__))
         return os.path.dirname(os.path.dirname(base_dir))
 
