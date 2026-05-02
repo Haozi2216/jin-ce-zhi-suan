@@ -44,7 +44,7 @@ class WebhookNotifier:
         self._cfg_cache = {}
         self._cfg_cache_at = 0.0
         self._failed_lock = threading.Lock()
-        self._retry_lock = asyncio.Lock()
+        self._retry_lock = None
         self._last_retry_ts = 0.0
         self._strategy_name_map_cache = {}
         self._strategy_name_map_at = 0.0
@@ -795,6 +795,8 @@ class WebhookNotifier:
         self._rewrite_failed(cfg, keep_rows)
 
     async def _maybe_retry_failed(self, cfg):
+        if self._retry_lock is None:
+            self._retry_lock = asyncio.Lock()
         interval = max(1.0, float(cfg.get("failed_retry_interval_seconds", 30) or 30))
         now_ts = time.time()
         if (now_ts - self._last_retry_ts) < interval:
