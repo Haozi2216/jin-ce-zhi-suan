@@ -1,5 +1,7 @@
 import pandas as pd
 import os
+import threading
+import time
 try:
     import akshare as ak
 except ImportError:
@@ -7,9 +9,26 @@ except ImportError:
 
 class StockManager:
     def __init__(self):
+        # 缓存股票列表；尽量避免在 import 阶段做网络/重 IO，以免阻塞桌面端启动
         self.stocks = []
-        self.data_path = "data/stock_list.csv"
-        self._load_data()
+        self._loaded = False
+        self._load_lock = threading.Lock()
+        # 优先写入/读取用户可写目录（桌面端会注入 DESKTOP_CONFIG_DIR）
+        base_dir = os.environ.get("DESKTOP_CONFIG_DIR", "").strip()
+        if base_dir:
+            self.data_path = os.path.join(base_dir, "data", "stock_list.csv")
+        else:
+            self.data_path = "data/stock_list.csv"
+
+    def ensure_loaded(self):
+        # 仅首次调用时加载；避免 import 阶段卡住服务启动
+        if self._loaded:
+            return
+        with self._load_lock:
+            if self._loaded:
+                return
+            self._load_data()
+            self._loaded = True
 
     def _load_data(self):
         # 1. Try to load from local CSV
@@ -25,9 +44,16 @@ class StockManager:
         # 2. Try to fetch from Akshare (if available)
         # Note: Akshare might be blocked, so we wrap in try/except
         try:
+            # 桌面端默认禁用网络拉取，避免在无网络/被墙环境导致长时间阻塞
+            if os.environ.get("JZ_DISABLE_AKSHARE_STOCK_LIST", "").strip() == "1":
+                raise RuntimeError("Akshare fetch disabled by env JZ_DISABLE_AKSHARE_STOCK_LIST=1")
+            if ak is None:
+                raise RuntimeError("Akshare not available")
             print("[INFO] Fetching stock list from Akshare...")
+            t0 = time.time()
             # This interface is usually more stable than real-time quotes
             df = ak.stock_info_a_code_name() 
+            print(f"[INFO] Akshare stock list fetched in {time.time() - t0:.2f}s")
             # df columns: code, name
             
             # Generate simple Pinyin (simplified, as we don't have pypinyin)
@@ -71,6 +97,8 @@ class StockManager:
         ]
 
     def search(self, query):
+        # 保证在真正使用时才加载数据；服务启动不再被 import 副作用阻塞
+        self.ensure_loaded()
         if not query:
             return []
         

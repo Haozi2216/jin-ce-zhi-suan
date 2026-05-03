@@ -37,12 +37,9 @@ run_stress_tests.py
 evolution_backups/
 deployment_workspace/
 releases/
-desktop_launcher.py
-desktop.spec
 scripts/scripts.zip
-scripts/build_desktop.bat
-scripts/build_desktop.sh
 build/
 dist/
 server-start.log
 server-start-error.log
+.DS_Store

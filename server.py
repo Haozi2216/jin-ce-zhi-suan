@@ -25,7 +25,6 @@ import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.lines as mlines
-from matplotlib import font_manager
 from datetime import datetime, timedelta
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, BackgroundTasks, HTTPException, Request
 from fastapi.responses import HTMLResponse, StreamingResponse, Response, FileResponse
@@ -81,6 +80,13 @@ from src.consistency.adapters.backtest_report_adapter import BacktestReportAdapt
 import logging
 
 def _configure_matplotlib_font():
+    # 桌面端（Finder 双击）启动时，matplotlib 的字体扫描/缓存构建可能非常慢甚至卡死；
+    # 通过环境变量允许跳过字体枚举，只保留基础配置以保障服务启动成功。
+    if os.environ.get("JZ_SKIP_MPL_FONT_CONFIG", "").strip() == "1":
+        matplotlib.rcParams["axes.unicode_minus"] = False
+        return
+
+    from matplotlib import font_manager
     font_candidates = [
         "Microsoft YaHei",
         "SimHei",
