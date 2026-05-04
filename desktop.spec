@@ -61,6 +61,11 @@ static_path = os.path.join(project_root, "static")
 if os.path.isdir(static_path):
     datas.append((static_path, "static"))
 
+# databases/ 目录：内置数据库数据
+databases_path = os.path.join(project_root, "databases")
+if os.path.isdir(databases_path):
+    datas.append((databases_path, "databases"))
+
 # data/ 目录：用户数据，macOS 上运行时复制到 ~/Library/Application Support/
 data_path = os.path.join(project_root, "data")
 if os.path.isdir(data_path):

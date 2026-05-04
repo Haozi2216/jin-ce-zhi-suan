@@ -1,5 +1,6 @@
 import os
 import re
+import sys
 from datetime import datetime, timedelta
 
 import pandas as pd
@@ -36,8 +37,23 @@ class DuckDbProvider:
         raw = str(self.db_path or "").strip()
         if not raw:
             return ""
-        if raw == ":memory:" or os.path.exists(raw):
+        if raw == ":memory:" or os.path.isabs(raw) and os.path.exists(raw):
             return raw
+        # 优先尝试当前工作目录
+        if os.path.exists(raw):
+            return raw
+        # 打包模式下尝试 sys._MEIPASS（_internal 目录）
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            candidate = os.path.join(meipass, raw)
+            if os.path.exists(candidate):
+                return candidate
+        # 尝试 exe 所在目录
+        if getattr(sys, "frozen", False):
+            exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+            candidate = os.path.join(exe_dir, raw)
+            if os.path.exists(candidate):
+                return candidate
         root, ext = os.path.splitext(raw)
         if (not ext) and os.path.exists(f"{raw}.duckdb"):
             return f"{raw}.duckdb"

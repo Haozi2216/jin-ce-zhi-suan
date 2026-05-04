@@ -43,3 +43,4 @@ dist/
 server-start.log
 server-start-error.log
 .DS_Store
+databases/
