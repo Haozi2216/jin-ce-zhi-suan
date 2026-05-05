@@ -326,7 +326,9 @@
       "zhongshu",
       "menxia",
       "daily_summary",
-      "system"
+      "system",
+      "backtest_result",
+      "backtest_failed"
     ],
     "webhook_urls": [],
     "feishu_webhook_url": "",
@@ -347,7 +349,9 @@
       "D",
       "E",
       "F",
-      "I"
+      "I",
+      "J",
+      "K"
     ]
   },
   "strategy_params": {

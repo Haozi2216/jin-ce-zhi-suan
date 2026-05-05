@@ -323,6 +323,8 @@ evolution_gene_adapter = GeneStrategyAdapter(gene_run_repo=evolution_gene_run_re
 evolution_ws_events = deque(maxlen=2000)
 evolution_ws_lock = threading.Lock()
 evolution_ws_pump_task = None
+webhook_notify_audit = deque(maxlen=1000)
+webhook_notify_audit_lock = threading.Lock()
 pattern_thumb_building_keys = set()
 pattern_thumb_building_lock = threading.Lock()
 pattern_thumb_warmup_task = None
@@ -344,6 +346,27 @@ _WS_EVENT_THROTTLE_SECONDS = {
     "live_tick": 0.5,
 }
 _WS_SKIP_WEBHOOK_EVENT_TYPES = {"backtest_progress", "backtest_flow", "backtest_trade", "ministry_tick", "market", "live_tick"}
+
+
+def _append_webhook_notify_audit(event_type: str, stock_code: str, decision: str, detail: str = ""):
+    # 记录 webhook 决策轨迹，便于定位“事件未推送”的真实原因。
+    row = {
+        "time": datetime.now().isoformat(timespec="seconds"),
+        "event_type": str(event_type or ""),
+        "stock_code": str(stock_code or "").strip().upper(),
+        "decision": str(decision or ""),
+        "detail": str(detail or "")
+    }
+    with webhook_notify_audit_lock:
+        webhook_notify_audit.append(row)
+
+
+def _get_webhook_notify_audit(limit: int = 200) -> List[Dict[str, Any]]:
+    # 按时间倒序读取审计记录，默认返回最近 200 条。
+    cap = max(1, min(int(limit or 200), 1000))
+    with webhook_notify_audit_lock:
+        items = list(webhook_notify_audit)
+    return list(reversed(items[-cap:]))
 
 
 def _push_evolution_ws_event(payload: Dict[str, Any]) -> None:
@@ -1442,7 +1465,7 @@ async def _run_backtest_provider_precheck(stock_code: str, start: Optional[str],
         "stock": stock_code,
         "provider_source": provider_source,
         "stage": "startup_precheck"
-    }, broadcast_ws=broadcast_ws)
+    }, stock_code=stock_code, broadcast_ws=broadcast_ws)
     return False, provider_source, str(reason or "")
 
 def _iter_report_file_paths():
@@ -2525,6 +2548,14 @@ class WebhookDeleteRequest(BaseModel):
 
 class WebhookDailySummaryRepushRequest(BaseModel):
     date: Optional[str] = None
+
+class WebhookTestRequest(BaseModel):
+    # 可选事件类型，默认使用 system 以保证大多数通道可接收。
+    event_type: Optional[str] = "system"
+    # 可选股票代码，仅用于消息展示与上下文定位。
+    stock_code: Optional[str] = "000001.SZ"
+    # 可选测试消息，便于人工区分不同测试批次。
+    msg: Optional[str] = None
 
 class ConfigUpdateRequest(BaseModel):
     config: dict
@@ -7908,6 +7939,49 @@ async def api_webhook_repush_daily_summary(req: WebhookDailySummaryRepushRequest
         logger.error("manual repush daily_summary failed: %s", e, exc_info=True)
         return {"status": "error", "msg": str(e)}
 
+@app.post("/api/webhook/test")
+async def api_webhook_test(req: WebhookTestRequest):
+    try:
+        # 构造测试参数；msg 未传时使用默认文本，避免空字符串影响展示。
+        event_type = str(req.event_type or "system").strip() or "system"
+        stock_code = str(req.stock_code or "000001.SZ").strip().upper() or "000001.SZ"
+        msg_text = str(req.msg or "").strip() or "webhook test message"
+        # 使用独立测试方法绕过业务事件过滤，专注验证 webhook 通道可用性。
+        result = await webhook_notifier.test_delivery(
+            stock_code=stock_code,
+            event_type=event_type,
+            data={
+                "msg": msg_text,
+                "source": "api_webhook_test",
+                "trigger_at": datetime.now().isoformat(timespec="seconds")
+            }
+        )
+        if bool(result.get("ok", False)):
+            return {
+                "status": "success",
+                "msg": "webhook 测试发送成功",
+                "result": result
+            }
+        return {
+            "status": "error",
+            "msg": str(result.get("msg", "部分或全部通道发送失败")),
+            "result": result
+        }
+    except Exception as e:
+        logger.error("webhook test failed: %s", e, exc_info=True)
+        return {"status": "error", "msg": str(e)}
+
+
+@app.get("/api/webhook/audit/latest")
+async def api_webhook_audit_latest(limit: int = 200):
+    try:
+        # 回测模式也允许查看，便于排查回测结束通知问题。
+        rows = _get_webhook_notify_audit(limit=limit)
+        return {"status": "success", "count": len(rows), "events": rows}
+    except Exception as e:
+        logger.error("webhook audit latest failed: %s", e, exc_info=True)
+        return {"status": "error", "msg": str(e)}
+
 def _history_sync_payload_from_request(req: HistorySyncRunRequest):
     cfg = ConfigLoader.reload()
     return {
@@ -8489,6 +8563,8 @@ async def run_backtest_task(
 
     task_report_id = str(report_id or "").strip()
     async def _emit_event_scoped(event_type, data, stock_code=None):
+        if not stock_code and isinstance(data, dict):
+            stock_code = str(data.get("stock_code", "") or data.get("stock", "") or "").strip().upper()
         await emit_event_to_ws(event_type, data, stock_code=stock_code, report_id=task_report_id, broadcast_ws=emit_to_frontend)
     cab = BacktestCabinet(
         stock_code=stock_code,
@@ -8613,11 +8689,38 @@ async def emit_event_to_ws(event_type, data, stock_code=None, report_id=None, br
         payload["stock_code"] = stock_code
     if broadcast_ws and _allow_ws_emit(event_type):
         await manager.broadcast(payload)
-    if stock_code and event_type != "system":
-        if event_type == "daily_summary":
-            await _notify_daily_summary_once(stock_code=stock_code, data=emit_data)
-        elif event_type not in _WS_SKIP_WEBHOOK_EVENT_TYPES and _should_notify_webhook_by_category(event_type=event_type, data=emit_data):
-            asyncio.create_task(webhook_notifier.notify(event_type=event_type, data=emit_data, stock_code=stock_code))
+    # 兜底解析事件关联股票代码：优先使用显式参数，其次从事件数据推断。
+    resolved_stock_code = str(stock_code or "").strip().upper()
+    if not resolved_stock_code:
+        resolved_stock_code = _resolve_event_stock_code(event_type, emit_data, stock_code)
+    et = str(event_type or "").strip()
+    if not resolved_stock_code:
+        _append_webhook_notify_audit(et, resolved_stock_code, "skip", "resolved_stock_code_empty")
+        return
+    if et == "system":
+        _append_webhook_notify_audit(et, resolved_stock_code, "skip", "system_event_use_broadcast_path")
+        return
+    if et == "daily_summary":
+        _append_webhook_notify_audit(et, resolved_stock_code, "dispatch", "daily_summary_once")
+        await _notify_daily_summary_once(stock_code=resolved_stock_code, data=emit_data)
+        return
+    if et in _WS_SKIP_WEBHOOK_EVENT_TYPES:
+        _append_webhook_notify_audit(et, resolved_stock_code, "skip", "event_in_skip_types")
+        return
+    if not _should_notify_webhook_by_category(event_type=et, data=emit_data):
+        _append_webhook_notify_audit(et, resolved_stock_code, "skip", "category_filter_blocked")
+        return
+    # 回测收口事件采用同步发送，避免任务结束瞬间 create_task 丢消息。
+    if et in {"backtest_result", "backtest_failed"}:
+        try:
+            await webhook_notifier.notify(event_type=et, data=emit_data, stock_code=resolved_stock_code)
+            _append_webhook_notify_audit(et, resolved_stock_code, "sent", "sync_notify_ok")
+        except Exception as e:
+            _append_webhook_notify_audit(et, resolved_stock_code, "error", f"sync_notify_error:{e}")
+            logger.error("sync webhook notify failed event=%s stock=%s err=%s", et, resolved_stock_code, e, exc_info=True)
+        return
+    asyncio.create_task(webhook_notifier.notify(event_type=et, data=emit_data, stock_code=resolved_stock_code))
+    _append_webhook_notify_audit(et, resolved_stock_code, "queued", "async_notify_scheduled")
 
 async def _broadcast_system_and_notify(msg: str, stock_codes=None):
     text = str(msg or "").strip()

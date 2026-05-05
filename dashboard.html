@@ -6545,6 +6545,20 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     <div class="text-[10px] text-slate-400">同步范围由 history_sync 配置项控制，可先 dry_run 预览。</div>
                 `;
                 body.appendChild(ops);
+            } else if (String(title || '') === '通告推送') {
+                const ops = document.createElement('div');
+                ops.className = 'mt-2 border border-cyan-800/60 rounded p-3 bg-slate-950/50 space-y-2';
+                ops.innerHTML = `
+                    <div class="text-[11px] text-cyan-300 font-bold">推送连通性测试</div>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <button id="config-webhook-test-btn" onclick="testWebhookDelivery()" class="bg-emerald-700 hover:bg-emerald-600 text-white px-3 py-1.5 rounded text-xs border border-emerald-500">
+                            <i id="config-webhook-test-icon" class="fa-solid fa-paper-plane"></i>
+                            <span id="config-webhook-test-label">发送测试消息</span>
+                        </button>
+                        <span id="config-webhook-test-status" class="text-[10px] text-slate-400">点击后将向已配置 Webhook/飞书发送一条测试通知</span>
+                    </div>
+                `;
+                body.appendChild(ops);
             } else if (String(title || '') === '基本面适配器') {
                 const ops = document.createElement('div');
                 ops.className = 'mt-2 border border-cyan-800/60 rounded p-3 bg-slate-950/50 space-y-2';
@@ -9039,6 +9053,64 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 if (btn) btn.disabled = false;
                 if (icon) icon.className = 'fa-solid fa-magnifying-glass';
                 if (label) label.innerText = '探测TDX模式并测试';
+            }
+        }
+
+        async function testWebhookDelivery() {
+            const btn = document.getElementById('config-webhook-test-btn');
+            const icon = document.getElementById('config-webhook-test-icon');
+            const label = document.getElementById('config-webhook-test-label');
+            const status = document.getElementById('config-webhook-test-status');
+            // 配置中心统一状态渲染函数，减少重复代码并保证颜色一致。
+            const setStatus = (text, level = 'info') => {
+                if (!status) return;
+                status.innerText = String(text || '');
+                status.className = `text-[10px] ${level === 'ok' ? 'text-emerald-300' : (level === 'error' ? 'text-rose-300' : 'text-slate-400')}`;
+            };
+            try {
+                if (btn) btn.disabled = true;
+                if (icon) icon.className = 'fa-solid fa-spinner fa-spin';
+                if (label) label.innerText = '发送中...';
+                setStatus('正在发送测试消息，请稍候...', 'info');
+                const parsed = collectConfigFromForm();
+                // 优先使用目标池首个股票代码，便于消息带上上下文；没有则回退默认值。
+                const targets = Array.isArray(getByPath(parsed, 'targets', [])) ? getByPath(parsed, 'targets', []) : [];
+                const stockCode = String((targets[0] || '000001.SZ')).trim().toUpperCase() || '000001.SZ';
+                const payload = {
+                    event_type: 'system',
+                    stock_code: stockCode,
+                    msg: `配置中心测试消息 ${new Date().toLocaleString()}`
+                };
+                const res = await fetch('/api/webhook/test', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+                const result = data && typeof data.result === 'object' ? data.result : {};
+                const summary = result && typeof result.summary === 'object' ? result.summary : {};
+                const total = Number(summary.total || 0);
+                const success = Number(summary.success || 0);
+                const failed = Number(summary.failed || 0);
+                const details = Array.isArray(result.details) ? result.details : [];
+                if (!res.ok || data.status !== 'success') {
+                    const errMsg = String(data.msg || '测试发送失败');
+                    const detailText = details.map(d => `${String(d.channel || '--')}:${d.ok ? 'ok' : String(d.error || 'failed')}`).join(' | ');
+                    setStatus(`发送失败：${errMsg}${detailText ? ` ｜ ${detailText}` : ''}`, 'error');
+                    logMessage('SYSTEM', `Webhook测试失败: ${errMsg}${detailText ? ` | ${detailText}` : ''}`, 'danger');
+                    return;
+                }
+                const okMsg = `发送成功：共${total}路，成功${success}，失败${failed}`;
+                setStatus(okMsg, failed > 0 ? 'error' : 'ok');
+                logMessage('SYSTEM', `Webhook测试结果: ${okMsg}`, failed > 0 ? 'warning' : 'success');
+            } catch (e) {
+                const errMsg = `发送测试消息失败：${String(e)}`;
+                setStatus(errMsg, 'error');
+                logMessage('SYSTEM', errMsg, 'danger');
+            } finally {
+                if (btn) btn.disabled = false;
+                if (icon) icon.className = 'fa-solid fa-paper-plane';
+                if (label) label.innerText = '发送测试消息';
             }
         }
 

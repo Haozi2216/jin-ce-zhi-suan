@@ -62,6 +62,7 @@ class WebhookNotifier:
 
     def _fingerprint(self, event_type, stock_code, data):
         if isinstance(data, dict):
+            # 回测结果等事件不包含 direction/price/qty 等字段，若不补充上下文字段会被误去重。
             focus = {
                 "strategy_id": data.get("strategy_id"),
                 "direction": data.get("direction"),
@@ -71,6 +72,12 @@ class WebhookNotifier:
                 "metric": data.get("metric"),
                 "time": data.get("time"),
                 "msg": data.get("msg"),
+                "stock": data.get("stock"),
+                "stock_code": data.get("stock_code"),
+                "period": data.get("period"),
+                "total_trades": data.get("total_trades"),
+                "report_id": data.get("report_id"),
+                "status": data.get("status"),
             }
         else:
             focus = {"value": str(data)}
@@ -236,6 +243,8 @@ class WebhookNotifier:
             return True
         if et == "system":
             return True
+        if et in {"backtest_result", "backtest_failed"}:
+            return True
         if et != "trade_exec":
             return False
         if not isinstance(data, dict):
@@ -357,6 +366,14 @@ class WebhookNotifier:
             return ""
         return f"{float(v):,.2f}"
 
+    def _fmt_minutes_from_ms(self, value):
+        # 将毫秒转换为分钟文本，统一用于回测耗时展示。
+        v = self._to_float(value)
+        if v is None:
+            return ""
+        minutes = float(v) / 60000.0
+        return f"{minutes:.2f} 分钟"
+
     def _estimate_fee(self, direction, amount):
         amt = self._to_float(amount)
         if amt is None or amt <= 0:
@@ -392,7 +409,9 @@ class WebhookNotifier:
             "zhongshu": ("策略运行", "blue", "📈"),
             "menxia": ("风控结果", "orange", "🛡️"),
             "daily_summary": ("日终记录", "indigo", "📘"),
-            "system": ("系统消息", "wathet", "📣")
+            "system": ("系统消息", "wathet", "📣"),
+            "backtest_result": ("回测完成", "green", "📊"),
+            "backtest_failed": ("回测失败", "red", "⚠️"),
         }
         dir_color_map = {
             "BUY": ("多头", "grey"),
@@ -556,6 +575,40 @@ class WebhookNotifier:
                     f"**推送时间**：{self._safe_text(now_text)}\n"
                     f"**总交易笔数**：`{total_trades}`"
                 )}}
+            ]
+        elif event_type in {"backtest_result", "backtest_failed"}:
+            stock = self._safe_text(data.get("stock", stock_code))
+            period = self._safe_text(data.get("period", ""))
+            total_trades = int(data.get("total_trades", 0) or 0)
+            perf = data.get("perf_ms") if isinstance(data.get("perf_ms"), dict) else {}
+            total_minutes = self._fmt_minutes_from_ms(perf.get("total", 0) if perf else None)
+            lines_bt = [
+                "<font color='red'>**⚠️ 免责：本消息仅为系统运行记录，不构成任何投资建议，不推荐买卖任何标的。**</font>",
+                "",
+                f"**股票代码**：`{self._safe_text(stock)}`",
+                f"**回测区间**：{self._safe_text(period)}",
+                f"**推送时间**：{self._safe_text(now_text)}",
+                f"**总交易笔数**：`{total_trades}`",
+            ]
+            if total_minutes:
+                lines_bt.append(f"**回测耗时**：`{self._safe_text(total_minutes)}`")
+            if event_type == "backtest_failed":
+                err = self._safe_text(data.get("msg", ""))
+                if err:
+                    lines_bt.append(f"**失败原因**：{err}")
+            ranking = data.get("ranking") if isinstance(data.get("ranking"), list) else []
+            if ranking:
+                lines_bt.append("")
+                lines_bt.append("**策略排行**：")
+                for r in ranking[:5]:
+                    sid = self._safe_text(r.get("strategy_id", ""))
+                    sname = self._safe_text(r.get("strategy_name", ""))
+                    ret = r.get("total_return")
+                    if ret is not None:
+                        ret_text = f"{ret:+.2f}%" if abs(ret) < 1000 else f"{ret:+.2f}"
+                        lines_bt.append(f"  • `{sid}` {sname} — 收益率 {ret_text}")
+            elements = [
+                {"tag": "div", "text": {"tag": "lark_md", "content": "\n".join(lines_bt)}}
             ]
         else:
             kv_lines.insert(0, "<font color='red'>**⚠️ 免责：本消息仅为系统运行记录，不构成任何投资建议，不推荐买卖任何标的。**</font>")
@@ -726,7 +779,8 @@ class WebhookNotifier:
         text = self._build_text(event_type, stock_code, data)
         if channel_type == "feishu":
             if not self._allow_feishu_event(event_type, data):
-                return
+                # 对不支持的事件类型直接跳过发送，返回 skip 便于上层感知。
+                return {"status": "skip", "reason": "event_not_allowed"}
             payload = self._build_feishu_payload(event_type, stock_code, data)
             if feishu_secret:
                 ts, sign = self._feishu_sign(feishu_secret)
@@ -748,7 +802,85 @@ class WebhookNotifier:
                 "data": generic_data,
                 "timestamp": datetime.now().isoformat(timespec="seconds")
             }
-        await asyncio.to_thread(self._post_json, url, payload, timeout_sec)
+        # 返回通道响应，便于测试接口输出更详细的排障信息。
+        return await asyncio.to_thread(self._post_json, url, payload, timeout_sec)
+
+    async def test_delivery(self, stock_code="000001.SZ", event_type="system", data=None):
+        # 读取最新配置（含私有配置覆盖）并组织测试任务。
+        cfg = self._load_cfg()
+        if not bool(cfg.get("enabled", False)):
+            return {
+                "ok": False,
+                "summary": {"total": 0, "success": 0, "failed": 0},
+                "details": [],
+                "msg": "webhook_notification.enabled=false"
+            }
+        generic_urls = cfg.get("webhook_urls", [])
+        generic_urls = generic_urls if isinstance(generic_urls, list) else []
+        generic_urls = [str(u or "").strip() for u in generic_urls if str(u or "").strip()]
+        feishu_url = str(cfg.get("feishu_webhook_url", "") or "").strip()
+        feishu_secret = str(cfg.get("feishu_secret", "") or "").strip()
+        timeout_sec = float(cfg.get("timeout_sec", 5) or 5)
+        # 默认测试载荷：不包含任何敏感数据，仅用于连通性验证。
+        payload = data if isinstance(data, dict) else {
+            "msg": "webhook test message",
+            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        jobs = []
+        for url in generic_urls:
+            jobs.append(("generic", url))
+        if feishu_url:
+            jobs.append(("feishu", feishu_url))
+        if not jobs:
+            return {
+                "ok": False,
+                "summary": {"total": 0, "success": 0, "failed": 0},
+                "details": [],
+                "msg": "未配置可用的 webhook 地址（webhook_urls / feishu_webhook_url）"
+            }
+        details = []
+        success_count = 0
+        for idx, (channel_type, url) in enumerate(jobs, start=1):
+            item = {
+                "index": int(idx),
+                "channel": str(channel_type),
+                "url": str(url),
+                "ok": False
+            }
+            try:
+                resp = await self._send_job(
+                    channel_type=channel_type,
+                    url=url,
+                    event_type=str(event_type or "system"),
+                    data=payload,
+                    stock_code=str(stock_code or "000001.SZ"),
+                    timeout_sec=timeout_sec,
+                    feishu_secret=feishu_secret
+                )
+                item["ok"] = True
+                item["response"] = resp if isinstance(resp, (dict, list, str, int, float, bool)) else str(resp)
+                success_count += 1
+            except urllib.error.HTTPError as e:
+                # 捕获 HTTP 状态码，便于快速定位 400/401/403/404 等常见错误。
+                item["error"] = f"http_error:{e.code}"
+            except urllib.error.URLError as e:
+                # 捕获网络层错误，如 DNS 失败、连接拒绝、超时等。
+                item["error"] = f"url_error:{e.reason}"
+            except Exception as e:
+                # 兜底异常，保留原始错误文本。
+                item["error"] = str(e)
+            details.append(item)
+        total = len(details)
+        failed = int(max(0, total - success_count))
+        return {
+            "ok": failed == 0,
+            "summary": {
+                "total": int(total),
+                "success": int(success_count),
+                "failed": int(failed)
+            },
+            "details": details
+        }
 
     async def _retry_failed_once(self, cfg):
         if not bool(cfg.get("persist_failed_events", True)):
@@ -813,7 +945,7 @@ class WebhookNotifier:
         if not bool(cfg.get("enabled", False)):
             return
         await self._maybe_retry_failed(cfg)
-        event_types = cfg.get("event_types", ["trade_exec", "live_alert", "zhongshu", "menxia", "daily_summary", "system"])
+        event_types = cfg.get("event_types", ["trade_exec", "live_alert", "zhongshu", "menxia", "daily_summary", "system", "backtest_result", "backtest_failed"])
         event_types = event_types if isinstance(event_types, list) else []
         if event_types and (event_type not in event_types):
             return
@@ -830,8 +962,17 @@ class WebhookNotifier:
         if not jobs:
             return
         dedupe_window_seconds = float(cfg.get("dedupe_window_seconds", 12) or 12)
-        if (not bool(force)) and (not self._should_send(event_type, stock_code, data, dedupe_window_seconds)):
-            return
+        # 回测收口事件必须逐次推送，不参与去重，避免短时间重复回测被误吞消息。
+        is_backtest_terminal_event = str(event_type or "") in {"backtest_result", "backtest_failed"}
+        if (not bool(force)) and (not is_backtest_terminal_event):
+            if not self._should_send(event_type, stock_code, data, dedupe_window_seconds):
+                logger.info(
+                    "webhook dedupe skipped event_type=%s stock_code=%s window=%s",
+                    event_type,
+                    stock_code,
+                    dedupe_window_seconds
+                )
+                return
         timeout_sec = float(cfg.get("timeout_sec", 5) or 5)
         max_retries = max(0, int(cfg.get("max_retries", 2) or 2))
         retry_backoff_seconds = float(cfg.get("retry_backoff_seconds", 1.2) or 1.2)
