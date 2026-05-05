@@ -8646,30 +8646,47 @@ async def startup_event():
     _apply_log_level()
     logging.getLogger("uvicorn.access").addFilter(_UvicornAccessPathFilter())
     logger.info("Initializing Cabinet Server...")
+
+    t0 = time.time()
     load_report_history()
+    logger.info(f"[startup] load_report_history done in {time.time()-t0:.2f}s")
+
+    t0 = time.time()
     _ensure_pattern_thumb_warmup_task()
-    
+    logger.info(f"[startup] _ensure_pattern_thumb_warmup_task done in {time.time()-t0:.2f}s")
+
     # Log registered routes
     logger.info("--- Registered API Endpoints ---")
     for route in app.routes:
         if hasattr(route, "methods"):
             logger.info(f"{route.methods} {route.path}")
     logger.info("--------------------------------")
-    
+
+    t0 = time.time()
     strategies = strategy_factory_module.create_strategies()
+    logger.info(f"[startup] create_strategies done in {time.time()-t0:.2f}s")
     logger.info(f"Loaded {len(strategies)} Strategies: {[s.name for s in strategies]}")
+
+    t0 = time.time()
     cfg = ConfigLoader.reload()
     _startup_private_data_check(cfg)
+    logger.info(f"[startup] _startup_private_data_check done in {time.time()-t0:.2f}s")
+
     if bool(cfg.get("history_sync.scheduler_enabled", False)):
         history_sync_scheduler_task = asyncio.create_task(_history_sync_scheduler_loop())
     if live_auto_start_scheduler_task is None or live_auto_start_scheduler_task.done():
         # 自动实盘启动调度器始终常驻，由运行模式决定是否触发。
         live_auto_start_scheduler_task = asyncio.create_task(_live_auto_start_scheduler_loop())
+
+    t0 = time.time()
     evolution_runtime.set_event_sink(_push_evolution_ws_event)
     evolution_platform_hub.set_event_sink(_push_evolution_ws_event)
     evolution_platform_hub.start_services(auto_backup=bool(cfg.get("evolution.platform.auto_backup_enabled", False)))
+    logger.info(f"[startup] evolution setup done in {time.time()-t0:.2f}s")
+
     if evolution_ws_pump_task is None or evolution_ws_pump_task.done():
         evolution_ws_pump_task = asyncio.create_task(_evolution_ws_pump_loop())
+
     server_host = startup_server_host if startup_server_host else _server_host(cfg)
     server_port = startup_server_port if startup_server_port else _server_port(cfg)
     access_host = "localhost" if server_host in {"0.0.0.0", "::"} else server_host
