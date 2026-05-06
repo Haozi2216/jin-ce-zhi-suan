@@ -60,6 +60,8 @@ from src.utils.tdx_provider import TdxProvider
 from src.utils.history_sync_service import HistoryDiffSyncService, TABLE_INTERVAL_MAP, DEFAULT_SYNC_TABLES
 from src.utils.backtest_baseline import apply_backtest_baseline
 from src.utils.webhook_notifier import WebhookNotifier
+from src.utils.screener_data_provider import get_filter_options, get_catalog, apply_filters
+from src.strategy_intent.screener_parser import parse_strategy_to_conditions
 from src.tdx.formula_compiler import compile_tdx_formula, get_tdx_compile_capabilities
 from src.tdx.terminal_bridge import TdxTerminalBridge
 from src.utils.blk_loader import parse_blk_file, parse_blk_text
@@ -2830,6 +2832,21 @@ class BlkParseRequest(BaseModel):
     normalize_symbol: bool = True
 
 
+class ScreenerFilterRequest(BaseModel):
+    """多条件筛选请求体。"""
+    exchange: Optional[str] = None
+    region: Optional[str] = None
+    enterprise_type: Optional[str] = None
+    margin_trading: Optional[str] = None
+    market_conditions: Optional[List[Dict[str, Any]]] = None
+    technical_conditions: Optional[List[Dict[str, Any]]] = None
+    financial_conditions: Optional[List[Dict[str, Any]]] = None
+    logic_mode: Optional[str] = "AND"
+    page: int = 1
+    page_size: int = 50
+    sort_by: Optional[str] = None
+    sort_order: Optional[str] = "desc"
+
 class BlkImportStockPoolRequest(BaseModel):
     file_path: Optional[str] = None
     content: Optional[str] = None
@@ -4072,6 +4089,93 @@ async def api_blk_import_stock_pool(req: BlkImportStockPoolRequest):
         }
     except Exception as e:
         logger.error(f"/api/blk/import_stock_pool failed: {e}", exc_info=True)
+        return {"status": "error", "msg": str(e)}
+
+
+# --- Screener API ---
+@app.get("/api/screener/filter_options")
+async def api_screener_filter_options():
+    try:
+        return {"status": "success", "data": get_filter_options()}
+    except Exception as e:
+        logger.error(f"/api/screener/filter_options failed: {e}", exc_info=True)
+        return {"status": "error", "msg": str(e)}
+
+
+@app.get("/api/screener/catalog")
+async def api_screener_catalog():
+    try:
+        return {"status": "success", "data": get_catalog()}
+    except Exception as e:
+        logger.error(f"/api/screener/catalog failed: {e}", exc_info=True)
+        return {"status": "error", "msg": str(e)}
+
+
+@app.post("/api/screener/filter")
+async def api_screener_filter(req: ScreenerFilterRequest):
+    try:
+        result = apply_filters(
+            exchange=req.exchange,
+            region=req.region,
+            enterprise_type=req.enterprise_type,
+            margin_trading=req.margin_trading,
+            market_conditions=req.market_conditions,
+            technical_conditions=req.technical_conditions,
+            financial_conditions=req.financial_conditions,
+            logic_mode=req.logic_mode or "AND",
+            page=req.page or 1,
+            page_size=req.page_size or 50,
+            sort_by=req.sort_by,
+            sort_order=req.sort_order or "desc",
+        )
+        return {"status": "success", **result}
+    except Exception as e:
+        logger.error(f"/api/screener/filter failed: {e}", exc_info=True)
+        return {"status": "error", "msg": str(e)}
+
+
+@app.post("/api/screener/export")
+async def api_screener_export(request: Request):
+    """导出勾选结果为 CSV。"""
+    try:
+        body = await request.json()
+        codes = body.get("codes", [])
+        if not codes:
+            return {"status": "error", "msg": "codes is required"}
+        from src.utils.stock_manager import stock_manager as _sm
+        _sm.ensure_loaded()
+        stock_map = {str(s.get("code", "")).strip(): s for s in _sm.stocks}
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(["标的代码", "标的名称", "交易所"])
+        for c in codes:
+            c = str(c).strip().upper()
+            s = stock_map.get(c, {})
+            writer.writerow([c, s.get("name", ""), s.get("exchange", "未知")])
+        buf.seek(0)
+        return StreamingResponse(
+            iter([buf.getvalue()]),
+            media_type="text/csv",
+            headers={"Content-Disposition": f"attachment; filename=screener_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"},
+        )
+    except Exception as e:
+        logger.error(f"/api/screener/export failed: {e}", exc_info=True)
+        return {"status": "error", "msg": str(e)}
+
+
+class ScreenerParseRequest(BaseModel):
+    """AI 策略解析请求体。"""
+    description: str
+
+
+@app.post("/api/screener/parse_strategy")
+async def api_screener_parse_strategy(req: ScreenerParseRequest):
+    """接收自然语言策略描述，调用大模型解析为结构化筛选条件 + 执行规则。"""
+    try:
+        result = parse_strategy_to_conditions(req.description)
+        return result
+    except Exception as e:
+        logger.error(f"/api/screener/parse_strategy failed: {e}", exc_info=True)
         return {"status": "error", "msg": str(e)}
 
 

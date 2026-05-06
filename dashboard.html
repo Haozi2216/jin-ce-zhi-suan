@@ -329,11 +329,14 @@
                 <p>2. 因本工具产生的争议，适用中华人民共和国法律管辖。</p>
             </div>
             <label class="mt-8 flex items-start gap-3 cursor-pointer select-none">
-                <input id="disclaimer-agree-checkbox" type="checkbox" class="mt-1 w-4 h-4 accent-blue-500" onchange="updateDisclaimerAccess()" onclick="updateDisclaimerAccess()">
+                <!-- 使用 window.xxx 调用，避免作用域差异导致函数未定义 -->
+                <input id="disclaimer-agree-checkbox" type="checkbox" class="mt-1 w-4 h-4 accent-blue-500" onchange="window.updateDisclaimerAccess && window.updateDisclaimerAccess()" onclick="window.updateDisclaimerAccess && window.updateDisclaimerAccess()">
                 <span class="text-white font-semibold">我已阅读并同意以上免责声明与用户使用协议，自愿承担全部风险</span>
             </label>
             <div class="text-xs text-slate-400 mt-2">（勾选后方可进入系统）</div>
-            <button id="disclaimer-enter-btn" type="button" onclick="enterSystemByDisclaimer()" class="mt-6 w-full bg-blue-600/50 text-white py-2.5 rounded-lg font-bold cursor-not-allowed opacity-60 transition-all" disabled>进入系统</button>
+            <!-- 使用软禁用样式替代硬 disabled，避免因事件异常导致按钮永久不可点击 -->
+            <!-- 必须勾选协议后才允许进入：点击事件统一走函数校验 -->
+            <button id="disclaimer-enter-btn" data-ui-version="disclaimer-v6" type="button" onclick="window.enterSystemByDisclaimer && window.enterSystemByDisclaimer()" class="mt-6 w-full bg-blue-600/50 text-white py-2.5 rounded-lg font-bold cursor-not-allowed opacity-60 transition-all" aria-disabled="true">进入系统</button>
         </div>
     </div>
 
@@ -1272,6 +1275,7 @@
                             <button onclick="openFeatureFromHub('webhook')" class="bg-amber-700 hover:bg-amber-600 text-white px-3 py-2 rounded text-xs border border-amber-500">推送补偿</button>
                             <button onclick="openFeatureFromHub('pattern')" class="bg-slate-700 hover:bg-slate-600 text-white px-3 py-2 rounded text-xs border border-slate-500">经典形态</button>
                             <button onclick="openFeatureFromHub('evolution')" class="bg-cyan-700 hover:bg-cyan-600 text-white px-3 py-2 rounded text-xs border border-cyan-500">策略进化</button>
+                            <!-- <button onclick="openFeatureFromHub('screener')" class="bg-emerald-700 hover:bg-emerald-600 text-white px-3 py-2 rounded text-xs border border-emerald-500">条件筛选</button> -->
                         </div>
                     </div>
                 </div>
@@ -1665,6 +1669,186 @@
                     <button onclick="loadConfigCenter()" class="bg-slate-700 hover:bg-slate-600 text-white px-3 py-2 rounded text-xs border border-slate-600">重新加载</button>
                     <button onclick="saveConfigCenter()" class="bg-purple-700 hover:bg-purple-600 text-white px-3 py-2 rounded text-xs border border-purple-500">保存并生效</button>
                 </div>
+            </div>
+        </div>
+    </div>
+    <!-- 条件筛选 Modal -->
+    <div id="screener-modal" class="hidden fixed inset-0 bg-black/70 z-[147] flex items-center justify-center p-3">
+        <div class="w-[98vw] max-w-[98vw] h-[96vh] bg-slate-900 border border-slate-700 rounded-lg shadow-2xl flex flex-col overflow-hidden">
+            <div class="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
+                <div class="text-white font-bold"><i class="fa-solid fa-filter mr-2 text-emerald-300"></i>条件筛选</div>
+                <button onclick="closeScreenerModal()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="px-4 py-2 text-xs text-slate-400 border-b border-slate-700">基于公开历史数据进行多条件标的筛选与数据查询。</div>
+
+            <!-- 免责声明条 -->
+            <div class="px-4 py-1.5 bg-slate-700/50 text-center text-xs text-slate-300 shrink-0">
+                本工具仅用于历史数据筛选与量化研究，不构成任何投资建议。不推荐股票、不预测走势、不提供买卖依据。投资有风险，决策需独立审慎判断。
+            </div>
+
+            <!-- 顶部前置过滤区 -->
+            <div class="px-4 py-2 border-b border-slate-700 bg-slate-950/40 flex items-center gap-3 shrink-0">
+                <select id="screener-exchange" onchange="onScreenerFilterChange()" class="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-white">
+                    <option value="">全部交易所</option>
+                    <option value="上交所">上交所</option>
+                    <option value="深交所">深交所</option>
+                    <option value="北交所">北交所</option>
+                </select>
+                <select id="screener-region" onchange="onScreenerFilterChange()" class="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-white">
+                    <option value="">全部地域</option>
+                </select>
+                <select id="screener-enterprise" onchange="onScreenerFilterChange()" class="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-white">
+                    <option value="">全部企业性质</option>
+                </select>
+                <select id="screener-margin" onchange="onScreenerFilterChange()" class="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-white">
+                    <option value="">全部</option>
+                    <option value="融资">融资</option>
+                    <option value="融券">融券</option>
+                    <option value="两融">两融</option>
+                </select>
+                <div class="ml-auto text-[11px] text-slate-500 font-mono" id="screener-filter-options-status">选项加载中...</div>
+            </div>
+
+            <!-- 指标标签导航区 -->
+            <div class="px-4 py-2 border-b border-slate-700 bg-slate-950/40 shrink-0">
+                <div class="flex flex-wrap items-center gap-2 text-[11px] font-mono">
+                    <button type="button" id="screener-tab-market" onclick="switchScreenerTab('market')" class="px-3 py-1 rounded border border-emerald-500 bg-emerald-700 text-white">行情</button>
+                    <button type="button" id="screener-tab-technical" onclick="switchScreenerTab('technical')" class="px-3 py-1 rounded border border-slate-600 bg-slate-800 text-slate-200">技术指标</button>
+                    <button type="button" id="screener-tab-financial" onclick="switchScreenerTab('financial')" class="px-3 py-1 rounded border border-slate-600 bg-slate-800 text-slate-200">财务指标</button>
+                    <button type="button" id="screener-tab-report" onclick="switchScreenerTab('report')" class="px-3 py-1 rounded border border-slate-600 bg-slate-800 text-slate-200">财报条目</button>
+                    <button type="button" id="screener-tab-company" onclick="switchScreenerTab('company')" class="px-3 py-1 rounded border border-slate-600 bg-slate-800 text-slate-200">公司</button>
+                    <button type="button" id="screener-tab-analyst" onclick="switchScreenerTab('analyst')" class="px-3 py-1 rounded border border-slate-600 bg-slate-800 text-slate-200">分析师</button>
+                    <button type="button" id="screener-tab-index" onclick="switchScreenerTab('index')" class="px-3 py-1 rounded border border-slate-600 bg-slate-800 text-slate-200">大盘指标</button>
+                    <button type="button" id="screener-tab-custom" onclick="switchScreenerTab('custom')" class="px-3 py-1 rounded border border-slate-600 bg-slate-800 text-slate-200">自定义</button>
+                </div>
+            </div>
+
+            <!-- 主内容区：左侧筛选面板 + 右侧结果表格 -->
+            <div class="flex-1 flex overflow-hidden">
+                <!-- 左侧筛选面板 -->
+                <div id="screener-filter-panel" class="w-72 shrink-0 border-r border-slate-700 bg-slate-950/30 overflow-y-auto p-3 space-y-2">
+                    <button onclick="openScreenerAIParser()" class="w-full bg-gradient-to-r from-violet-700 to-indigo-700 hover:from-violet-600 hover:to-indigo-600 text-white py-1.5 rounded text-xs border border-violet-500 font-semibold">
+                        <i class="fa-solid fa-wand-magic-sparkles mr-1"></i> AI 策略解析
+                    </button>
+                    <div id="screener-conditions-container"></div>
+                    <div class="pt-2 border-t border-slate-700">
+                        <select id="screener-logic-mode" class="w-full mb-2 bg-slate-800 border border-slate-600 text-white py-1 px-2 rounded text-xs">
+                            <option value="AND">全部满足（AND）</option>
+                            <option value="OR">任一满足（OR）</option>
+                        </select>
+                        <div class="flex gap-2">
+                            <button onclick="applyScreenerFilter()" class="flex-1 bg-emerald-700 hover:bg-emerald-600 text-white py-1.5 rounded text-xs border border-emerald-500">应用筛选</button>
+                            <button onclick="resetScreenerFilter()" class="bg-slate-700 hover:bg-slate-600 text-white px-3 py-1.5 rounded text-xs border border-slate-500">重置</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 右侧结果表格 -->
+                <div class="flex-1 flex flex-col overflow-hidden">
+                    <div class="flex-1 overflow-auto">
+                        <table class="w-full text-left text-xs font-mono">
+                            <thead class="text-slate-400 bg-slate-800 uppercase sticky top-0 z-10">
+                                <tr>
+                                    <th class="px-3 py-2 w-10"><input type="checkbox" id="screener-select-all" onchange="toggleScreenerSelectAll(this.checked)" /></th>
+                                    <th class="px-3 py-2 cursor-pointer select-none" onclick="sortScreenerResults('code')">标的代码 <i class="fa-solid fa-sort text-slate-500"></i></th>
+                                    <th class="px-3 py-2 cursor-pointer select-none" onclick="sortScreenerResults('name')">标的名称</th>
+                                    <th class="px-3 py-2 cursor-pointer select-none" onclick="sortScreenerResults('price')">最新价 <i class="fa-solid fa-sort text-slate-500"></i></th>
+                                    <th class="px-3 py-2 cursor-pointer select-none" onclick="sortScreenerResults('change_pct')">涨跌幅 <i class="fa-solid fa-sort text-slate-500"></i></th>
+                                    <th class="px-3 py-2 cursor-pointer select-none" onclick="sortScreenerResults('turnover')">换手率 <i class="fa-solid fa-sort text-slate-500"></i></th>
+                                    <th class="px-3 py-2 cursor-pointer select-none" onclick="sortScreenerResults('float_mv')">流通市值 <i class="fa-solid fa-sort text-slate-500"></i></th>
+                                    <th class="px-3 py-2">筛选时间</th>
+                                </tr>
+                            </thead>
+                            <tbody id="screener-results-body" class="divide-y divide-slate-700 text-slate-300">
+                                <tr><td colspan="8" class="px-3 py-8 text-center text-slate-500">请设置筛选条件后点击"应用筛选"</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <!-- 分页 + 操作栏 -->
+                    <div class="border-t border-slate-700 bg-slate-900/60 px-4 py-2 flex items-center justify-between shrink-0">
+                        <div class="text-[11px] text-slate-400" id="screener-pagination-info">共 0 条</div>
+                        <div class="flex items-center gap-2">
+                            <button onclick="prevScreenerPage()" class="bg-slate-700 hover:bg-slate-600 text-white px-2 py-1 rounded text-xs border border-slate-500">上一页</button>
+                            <span class="text-xs text-slate-300 font-mono" id="screener-page-num">1 / 1</span>
+                            <button onclick="nextScreenerPage()" class="bg-slate-700 hover:bg-slate-600 text-white px-2 py-1 rounded text-xs border border-slate-500">下一页</button>
+                            <span class="w-px h-5 bg-slate-700 mx-1"></span>
+                            <button onclick="addToStockPool()" class="bg-cyan-700 hover:bg-cyan-600 text-white px-2 py-1 rounded text-xs border border-cyan-500">加入标的池</button>
+                            <button onclick="sendToBacktest()" class="bg-indigo-700 hover:bg-indigo-600 text-white px-2 py-1 rounded text-xs border border-indigo-500">发送到回测</button>
+                            <button onclick="exportScreenerCSV()" class="bg-slate-700 hover:bg-slate-600 text-white px-2 py-1 rounded text-xs border border-slate-500">导出CSV</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 底部功能区：回测配置 -->
+            <div class="border-t border-slate-700 bg-slate-950/40 p-3 shrink-0">
+                <div class="flex flex-wrap items-center gap-3 text-xs">
+                    <label class="text-slate-300">回测起始
+                        <input id="screener-bt-start" type="date" class="ml-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-white" />
+                    </label>
+                    <label class="text-slate-300">回测结束
+                        <input id="screener-bt-end" type="date" class="ml-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-white" />
+                    </label>
+                    <label class="text-slate-300">收益基准
+                        <select id="screener-bt-benchmark" class="ml-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-white">
+                            <option value="000300">沪深300</option>
+                            <option value="000905">中证500</option>
+                            <option value="000852">中证1000</option>
+                            <option value="000001">上证指数</option>
+                        </select>
+                    </label>
+                    <label class="text-slate-300">初始资金
+                        <input id="screener-bt-capital" type="number" min="10000" step="10000" value="1000000" class="ml-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-white font-mono w-24" />
+                    </label>
+                    <span class="text-[11px] text-slate-500">计算以上策略模型在历史上的收益</span>
+                    <button onclick="startScreenerBacktest()" class="bg-emerald-700 hover:bg-emerald-600 text-white px-4 py-1.5 rounded text-xs border border-emerald-500 font-bold">开始回测</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- 右键菜单 -->
+    <div id="screener-context-menu" class="hidden fixed z-[160] min-w-[180px] bg-slate-900 border border-slate-700 rounded shadow-2xl py-1 text-xs">
+        <button onclick="ctxMenuAction('add_pool')" class="w-full text-left px-3 py-1.5 text-slate-200 hover:bg-slate-700"><i class="fa-solid fa-plus mr-2"></i>加入标的池</button>
+        <button onclick="ctxMenuAction('backtest')" class="w-full text-left px-3 py-1.5 text-slate-200 hover:bg-slate-700"><i class="fa-solid fa-chart-line mr-2"></i>发送到回测</button>
+        <button onclick="ctxMenuAction('export')" class="w-full text-left px-3 py-1.5 text-slate-200 hover:bg-slate-700"><i class="fa-solid fa-file-csv mr-2"></i>导出CSV</button>
+        <button onclick="ctxMenuAction('detail')" class="w-full text-left px-3 py-1.5 text-slate-200 hover:bg-slate-700"><i class="fa-solid fa-info-circle mr-2"></i>查看明细</button>
+</div>
+    <!-- AI 策略解析弹窗 -->
+    <div id="screener-ai-parser-modal" class="hidden fixed inset-0 bg-black/70 z-[160] flex items-center justify-center p-4">
+        <div class="w-[680px] max-w-[92vw] bg-slate-900 border border-violet-600 rounded-lg shadow-2xl flex flex-col overflow-hidden">
+            <div class="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
+                <div class="text-white font-bold"><i class="fa-solid fa-wand-magic-sparkles mr-2 text-violet-400"></i>AI 策略解析</div>
+                <button onclick="closeScreenerAIParser()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="px-4 py-2 text-xs text-slate-400 border-b border-slate-700">
+                输入你的策略描述，大模型会自动解析为筛选条件。高亮项为筛选器可直接执行，其余条件将进入回测引擎执行。
+            </div>
+            <div class="px-4 py-3 space-y-3">
+                <textarea id="screener-ai-input" rows="6" class="w-full bg-slate-950 border border-slate-700 rounded p-3 text-sm text-slate-200 font-mono resize-none" placeholder="输入策略描述，例如：&#10;入场条件：五日内有涨停的主板股票，涨停后5日内当天成交量小于涨停那日成交量的一半，尾盘14:55分买入，买入次日涨幅到达四个点卖出一半八个点卖出全部，如果跌幅大于四个点止损一半，大于6个点全部止损。如果都没满足买卖条件，在下午择高点卖出。每日尾盘进行筛选股票池，选出3只股票分三成仓买。"></textarea>
+                <div class="flex items-center justify-between">
+                    <div class="text-[11px] text-slate-500" id="screener-ai-status">请输入策略描述后点击"开始解析"</div>
+                    <button onclick="parseStrategyWithAI()" id="screener-ai-parse-btn" class="bg-gradient-to-r from-violet-700 to-indigo-700 hover:from-violet-600 hover:to-indigo-600 text-white px-4 py-2 rounded text-xs border border-violet-500 font-semibold">
+                        <i class="fa-solid fa-wand-magic-sparkles mr-1"></i>开始解析
+                    </button>
+                </div>
+            </div>
+            <!-- 解析结果展示 -->
+            <div id="screener-ai-result" class="flex-1 overflow-y-auto px-4 py-3 space-y-3 hidden">
+                <div class="text-sm text-emerald-300 font-semibold"><i class="fa-solid fa-check-circle mr-1"></i>解析完成</div>
+                <!-- 筛选条件预览 -->
+                <div class="bg-slate-950/60 border border-slate-700 rounded p-3">
+                    <div class="text-xs text-violet-300 font-semibold mb-2">可执行筛选条件</div>
+                    <div id="screener-ai-screen-conditions" class="space-y-1 text-[11px] font-mono text-slate-300"></div>
+                </div>
+                <!-- 执行规则预览 -->
+                <div class="bg-slate-950/60 border border-slate-700 rounded p-3">
+                    <div class="text-xs text-amber-300 font-semibold mb-2">买卖执行规则（回测引擎执行）</div>
+                    <div id="screener-ai-execution-rules" class="space-y-1 text-[11px] font-mono text-slate-300"></div>
+                </div>
+            </div>
+            <div class="px-4 py-3 border-t border-slate-700 flex justify-end gap-2">
+                <button onclick="applyAIParsedConditions()" id="screener-ai-apply-btn" class="bg-emerald-700 hover:bg-emerald-600 text-white px-4 py-2 rounded text-xs border border-emerald-500 font-semibold hidden"><i class="fa-solid fa-check mr-1"></i>应用筛选条件</button>
+                <button onclick="closeScreenerAIParser()" class="bg-slate-700 hover:bg-slate-600 text-white px-3 py-2 rounded text-xs border border-slate-500">关闭</button>
             </div>
         </div>
     </div>
@@ -5651,13 +5835,25 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     { path: 'data_provider.postgres_table_15min', label: 'PostgreSQL 15分钟表', type: 'text', when: [{ path: 'data_provider.source', equals: 'postgresql' }] },
                     { path: 'data_provider.postgres_table_30min', label: 'PostgreSQL 30分钟表', type: 'text', when: [{ path: 'data_provider.source', equals: 'postgresql' }] },
                     { path: 'data_provider.postgres_table_60min', label: 'PostgreSQL 60分钟表', type: 'text', when: [{ path: 'data_provider.source', equals: 'postgresql' }] },
-                    { path: 'data_provider.postgres_table_day', label: 'PostgreSQL 日线表', type: 'text', when: [{ path: 'data_provider.source', equals: 'postgresql' }] },
+                    { path: 'data_provider.postgres_table_day', label: 'PostgreSQL 日线表', type: 'text', when: [{ path: 'data_provider.source', equals: 'postgresql' }] }
+                ]
+            },
+            {
+                title: '通用智能服务模型',
+                subtitle: '回测与行情分析专用大模型（data_provider.llm_*）',
+                fields: [
                     { path: 'data_provider.llm_api_url', label: '智能服务地址（OpenAI兼容）', type: 'text' },
-                    { path: 'data_provider.llm_api_key', label: '智能服务访问密钥', type: 'password', secret: true },
-                    { path: 'data_provider.llm_model', label: '智能模型名称', type: 'text' },
-                    { path: 'data_provider.strategy_llm_api_url', label: '新增策略智能服务地址', type: 'text' },
-                    { path: 'data_provider.strategy_llm_api_key', label: '新增策略智能服务密钥', type: 'password', secret: true },
-                    { path: 'data_provider.strategy_llm_model', label: '新增策略智能模型名称', type: 'text' },
+                    { path: 'data_provider.llm_api_key', label: '智能服务访问密钥', type: 'password', secret: true, desc: '密钥字段会走 private_config_path 覆盖，不写入公开配置' },
+                    { path: 'data_provider.llm_model', label: '智能模型名称', type: 'text', placeholder: '例如 gpt-4o-mini / deepseek-chat' }
+                ]
+            },
+            {
+                title: '新增策略模型',
+                subtitle: '策略生成专用大模型（data_provider.strategy_llm_*）',
+                fields: [
+                    { path: 'data_provider.strategy_llm_api_url', label: '新增策略智能服务地址', type: 'text', placeholder: '例如 https://xxx/v1' },
+                    { path: 'data_provider.strategy_llm_api_key', label: '新增策略智能服务密钥', type: 'password', secret: true, desc: '密钥字段会走 private_config_path 覆盖，不写入公开配置' },
+                    { path: 'data_provider.strategy_llm_model', label: '新增策略智能模型名称', type: 'text', placeholder: '例如 qwen-plus / glm-4' },
                     { path: 'data_provider.strategy_llm_timeout_sec', label: '新增策略智能超时秒数', type: 'number', min: 30, max: 300, step: 1, slider: true }
                 ]
             },
@@ -5876,6 +6072,47 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                         { path: 'live_monitoring.consistency_checks.enforce_adjustment_and_settlement_match', label: '强制复权/结算匹配', type: 'boolean', uiRelations: [{ area: '一致性报告', effect: '不一致时直接报错，避免错误对比' }] },
                         { path: 'live_monitoring.consistency_checks.signal_execution_delay_seconds_warn', label: '信号执行延迟告警阈值', type: 'number', min: 0, max: 120, step: 1, uiRelations: [{ area: '一致性报告', effect: '影响延迟告警阈值' }] }
                     ] }
+                ]
+            },
+            {
+                id: 'llm-config',
+                title: '大模型配置',
+                subtitle: '策略进化、行情分析与新增策略的智能服务',
+                icon: 'fa-robot',
+                sections: [
+                    {
+                        title: '太常寺策略进化（LLM）',
+                        fields: [
+                            { path: 'evolution.llm.enabled', label: '启用真实LLM', type: 'boolean', desc: '关闭时使用内置Mock生成；开启后按以下配置调用真实模型', uiRelations: [{ area: '策略进化看板', effect: '控制策略进化是否使用真实大模型' }] },
+                            { path: 'evolution.llm.provider', label: '服务类型', type: 'select', options: [{ value: 'openai_compatible', label: 'OpenAI兼容' }, { value: 'zhipu', label: '智谱GLM' }] },
+                            { path: 'evolution.llm.base_url', label: 'API地址', type: 'text', placeholder: '例如 https://xxx/v1' },
+                            { path: 'evolution.llm.api_key', label: 'API密钥', type: 'password', secret: true, desc: '密钥字段会走 private_config_path 覆盖，不写入公开配置' },
+                            { path: 'evolution.llm.model', label: '模型名', type: 'text', placeholder: '例如 gpt-4o-mini / deepseek-chat' },
+                            { path: 'evolution.llm.temperature', label: '采样温度', type: 'number', min: 0, max: 2, step: 0.01, slider: true },
+                            { path: 'evolution.llm.max_tokens', label: '最大输出Token', type: 'number', min: 128, max: 8000, step: 1, slider: true },
+                            { path: 'evolution.llm.timeout_seconds', label: '请求超时(秒)', type: 'number', min: 5, max: 300, step: 1, slider: true },
+                            { path: 'evolution.llm.retry_times', label: '失败重试次数', type: 'number', min: 0, max: 5, step: 1, slider: true },
+                            { path: 'evolution.llm.fallback_to_mock', label: '失败回退Mock', type: 'boolean', desc: '开启后真实LLM失败会自动回退到Mock，保证进化流程不中断' },
+                            { path: 'evolution.llm.system_prompt', label: '系统提示词', type: 'text', placeholder: '用于约束策略生成风格与输出格式' }
+                        ]
+                    },
+                    {
+                        title: '通用智能服务模型',
+                        fields: [
+                            { path: 'data_provider.llm_api_url', label: '智能服务地址（OpenAI兼容）', type: 'text', placeholder: '例如 https://xxx/v1', uiRelations: [{ area: '条件筛选器', effect: 'AI策略解析、行情分析使用的模型服务地址' }] },
+                            { path: 'data_provider.llm_api_key', label: '智能服务访问密钥', type: 'password', secret: true, desc: '密钥字段会走 private_config_path 覆盖' },
+                            { path: 'data_provider.llm_model', label: '智能模型名称', type: 'text', placeholder: '例如 gpt-4o-mini / deepseek-chat' }
+                        ]
+                    },
+                    {
+                        title: '新增策略模型',
+                        fields: [
+                            { path: 'data_provider.strategy_llm_api_url', label: '新增策略智能服务地址', type: 'text', placeholder: '例如 https://xxx/v1', uiRelations: [{ area: '条件筛选器AI解析', effect: '条件筛选器的AI策略解析功能使用的模型服务地址' }] },
+                            { path: 'data_provider.strategy_llm_api_key', label: '新增策略智能服务密钥', type: 'password', secret: true, desc: '密钥字段会走 private_config_path 覆盖' },
+                            { path: 'data_provider.strategy_llm_model', label: '新增策略智能模型名称', type: 'text', placeholder: '例如 qwen-plus / glm-4' },
+                            { path: 'data_provider.strategy_llm_timeout_sec', label: '新增策略智能超时秒数', type: 'number', min: 30, max: 300, step: 1, slider: true }
+                        ]
+                    }
                 ]
             }
         ];
@@ -6654,6 +6891,84 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             return block;
         }
 
+        // 在向导模式下，为关键步骤补充“连通性检查”操作区，复用已有测试函数。
+        function buildWizardConnectivityOps(stepId) {
+            const sid = String(stepId || '').trim();
+            if (!sid) return null;
+            const ops = document.createElement('div');
+            ops.className = 'border border-cyan-800/60 rounded p-3 bg-slate-950/50 space-y-2';
+            if (sid === 'data-source') {
+                // 数据源向导步骤：提供数据源连通性入口（Tushare / TDX）。
+                ops.innerHTML = `
+                    <div class="text-[11px] text-cyan-300 font-bold">数据源连通性检查</div>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <button id="config-tushare-test-btn" onclick="testTushareConnectivity()" class="bg-indigo-700 hover:bg-indigo-600 text-white px-3 py-1.5 rounded text-xs border border-indigo-500">
+                            <i id="config-tushare-test-icon" class="fa-solid fa-plug-circle-check"></i>
+                            <span id="config-tushare-test-label">测试Tushare连通性</span>
+                        </button>
+                        <span id="config-tushare-test-status" class="text-[10px] text-slate-400">填写 Tushare 接口地址和令牌后可测试</span>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <button id="config-tdx-test-btn" onclick="testTdxConnectivity()" class="bg-cyan-700 hover:bg-cyan-600 text-white px-3 py-1.5 rounded text-xs border border-cyan-500">
+                            <i id="config-tdx-test-icon" class="fa-solid fa-magnifying-glass"></i>
+                            <span id="config-tdx-test-label">探测TDX模式并测试</span>
+                        </button>
+                        <span id="config-tdx-test-status" class="text-[10px] text-slate-400">Windows 可自动探测 vipdoc；mac/无 vipdoc 时自动校验 mootdx 网络镜像模式</span>
+                    </div>
+                `;
+                return ops;
+            }
+            return null;
+        }
+
+        // 将大模型连通性测试按钮放到“对应小板块”下，避免集中在步骤底部。
+        function buildWizardLlmSectionOps(sectionTitle) {
+            const title = String(sectionTitle || '').trim();
+            if (!title) return null;
+            const ops = document.createElement('div');
+            ops.className = 'mt-2 border border-cyan-800/60 rounded p-2 bg-slate-950/60 space-y-1.5';
+            if (title === '太常寺策略进化（LLM）') {
+                ops.innerHTML = `
+                    <div class="text-[11px] text-cyan-300 font-bold">本板块连通性检查</div>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <button id="config-llm-test-btn" onclick="testUnifiedLlmConnectivity()" class="bg-violet-700 hover:bg-violet-600 text-white px-3 py-1.5 rounded text-xs border border-violet-500">
+                            <i id="config-llm-test-icon" class="fa-solid fa-robot"></i>
+                            <span id="config-llm-test-label">测试进化模型</span>
+                        </button>
+                        <span id="config-llm-test-status" class="text-[10px] text-slate-400">测试 evolution.llm.* 配置域</span>
+                    </div>
+                `;
+                return ops;
+            }
+            if (title === '通用智能服务模型') {
+                ops.innerHTML = `
+                    <div class="text-[11px] text-cyan-300 font-bold">本板块连通性检查</div>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <button id="config-llm-general-test-btn" onclick="testDataProviderLlmConnectivity()" class="bg-violet-700 hover:bg-violet-600 text-white px-3 py-1.5 rounded text-xs border border-violet-500">
+                            <i id="config-llm-general-test-icon" class="fa-solid fa-robot"></i>
+                            <span id="config-llm-general-test-label">测试通用模型</span>
+                        </button>
+                        <span id="config-llm-general-test-status" class="text-[10px] text-slate-400">测试 data_provider.llm_* 配置域</span>
+                    </div>
+                `;
+                return ops;
+            }
+            if (title === '新增策略模型') {
+                ops.innerHTML = `
+                    <div class="text-[11px] text-cyan-300 font-bold">本板块连通性检查</div>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <button id="config-llm-strategy-test-btn" onclick="testStrategyManagerLlmConnectivity()" class="bg-violet-700 hover:bg-violet-600 text-white px-3 py-1.5 rounded text-xs border border-violet-500">
+                            <i id="config-llm-strategy-test-icon" class="fa-solid fa-robot"></i>
+                            <span id="config-llm-strategy-test-label">测试新增策略模型</span>
+                        </button>
+                        <span id="config-llm-strategy-test-status" class="text-[10px] text-slate-400">测试 data_provider.strategy_llm_* 配置域</span>
+                    </div>
+                `;
+                return ops;
+            }
+            return null;
+        }
+
         function renderWizardMode(cfg) {
             const container = document.getElementById('config-form-container');
             if (!container) return;
@@ -6684,9 +6999,17 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     inner.id = bodyId;
                     inner.className = `space-y-2 ${section.defaultOpen === false ? 'hidden' : ''}`;
                     visibleFields.forEach(field => inner.appendChild(createBusinessField(field, cfg)));
+                    // LLM 向导步骤中，把测试按钮挂在各自小板块内部。
+                    if (String(step.id || '') === 'llm-config') {
+                        const llmOps = buildWizardLlmSectionOps(section.title);
+                        if (llmOps) inner.appendChild(llmOps);
+                    }
                     sectionWrap.appendChild(inner);
                     body.appendChild(sectionWrap);
                 });
+                // 仅在向导关键步骤挂连通性检查区，避免干扰其他步骤。
+                const connectivityOps = buildWizardConnectivityOps(step.id);
+                if (connectivityOps) body.appendChild(connectivityOps);
                 block.appendChild(body);
                 container.appendChild(block);
             });
@@ -6944,12 +7267,628 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             if (!modal) return;
             modal.classList.add('hidden');
             modal.classList.remove('flex');
-            
+
             // 清理并发状态定时器
             if (evolutionConcurrencyTimer) {
                 clearInterval(evolutionConcurrencyTimer);
                 evolutionConcurrencyTimer = null;
             }
+        }
+
+        // ==================== 条件筛选器 ====================
+        let screenerCatalog = null;
+        let screenerActiveTab = 'market';
+        let screenerResults = [];
+        let screenerPage = 1;
+        let screenerPageSize = 50;
+        let screenerSortBy = null;
+        let screenerSortOrder = 'desc';
+        let screenerSelectedCodes = new Set();
+        let screenerContextRow = null;
+
+        function openScreenerModal() {
+            const modal = document.getElementById('screener-modal');
+            if (!modal) return;
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            loadScreenerFilterOptions();
+            loadScreenerCatalog();
+            setDefaultBacktestDates();
+        }
+
+        function closeScreenerModal() {
+            const modal = document.getElementById('screener-modal');
+            if (!modal) return;
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        function setDefaultBacktestDates() {
+            const start = document.getElementById('screener-bt-start');
+            const end = document.getElementById('screener-bt-end');
+            if (start && !start.value) start.value = new Date(new Date().getFullYear() - 1, 0, 1).toISOString().split('T')[0];
+            if (end && !end.value) end.value = new Date().toISOString().split('T')[0];
+        }
+
+        async function loadScreenerFilterOptions() {
+            try {
+                const res = await fetch('/api/screener/filter_options');
+                const data = await res.json();
+                if (data.status === 'success') {
+                    populateScreenerSelect('screener-region', data.data.region || []);
+                    populateScreenerSelect('screener-enterprise', data.data.enterprise_type || []);
+                    document.getElementById('screener-filter-options-status').textContent = '选项已加载';
+                }
+            } catch (e) {
+                document.getElementById('screener-filter-options-status').textContent = '选项加载失败';
+            }
+        }
+
+        function populateScreenerSelect(id, options) {
+            const el = document.getElementById(id);
+            if (!el || !options.length) return;
+            const first = el.options[0];
+            el.innerHTML = '';
+            el.appendChild(first);
+            options.forEach(opt => {
+                const o = document.createElement('option');
+                o.value = opt;
+                o.textContent = opt;
+                el.appendChild(o);
+            });
+        }
+
+        async function loadScreenerCatalog() {
+            try {
+                const res = await fetch('/api/screener/catalog');
+                const data = await res.json();
+                if (data.status === 'success') {
+                    screenerCatalog = data.data;
+                    renderScreenerConditions();
+                }
+            } catch (e) {
+                console.error('Failed to load screener catalog:', e);
+            }
+        }
+
+        function switchScreenerTab(tab) {
+            screenerActiveTab = tab;
+            const tabs = ['market', 'technical', 'financial', 'report', 'company', 'analyst', 'index', 'custom'];
+            tabs.forEach(t => {
+                const btn = document.getElementById(`screener-tab-${t}`);
+                if (!btn) return;
+                if (t === tab) {
+                    btn.className = 'px-3 py-1 rounded border border-emerald-500 bg-emerald-700 text-white';
+                } else {
+                    btn.className = 'px-3 py-1 rounded border border-slate-600 bg-slate-800 text-slate-200';
+                }
+            });
+            renderScreenerConditions();
+        }
+
+        function renderScreenerConditions() {
+            const container = document.getElementById('screener-conditions-container');
+            if (!container) return;
+            if (!screenerCatalog || !screenerCatalog[screenerActiveTab]) {
+                container.innerHTML = '<div class="text-xs text-slate-500 text-center py-4">该分类暂无筛选条件</div>';
+                return;
+            }
+            const categories = screenerCatalog[screenerActiveTab];
+            let html = '';
+            categories.forEach(cat => {
+                html += `<details class="border border-slate-700 rounded bg-slate-900/40" open><summary class="px-3 py-2 text-sm text-emerald-200 cursor-pointer select-none bg-slate-800/60">${cat.category}</summary><div class="p-2 space-y-2">`;
+                cat.fields.forEach(f => {
+                    html += renderScreenerField(f);
+                });
+                html += '</div></details>';
+            });
+            container.innerHTML = html;
+        }
+
+        function renderScreenerField(f) {
+            const key = f.key;
+            const label = f.label;
+            const unit = f.unit ? `<span class="text-slate-500 ml-1">${f.unit}</span>` : '';
+
+            if (f.type === 'range') {
+                const minStep = f.step || (f.unit === '%' ? 0.1 : 1);
+                return `<div class="flex items-center gap-1 text-xs"><span class="w-20 text-slate-300 shrink-0">${label}</span><input type="number" step="${minStep}" placeholder="最小" data-key="${key}" data-role="min" class="screener-field-range flex-1 bg-slate-800 border border-slate-700 rounded px-1.5 py-1 text-white font-mono text-[11px]"><span class="text-slate-500">~</span><input type="number" step="${minStep}" placeholder="最大" data-key="${key}" data-role="max" class="screener-field-range flex-1 bg-slate-800 border border-slate-700 rounded px-1.5 py-1 text-white font-mono text-[11px]">${unit}</div>`;
+            }
+            if (f.type === 'toggle') {
+                return `<div class="flex items-center gap-2 text-xs"><input type="checkbox" id="screener-toggle-${key}" data-key="${key}" data-type="toggle" class="w-3.5 h-3.5 accent-emerald-500"><label for="screener-toggle-${key}" class="text-slate-300 cursor-pointer">${label}</label></div>`;
+            }
+            if (f.type === 'text') {
+                return `<div class="text-xs text-slate-500 px-1">${f.placeholder || ''}</div>`;
+            }
+            return '';
+        }
+
+        function gatherActiveConditions() {
+            const conditions = [];
+            // Range fields
+            document.querySelectorAll('.screener-field-range').forEach(input => {
+                const key = input.dataset.key;
+                const role = input.dataset.role;
+                const val = input.value;
+                if (!val) return;
+                // Find or create condition entry for this key
+                let cond = conditions.find(c => c.key === key);
+                if (!cond) {
+                    cond = { key, operator: 'between' };
+                    conditions.push(cond);
+                }
+                if (role === 'min') { cond.value = parseFloat(val); }
+                else { cond.value2 = parseFloat(val); }
+                // If only one side set, switch operator
+                if (cond.value !== undefined && cond.value2 === undefined) { cond.operator = 'gte'; cond.value2 = undefined; }
+                else if (cond.value === undefined && cond.value2 !== undefined) { cond.operator = 'lte'; cond.value = undefined; }
+            });
+            // Toggle fields
+            document.querySelectorAll('[data-type="toggle"]').forEach(input => {
+                if (input.checked) {
+                    conditions.push({ key: input.dataset.key, operator: 'toggle', value: true });
+                }
+            });
+            return conditions;
+        }
+
+        function onScreenerFilterChange() {
+            // Placeholder: could auto-apply on filter change, but we wait for explicit button click
+        }
+
+        async function applyScreenerFilter() {
+            const exchange = document.getElementById('screener-exchange')?.value || '';
+            const region = document.getElementById('screener-region')?.value || '';
+            const enterprise = document.getElementById('screener-enterprise')?.value || '';
+            const margin = document.getElementById('screener-margin')?.value || '';
+            const logicMode = document.getElementById('screener-logic-mode')?.value || 'AND';
+
+            const conditions = gatherActiveConditions();
+            const body = {
+                exchange: exchange || null,
+                region: region || null,
+                enterprise_type: enterprise || null,
+                margin_trading: margin || null,
+                logic_mode: logicMode,
+                page: screenerPage,
+                page_size: screenerPageSize,
+                sort_by: screenerSortBy,
+                sort_order: screenerSortOrder,
+            };
+
+            if (screenerActiveTab === 'market') {
+                body.market_conditions = conditions;
+            } else if (screenerActiveTab === 'technical') {
+                body.technical_conditions = conditions;
+            } else if (screenerActiveTab === 'financial') {
+                body.financial_conditions = conditions;
+            }
+
+            try {
+                const res = await fetch('/api/screener/filter', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    screenerResults = data.data || [];
+                    renderScreenerResults();
+                } else {
+                    alert('筛选失败: ' + (data.msg || '未知错误'));
+                }
+            } catch (e) {
+                alert('请求失败: ' + e.message);
+            }
+        }
+
+        function resetScreenerFilter() {
+            document.querySelectorAll('.screener-field-range').forEach(input => { input.value = ''; });
+            document.querySelectorAll('[data-type="toggle"]').forEach(input => { input.checked = false; });
+            document.getElementById('screener-exchange').value = '';
+            document.getElementById('screener-region').value = '';
+            document.getElementById('screener-enterprise').value = '';
+            document.getElementById('screener-margin').value = '';
+            screenerResults = [];
+            screenerSelectedCodes.clear();
+            renderScreenerResults();
+        }
+
+        function renderScreenerResults() {
+            const tbody = document.getElementById('screener-results-body');
+            const info = document.getElementById('screener-pagination-info');
+            const pageNum = document.getElementById('screener-page-num');
+
+            if (!screenerResults.length) {
+                tbody.innerHTML = '<tr><td colspan="8" class="px-3 py-8 text-center text-slate-500">暂无符合条件的标的</td></tr>';
+                if (info) info.textContent = '共 0 条';
+                if (pageNum) pageNum.textContent = '1 / 1';
+                return;
+            }
+
+            let html = '';
+            screenerResults.forEach(row => {
+                const checked = screenerSelectedCodes.has(row.code) ? 'checked' : '';
+                const changePct = row.change_pct != null ? (row.change_pct >= 0 ? '+' : '') + (row.change_pct || 0).toFixed(2) + '%' : '--';
+                const changeClass = (row.change_pct || 0) >= 0 ? 'text-trading-green' : 'text-trading-red';
+                const price = row.price != null ? (row.price).toFixed(2) : '--';
+                const turnover = row.turnover != null ? (row.turnover).toFixed(2) + '%' : '--';
+                const floatMv = row.float_mv != null ? formatMv(row.float_mv) : '--';
+                html += `<tr class="hover:bg-slate-800/40" oncontextmenu="showScreenerContextMenu(event, '${row.code}')">
+                    <td class="px-3 py-1.5"><input type="checkbox" ${checked} onchange="toggleScreenerRow('${row.code}', this.checked)" /></td>
+                    <td class="px-3 py-1.5 text-white code-font">${row.code}</td>
+                    <td class="px-3 py-1.5">${row.name || '--'}</td>
+                    <td class="px-3 py-1.5 code-font">${price}</td>
+                    <td class="px-3 py-1.5 code-font ${changeClass}">${changePct}</td>
+                    <td class="px-3 py-1.5 code-font">${turnover}</td>
+                    <td class="px-3 py-1.5 code-font">${floatMv}</td>
+                    <td class="px-3 py-1.5 text-slate-500">${row.screener_time || '--'}</td>
+                </tr>`;
+            });
+            tbody.innerHTML = html;
+
+            // Update pagination info (total comes from server but we only have current page data here)
+            if (info) info.textContent = `共 ${screenerResults.length} 条（当前页）`;
+            if (pageNum) pageNum.textContent = `${screenerPage} / ${screenerPage}`;
+        }
+
+        function formatMv(valInYi) {
+            if (valInYi == null) return '--';
+            if (valInYi >= 10000) return (valInYi / 10000).toFixed(1) + '万亿';
+            return valInYi.toFixed(1) + '亿';
+        }
+
+        function sortScreenerResults(field) {
+            if (screenerSortBy === field) {
+                screenerSortOrder = screenerSortOrder === 'desc' ? 'asc' : 'desc';
+            } else {
+                screenerSortBy = field;
+                screenerSortOrder = 'desc';
+            }
+            // Re-sort locally
+            const reverse = screenerSortOrder === 'desc';
+            screenerResults.sort((a, b) => {
+                const va = a[field] || 0;
+                const vb = b[field] || 0;
+                if (typeof va === 'string') return reverse ? vb.localeCompare(va) : va.localeCompare(vb);
+                return reverse ? vb - va : va - vb;
+            });
+            renderScreenerResults();
+        }
+
+        function toggleScreenerSelectAll(checked) {
+            if (checked) {
+                screenerResults.forEach(r => screenerSelectedCodes.add(r.code));
+            } else {
+                screenerSelectedCodes.clear();
+            }
+            renderScreenerResults();
+        }
+
+        function toggleScreenerRow(code, checked) {
+            if (checked) screenerSelectedCodes.add(code);
+            else screenerSelectedCodes.delete(code);
+        }
+
+        function prevScreenerPage() {
+            if (screenerPage > 1) { screenerPage--; applyScreenerFilter(); }
+        }
+
+        function nextScreenerPage() {
+            screenerPage++; applyScreenerFilter();
+        }
+
+        function getSelectedCodes() {
+            if (screenerSelectedCodes.size > 0) return Array.from(screenerSelectedCodes);
+            return screenerResults.map(r => r.code);
+        }
+
+        async function addToStockPool() {
+            const codes = getSelectedCodes();
+            if (!codes.length) { alert('请先勾选标的'); return; }
+            try {
+                const res = await fetch('/api/blk/import_stock_pool', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        content: codes.join('\n'),
+                        normalize_symbol: true,
+                        import_mode: 'append',
+                        market_tag: '筛选导入',
+                        industry_tag: '条件筛选',
+                        size_tag: '未知',
+                        enabled: true,
+                    }),
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    alert(`已导入 ${data.added_count} 个标的到标的池`);
+                } else {
+                    alert('导入失败: ' + (data.msg || '未知错误'));
+                }
+            } catch (e) {
+                alert('请求失败: ' + e.message);
+            }
+        }
+
+        async function sendToBacktest() {
+            const codes = getSelectedCodes();
+            if (!codes.length) { alert('请先勾选标的'); return; }
+            // Use the first selected code for backtest, or let user know
+            const start = document.getElementById('screener-bt-start')?.value;
+            const end = document.getElementById('screener-bt-end')?.value;
+            const capital = parseFloat(document.getElementById('screener-bt-capital')?.value || '1000000');
+            if (!start || !end) { alert('请设置回测起止日期'); return; }
+            try {
+                const res = await fetch('/api/control/start_backtest', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        stock_code: codes[0],
+                        start, end, capital,
+                        realtime_push: false,
+                    }),
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    alert(`已对 ${codes[0]} 启动回测（共选中 ${codes.length} 个标的，当前仅回测首个）`);
+                } else {
+                    alert('回测启动失败: ' + (data.msg || '未知错误'));
+                }
+            } catch (e) {
+                alert('请求失败: ' + e.message);
+            }
+        }
+
+        async function exportScreenerCSV() {
+            const codes = getSelectedCodes();
+            if (!codes.length) { alert('请先勾选标的'); return; }
+            try {
+                const res = await fetch('/api/screener/export', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ codes }),
+                });
+                if (res.ok) {
+                    const blob = await res.blob();
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `screener_export_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.csv`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                } else {
+                    alert('导出失败');
+                }
+            } catch (e) {
+                alert('请求失败: ' + e.message);
+            }
+        }
+
+        async function startScreenerBacktest() {
+            const codes = getSelectedCodes();
+            if (!codes.length) { alert('请先筛选并勾选标的'); return; }
+            const start = document.getElementById('screener-bt-start')?.value;
+            const end = document.getElementById('screener-bt-end')?.value;
+            const capital = parseFloat(document.getElementById('screener-bt-capital')?.value || '1000000');
+            if (!start || !end) { alert('请设置回测起止日期'); return; }
+            try {
+                const res = await fetch('/api/control/start_backtest', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        stock_code: codes[0],
+                        start, end, capital,
+                        realtime_push: false,
+                    }),
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    alert(`已对 ${codes[0]} 启动回测`);
+                } else {
+                    alert('回测启动失败: ' + (data.msg || '未知错误'));
+                }
+            } catch (e) {
+                alert('请求失败: ' + e.message);
+            }
+        }
+
+        // 右键菜单
+        function showScreenerContextMenu(e, code) {
+            e.preventDefault();
+            screenerContextRow = code;
+            const menu = document.getElementById('screener-context-menu');
+            if (!menu) return;
+            menu.classList.remove('hidden');
+            menu.style.left = e.clientX + 'px';
+            menu.style.top = e.clientY + 'px';
+        }
+
+        function ctxMenuAction(action) {
+            hideScreenerContextMenu();
+            if (!screenerContextRow) return;
+            if (action === 'add_pool') {
+                screenerSelectedCodes.clear();
+                screenerSelectedCodes.add(screenerContextRow);
+                addToStockPool();
+            } else if (action === 'backtest') {
+                screenerSelectedCodes.clear();
+                screenerSelectedCodes.add(screenerContextRow);
+                sendToBacktest();
+            } else if (action === 'export') {
+                screenerSelectedCodes.clear();
+                screenerSelectedCodes.add(screenerContextRow);
+                exportScreenerCSV();
+            } else if (action === 'detail') {
+                alert('标的详情（Phase 2 支持）：' + screenerContextRow);
+            }
+        }
+
+        function hideScreenerContextMenu() {
+            const menu = document.getElementById('screener-context-menu');
+            if (menu) menu.classList.add('hidden');
+        }
+
+        // Global click to close context menu
+        document.addEventListener('click', function (e) {
+            hideScreenerContextMenu();
+        });
+
+        // ==================== AI 策略解析 ====================
+        let aiParsedData = null;
+
+        function openScreenerAIParser() {
+            const modal = document.getElementById('screener-ai-parser-modal');
+            if (!modal) return;
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            document.getElementById('screener-ai-result').classList.add('hidden');
+            document.getElementById('screener-ai-apply-btn').classList.add('hidden');
+            document.getElementById('screener-ai-status').textContent = '请输入策略描述后点击"开始解析"';
+            document.getElementById('screener-ai-input').value = '';
+            aiParsedData = null;
+        }
+
+        function closeScreenerAIParser() {
+            const modal = document.getElementById('screener-ai-parser-modal');
+            if (!modal) return;
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        async function parseStrategyWithAI() {
+            const text = document.getElementById('screener-ai-input').value.trim();
+            if (!text) { alert('请输入策略描述'); return; }
+            const status = document.getElementById('screener-ai-status');
+            const btn = document.getElementById('screener-ai-parse-btn');
+            status.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-1"></i> 大模型解析中...';
+            btn.disabled = true;
+            btn.classList.add('opacity-50', 'cursor-not-allowed');
+
+            try {
+                const res = await fetch('/api/screener/parse_strategy', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ description: text }),
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    aiParsedData = data.data;
+                    renderAIParsedResult(data.data);
+                    status.innerHTML = '<i class="fa-solid fa-check-circle text-emerald-400 mr-1"></i> 解析完成';
+                    document.getElementById('screener-ai-apply-btn').classList.remove('hidden');
+                } else {
+                    status.textContent = '解析失败: ' + (data.msg || '未知错误');
+                }
+            } catch (e) {
+                status.textContent = '请求失败: ' + e.message;
+            } finally {
+                btn.disabled = false;
+                btn.classList.remove('opacity-50', 'cursor-not-allowed');
+            }
+        }
+
+        function renderAIParsedResult(parsedData) {
+            const resultDiv = document.getElementById('screener-ai-result');
+            resultDiv.classList.remove('hidden');
+
+            // 渲染筛选条件
+            const screenDiv = document.getElementById('screener-ai-screen-conditions');
+            const conditions = parsedData.screen_conditions || [];
+            if (conditions.length === 0) {
+                screenDiv.innerHTML = '<div class="text-slate-500">无可直接执行的筛选条件</div>';
+            } else {
+                let html = '';
+                conditions.forEach(c => {
+                    const enabled = c.enabled;
+                    const icon = enabled ? '<i class="fa-solid fa-check text-emerald-400 mr-1"></i>' : '<i class="fa-solid fa-clock text-slate-500 mr-1"></i>';
+                    const color = enabled ? 'text-emerald-300' : 'text-slate-500';
+                    const opDesc = formatOperatorDesc(c.operator, c.value, c.value2, c.unit);
+                    html += `<div class="flex items-center ${color}"><span class="w-3 shrink-0">${icon}</span><span>${c.label}</span><span class="ml-1 text-slate-500">(${opDesc})</span></div>`;
+                });
+                screenDiv.innerHTML = html;
+            }
+
+            // 渲染执行规则
+            const execDiv = document.getElementById('screener-ai-execution-rules');
+            const rules = parsedData.execution_rules || [];
+            if (rules.length === 0) {
+                execDiv.innerHTML = '<div class="text-slate-500">无买卖执行规则</div>';
+            } else {
+                let html = '';
+                rules.forEach(r => {
+                    const desc = r.description || JSON.stringify(r);
+                    const typeIcons = { buy: '<i class="fa-solid fa-arrow-up text-emerald-400 mr-1"></i>', sell: '<i class="fa-solid fa-arrow-down text-amber-400 mr-1"></i>', stop_loss: '<i class="fa-solid fa-shield-halved text-rose-400 mr-1"></i>', hold: '<i class="fa-solid fa-hourglass-half text-blue-400 mr-1"></i>' };
+                    const type = (r.type || '').toLowerCase();
+                    const icon = typeIcons[type] || '<i class="fa-solid fa-circle mr-1"></i>';
+                    html += `<div class="flex items-start text-slate-300"><span class="w-3 shrink-0">${icon}</span><span>${desc}</span></div>`;
+                });
+                execDiv.innerHTML = html;
+            }
+        }
+
+        function formatOperatorDesc(op, value, value2, unit) {
+            if (!op) return '';
+            if (op === 'has_event') return `近${value}日发生`;
+            if (op === 'toggle') return '开启';
+            if (op === 'between') {
+                if (value != null && value2 != null) return `${value}~${value2}${unit || ''}`;
+                if (value != null) return `≥${value}${unit || ''}`;
+                if (value2 != null) return `≤${value2}${unit || ''}`;
+                return '区间';
+            }
+            if (op === 'gte') return `≥${value}${unit || ''}`;
+            if (op === 'gt') return `>${value}${unit || ''}`;
+            if (op === 'lte') return `≤${value}${unit || ''}`;
+            if (op === 'lt') return `<${value}${unit || ''}`;
+            if (op === 'formula') return `公式: ${value || ''}`;
+            return op;
+        }
+
+        function applyAIParsedConditions() {
+            if (!aiParsedData) return;
+
+            // 将 AI 解析的条件合并到筛选器
+            const conditions = aiParsedData.screen_conditions || [];
+            if (conditions.length === 0) { alert('无可执行的筛选条件，请手动设置'); return; }
+
+            // 先切到对应 tab 并渲染
+            const enabledConds = conditions.filter(c => c.enabled);
+            if (enabledConds.length > 0) {
+                const tabMap = { market: 'market', technical: 'technical', financial: 'financial' };
+                switchScreenerTab(tabMap[enabledConds[0].tab] || 'market');
+            }
+
+            // 填充条件到筛选器（通过填充输入框）
+            enabledConds.forEach(cond => {
+                const key = cond.key;
+                const op = cond.operator;
+                const val = cond.value;
+                const val2 = cond.value2;
+
+                if (op === 'toggle') {
+                    const toggle = document.getElementById(`screener-toggle-${key}`);
+                    if (toggle) toggle.checked = true;
+                } else if (op === 'between' || op === 'has_event' || op === 'formula') {
+                    // 填充 range 输入框
+                    const minInput = document.querySelector(`.screener-field-range[data-key="${key}"][data-role="min"]`);
+                    const maxInput = document.querySelector(`.screener-field-range[data-key="${key}"][data-role="max"]`);
+                    if (val != null && minInput) minInput.value = val;
+                    if (val2 != null && maxInput) maxInput.value = val2;
+                } else if (op === 'gte' || op === 'gt') {
+                    const minInput = document.querySelector(`.screener-field-range[data-key="${key}"][data-role="min"]`);
+                    if (minInput) minInput.value = val;
+                } else if (op === 'lte' || op === 'lt') {
+                    const maxInput = document.querySelector(`.screener-field-range[data-key="${key}"][data-role="max"]`);
+                    if (maxInput) maxInput.value = val;
+                }
+            });
+
+            // 关闭弹窗，自动执行筛选
+            closeScreenerAIParser();
+            setTimeout(() => applyScreenerFilter(), 300);
         }
 
         function isEvolutionBoardModalOpen() {
@@ -7075,6 +8014,11 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             }
             if (t === 'evolution') {
                 openEvolutionBoardModal();
+                return;
+            }
+            if (t === 'screener') {
+                closeAllMajorFunctionModals('screener-modal');
+                openScreenerModal();
                 return;
             }
             if (t === 'consistency') {
@@ -14703,20 +15647,28 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             }
         }
 
-        function updateDisclaimerAccess() {
+        function syncDisclaimerAccessState() {
             const overlay = document.getElementById('disclaimer-overlay');
             const checkbox = document.getElementById('disclaimer-agree-checkbox');
             const enterBtn = document.getElementById('disclaimer-enter-btn');
             if (!overlay || !checkbox || !enterBtn) return;
             disclaimerAccepted = !!checkbox.checked;
-            enterBtn.disabled = !disclaimerAccepted;
             if (disclaimerAccepted) {
+                // 使用 aria-disabled 管理可用状态，防止硬 disabled 导致“按钮锁死”。
+                enterBtn.setAttribute('aria-disabled', 'false');
                 enterBtn.classList.remove('cursor-not-allowed', 'opacity-60', 'bg-blue-600/50');
                 enterBtn.classList.add('hover:bg-blue-500', 'bg-blue-600');
             } else {
+                // 保持可点击，由点击函数做最终校验，提升兼容性。
+                enterBtn.setAttribute('aria-disabled', 'true');
                 enterBtn.classList.add('cursor-not-allowed', 'opacity-60', 'bg-blue-600/50');
                 enterBtn.classList.remove('hover:bg-blue-500', 'bg-blue-600');
             }
+        }
+
+        function updateDisclaimerAccess() {
+            // 兼容历史调用点：统一转发到新状态同步函数。
+            syncDisclaimerAccessState();
         }
 
         function enterSystemByDisclaimer() {
@@ -14724,7 +15676,14 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             const checkbox = document.getElementById('disclaimer-agree-checkbox');
             const accepted = !!(checkbox && checkbox.checked);
             disclaimerAccepted = accepted;
-            if (!overlay || !accepted) return;
+            if (!overlay) return;
+            if (!accepted) {
+                // 严格校验：未勾选协议时禁止进入系统。
+                logMessage('SYSTEM', '请先勾选免责声明与用户使用协议后再进入系统', 'warning');
+                syncDisclaimerAccessState();
+                try { window.alert('请先勾选免责声明与用户使用协议'); } catch (_) {}
+                return;
+            }
             try {
                 localStorage.setItem(DISCLAIMER_ACCEPT_KEY, JSON.stringify({
                     accepted: true,
@@ -14736,6 +15695,10 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             } catch (_) {}
             overlay.classList.remove('active');
         }
+        // 强制暴露到 window：兼容内联事件、不同壳环境与脚本作用域差异。
+        window.syncDisclaimerAccessState = syncDisclaimerAccessState;
+        window.updateDisclaimerAccess = updateDisclaimerAccess;
+        window.enterSystemByDisclaimer = enterSystemByDisclaimer;
 
         async function applyInitialDisclaimerState() {
             const checkbox = document.getElementById('disclaimer-agree-checkbox');
@@ -14789,7 +15752,8 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 disclaimerAccepted = true;
                 if (checkbox) checkbox.checked = true;
             }
-            updateDisclaimerAccess();
+            // 首次渲染时同步一次按钮状态。
+            syncDisclaimerAccessState();
             if (skipOnce || acceptedPersisted) enterSystemByDisclaimer();
         }
         
@@ -14800,8 +15764,13 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
         loadEvolutionFamilyAlertThresholdPreference();
         loadOpsHubPinState();
         applyInitialDisclaimerState();
-        document.getElementById('disclaimer-agree-checkbox')?.addEventListener('change', updateDisclaimerAccess);
+        // 同时监听 change/input/click，提升在不同浏览器与壳环境中的兼容性。
+        document.getElementById('disclaimer-agree-checkbox')?.addEventListener('change', syncDisclaimerAccessState);
+        document.getElementById('disclaimer-agree-checkbox')?.addEventListener('input', syncDisclaimerAccessState);
+        document.getElementById('disclaimer-agree-checkbox')?.addEventListener('click', syncDisclaimerAccessState);
         document.getElementById('disclaimer-enter-btn')?.addEventListener('click', enterSystemByDisclaimer);
+        // 周期性兜底同步：防止某些内核环境遗漏事件导致按钮状态卡死。
+        setInterval(syncDisclaimerAccessState, 500);
         document.getElementById('kline-modal')?.addEventListener('click', (e) => {
             if (e.target && e.target.id === 'kline-modal') closeKlineModal();
         });

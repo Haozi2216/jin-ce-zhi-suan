@@ -131,7 +131,7 @@
   },
   "trading_cost": {
     "commission_rate": 0.00025,
-    "min_commission": 5.0,
+    "min_commission": 5,
     "stamp_duty": 0.001,
     "transfer_fee": 0
   },
@@ -417,7 +417,7 @@
     "llm": {
       "enabled": true,
       "provider": "openai_compatible",
-      "model": "Qwen/Qwen3-Coder-480B-A35B-Instruct",
+      "model": "Qwen/Qwen3-30B-A3B-Instruct-2507",
       "base_url": "https://api.siliconflow.cn/v1",
       "timeout_seconds": 120,
       "retry_times": 1,
