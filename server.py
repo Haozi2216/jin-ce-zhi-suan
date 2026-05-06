@@ -119,6 +119,7 @@ _QUIET_HTTP_PATHS = {
     "/api/config",
     "/api/config/save",
     "/api/live/fund_pool",
+    "/api/live/fund_pool/statement",
     "/api/evolution/status",
     "/api/evolution/history",
     "/api/evolution/top",
@@ -130,6 +131,37 @@ _QUIET_HTTP_PATHS = {
     "/api/fundamental/cache_list",
     "/api/fundamental/cache_file",
 }
+
+# 启动阶段状态快照：供 desktop launcher 在“等待端口”期间读取当前卡点。
+STARTUP_TRACE_LOCK = threading.Lock()
+STARTUP_TRACE = {
+    "stage": "not_started",
+    "status": "idle",
+    "started_at": 0.0,
+    "stage_started_at": 0.0,
+    "last_updated_at": 0.0,
+    "detail": "",
+}
+
+def _update_startup_trace(stage: str = "", status: str = "", detail: str = ""):
+    """更新启动阶段快照（线程安全）。"""
+    now_ts = time.time()
+    with STARTUP_TRACE_LOCK:
+        if stage:
+            STARTUP_TRACE["stage"] = str(stage)
+            STARTUP_TRACE["stage_started_at"] = now_ts
+        if status:
+            STARTUP_TRACE["status"] = str(status)
+        if detail:
+            STARTUP_TRACE["detail"] = str(detail)
+        if not STARTUP_TRACE.get("started_at"):
+            STARTUP_TRACE["started_at"] = now_ts
+        STARTUP_TRACE["last_updated_at"] = now_ts
+
+def get_startup_trace_snapshot() -> Dict[str, Any]:
+    """返回启动阶段快照副本，供外部诊断读取。"""
+    with STARTUP_TRACE_LOCK:
+        return dict(STARTUP_TRACE)
 
 class _UvicornAccessPathFilter(logging.Filter):
     def filter(self, record):
@@ -771,6 +803,319 @@ def _load_live_fund_pool_snapshot(stock_code, include_transactions=False, tx_lim
         return state
     except Exception:
         return None
+
+def _load_live_fund_pool_state_and_transactions(stock_code):
+    """
+    加载资金池状态与全量交易明细：
+    1) 运行中任务优先读内存对象，保证实时性；
+    2) 无运行任务时回退到落盘文件，保证可追溯性。
+    Returns:
+        (state_dict_or_none, transactions_list)
+    """
+    code = str(stock_code or "").strip().upper()
+    if not code:
+        return None, []
+    cab = live_cabinets.get(code)
+    if cab is not None:
+        try:
+            # 运行中任务：从内存快照取当前资金状态。
+            tx_all = list(getattr(cab.revenue, "transactions", []) or [])
+            tx_limit = max(2000, len(tx_all))
+            state = cab.get_fund_pool_snapshot(include_transactions=True, tx_limit=tx_limit)
+            if not isinstance(state, dict):
+                return None, []
+            # 交易明细以 revenue.transactions 为准；若为空则回退快照内明细。
+            if not tx_all:
+                tx_all = state.get("trade_details", []) if isinstance(state.get("trade_details"), list) else []
+            return state, tx_all
+        except Exception:
+            return None, []
+    file_path = _live_fund_pool_file(code)
+    if not os.path.exists(file_path):
+        return None, []
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        state = payload.get("state", {}) if isinstance(payload, dict) else {}
+        if not isinstance(state, dict):
+            return None, []
+        tx_all = payload.get("transactions_all", []) if isinstance(payload, dict) else []
+        if not isinstance(tx_all, list) or not tx_all:
+            tx_all = state.get("trade_details", []) if isinstance(state.get("trade_details"), list) else []
+        return state, tx_all
+    except Exception:
+        return None, []
+
+def _build_live_fund_pool_statement(stock_code, include_trade_details=False, detail_limit=500):
+    """
+    生成资金池对账单，确保以下闭环可核对：
+    - 费用闭环：cost == commission + stamp_duty + transfer_fee
+    - 现金闭环：cash == initial - buy_amount - buy_fee + sell_amount - sell_fee
+    - 资产闭环：fund_value == cash + holdings_value
+    """
+    state, transactions = _load_live_fund_pool_state_and_transactions(stock_code)
+    if not isinstance(state, dict):
+        return None
+    code = str(state.get("stock_code", stock_code) or "").strip().upper()
+    initial_capital = float(state.get("initial_capital", 0.0) or 0.0)
+    cash = float(state.get("cash", 0.0) or 0.0)
+    holdings_value = float(state.get("holdings_value", 0.0) or 0.0)
+    fund_value = float(state.get("fund_value", 0.0) or 0.0)
+    positions = state.get("positions", []) if isinstance(state.get("positions"), list) else []
+
+    buy_count = 0
+    sell_count = 0
+    adjust_count = 0
+    buy_amount_total = 0.0
+    sell_amount_total = 0.0
+    adjust_cash_total = 0.0
+    buy_fee_total = 0.0
+    sell_fee_total = 0.0
+    total_cost = 0.0
+    total_commission = 0.0
+    total_stamp_duty = 0.0
+    total_transfer_fee = 0.0
+    row_negative_fee_count = 0
+    row_fee_mismatch_count = 0
+    trade_rows = []
+
+    for tx in (transactions if isinstance(transactions, list) else []):
+        if not isinstance(tx, dict):
+            continue
+        direction = str(tx.get("direction", "")).strip().upper()
+        amount = float(tx.get("amount", 0.0) or 0.0)
+        cost = float(tx.get("cost", 0.0) or 0.0)
+        commission = float(tx.get("commission", 0.0) or 0.0)
+        stamp_duty = float(tx.get("stamp_duty", 0.0) or 0.0)
+        transfer_fee = float(tx.get("transfer_fee", 0.0) or 0.0)
+        expected_cost = commission + stamp_duty + transfer_fee
+        fee_diff = float(cost - expected_cost)
+        if cost < -1e-9 or commission < -1e-9 or stamp_duty < -1e-9 or transfer_fee < -1e-9:
+            row_negative_fee_count += 1
+        if abs(fee_diff) > 0.01:
+            row_fee_mismatch_count += 1
+        if direction == "BUY":
+            buy_count += 1
+            buy_amount_total += amount
+            buy_fee_total += cost
+        elif direction == "SELL":
+            sell_count += 1
+            sell_amount_total += amount
+            sell_fee_total += cost
+        elif direction == "ADJUST":
+            # 修正流水：amount 字段承载现金修正增量。
+            adjust_count += 1
+            adjust_cash_total += amount
+        total_cost += cost
+        total_commission += commission
+        total_stamp_duty += stamp_duty
+        total_transfer_fee += transfer_fee
+        if include_trade_details:
+            trade_rows.append({
+                "dt": str(tx.get("dt", "")),
+                "strategy_id": str(tx.get("strategy_id", "")),
+                "direction": direction,
+                "price": float(tx.get("price", 0.0) or 0.0),
+                "quantity": int(tx.get("quantity", 0) or 0),
+                "amount": amount,
+                "cost": cost,
+                "commission": commission,
+                "stamp_duty": stamp_duty,
+                "transfer_fee": transfer_fee,
+                "expected_cost": expected_cost,
+                "fee_diff": fee_diff,
+                "pnl": float(tx.get("pnl", 0.0) or 0.0),
+            })
+
+    # 现金闭环：初始资金扣买入与买入费用，加卖出净额，再加修正现金增量。
+    expected_cash = initial_capital - buy_amount_total - buy_fee_total + sell_amount_total - sell_fee_total + adjust_cash_total
+    cash_diff = cash - expected_cash
+    # 资产闭环：总资产应等于现金+持仓市值。
+    expected_fund_value = cash + holdings_value
+    fund_diff = fund_value - expected_fund_value
+    # 持仓闭环：持仓市值应等于持仓明细 market_value 合计。
+    holdings_from_positions = float(sum(float(x.get("market_value", 0.0) or 0.0) for x in positions if isinstance(x, dict)))
+    holdings_diff = holdings_value - holdings_from_positions
+    fee_component_total = total_commission + total_stamp_duty + total_transfer_fee
+    fee_component_diff = total_cost - fee_component_total
+
+    tolerance = 0.05
+    statement = {
+        "stock_code": code,
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "snapshot": {
+            "updated_at": str(state.get("updated_at", "")),
+            "initial_capital": round(initial_capital, 4),
+            "cash": round(cash, 4),
+            "holdings_value": round(holdings_value, 4),
+            "fund_value": round(fund_value, 4),
+            "position_count": int(state.get("position_count", len(positions)) or 0),
+            "trade_count": int(state.get("trade_count", len(transactions if isinstance(transactions, list) else [])) or 0),
+        },
+        "trade_agg": {
+            "buy_count": int(buy_count),
+            "sell_count": int(sell_count),
+            "adjust_count": int(adjust_count),
+            "buy_amount_total": round(buy_amount_total, 4),
+            "sell_amount_total": round(sell_amount_total, 4),
+            "adjust_cash_total": round(adjust_cash_total, 4),
+            "buy_fee_total": round(buy_fee_total, 4),
+            "sell_fee_total": round(sell_fee_total, 4),
+            "total_cost": round(total_cost, 4),
+            "total_commission": round(total_commission, 4),
+            "total_stamp_duty": round(total_stamp_duty, 4),
+            "total_transfer_fee": round(total_transfer_fee, 4),
+        },
+        "reconcile": {
+            "fee_component_total": round(fee_component_total, 4),
+            "fee_component_diff": round(fee_component_diff, 4),
+            "fee_component_ok": abs(fee_component_diff) <= tolerance,
+            "row_negative_fee_count": int(row_negative_fee_count),
+            "row_fee_mismatch_count": int(row_fee_mismatch_count),
+            "row_fee_ok": int(row_negative_fee_count) == 0 and int(row_fee_mismatch_count) == 0,
+            "expected_cash": round(expected_cash, 4),
+            "cash_diff": round(cash_diff, 4),
+            "cash_reconcile_ok": abs(cash_diff) <= tolerance,
+            "expected_fund_value": round(expected_fund_value, 4),
+            "fund_diff": round(fund_diff, 4),
+            "fund_reconcile_ok": abs(fund_diff) <= tolerance,
+            "holdings_from_positions": round(holdings_from_positions, 4),
+            "holdings_diff": round(holdings_diff, 4),
+            "holdings_reconcile_ok": abs(holdings_diff) <= tolerance,
+            "all_ok": (
+                abs(fee_component_diff) <= tolerance
+                and int(row_negative_fee_count) == 0
+                and int(row_fee_mismatch_count) == 0
+                and abs(cash_diff) <= tolerance
+                and abs(fund_diff) <= tolerance
+                and abs(holdings_diff) <= tolerance
+            ),
+        },
+        "positions": positions,
+    }
+    if include_trade_details:
+        # 仅保留最近 N 笔，避免前端加载压力。
+        limit = max(1, min(int(detail_limit or 500), 10000))
+        statement["trade_rows"] = trade_rows[-limit:]
+    return statement
+
+def _build_fund_pool_adjust_tx(code, req: "LiveFundPoolAdjustRequest"):
+    """
+    构建一条审计型修正流水（direction=ADJUST）：
+    - amount 存放现金修正增量；
+    - cost 与三项费用存放费用修正增量；
+    - meta 存放修正原因与操作人。
+    """
+    now_text = datetime.now().isoformat(timespec="seconds")
+    delta_cash = float(req.delta_cash or 0.0)
+    delta_cost = float(req.delta_cost or 0.0)
+    delta_commission = float(req.delta_commission or 0.0)
+    delta_stamp_duty = float(req.delta_stamp_duty or 0.0)
+    delta_transfer_fee = float(req.delta_transfer_fee or 0.0)
+    return {
+        "strategy_id": "__ADJUST__",
+        "dt": now_text,
+        "direction": "ADJUST",
+        "price": 0.0,
+        "quantity": 0,
+        "amount": delta_cash,
+        "cost": delta_cost,
+        "pnl": 0.0,
+        "commission": delta_commission,
+        "stamp_duty": delta_stamp_duty,
+        "transfer_fee": delta_transfer_fee,
+        "meta": {
+            "type": "fund_pool_adjustment",
+            "stock_code": str(code or "").upper(),
+            "reason": str(req.reason or "").strip(),
+            "operator": str(req.operator or "").strip()
+        }
+    }
+
+def _apply_live_fund_pool_adjustment(req: "LiveFundPoolAdjustRequest"):
+    """
+    执行资金池修正：
+    - 运行中优先写入内存并持久化；
+    - 非运行状态写入落盘文件；
+    - 修正内容通过 ADJUST 流水留痕，便于后续审计与回放。
+    """
+    code = str(req.stock_code or "").strip().upper()
+    if not code:
+        return {"status": "error", "msg": "stock_code required"}
+    delta_cash = float(req.delta_cash or 0.0)
+    delta_cost = float(req.delta_cost or 0.0)
+    delta_commission = float(req.delta_commission or 0.0)
+    delta_stamp_duty = float(req.delta_stamp_duty or 0.0)
+    delta_transfer_fee = float(req.delta_transfer_fee or 0.0)
+    if abs(delta_cash) < 1e-12 and abs(delta_cost) < 1e-12 and abs(delta_commission) < 1e-12 and abs(delta_stamp_duty) < 1e-12 and abs(delta_transfer_fee) < 1e-12:
+        return {"status": "error", "msg": "at least one delta must be non-zero"}
+    expected_cost = delta_commission + delta_stamp_duty + delta_transfer_fee
+    # 若未显式指定 delta_cost，则自动按三项费用合成，确保闭环。
+    if abs(delta_cost) < 1e-12 and abs(expected_cost) > 1e-12:
+        delta_cost = expected_cost
+        req.delta_cost = delta_cost
+    # 若显式指定 delta_cost 与三项费用合计不一致，则拒绝，避免引入新的不一致。
+    if abs(delta_cost - expected_cost) > 0.01:
+        return {"status": "error", "msg": "delta_cost must equal delta_commission + delta_stamp_duty + delta_transfer_fee (tolerance 0.01)"}
+
+    tx = _build_fund_pool_adjust_tx(code, req)
+    cab = live_cabinets.get(code)
+    if cab is not None:
+        try:
+            # 修正运行中内存资金。
+            cab.revenue.cash = float(cab.revenue.cash or 0.0) + float(delta_cash)
+            # 修正费用累计计数，保持快照字段与流水一致。
+            cab.revenue.total_commission = float(cab.revenue.total_commission or 0.0) + float(delta_commission)
+            cab.revenue.total_stamp_duty = float(cab.revenue.total_stamp_duty or 0.0) + float(delta_stamp_duty)
+            cab.revenue.total_transfer_fee = float(cab.revenue.total_transfer_fee or 0.0) + float(delta_transfer_fee)
+            cab.revenue.transactions.append(tx)
+            cab._persist_virtual_fund_pool()
+            return {"status": "success", "msg": f"fund pool adjusted: {code}", "tx": tx}
+        except Exception as e:
+            return {"status": "error", "msg": f"adjust running fund pool failed: {e}"}
+
+    file_path = _live_fund_pool_file(code)
+    if not os.path.exists(file_path):
+        return {"status": "error", "msg": "fund pool not found"}
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        state = payload.get("state", {}) if isinstance(payload, dict) else {}
+        if not isinstance(state, dict):
+            return {"status": "error", "msg": "invalid fund pool state"}
+        tx_all = payload.get("transactions_all", []) if isinstance(payload, dict) else []
+        tx_all = tx_all if isinstance(tx_all, list) else []
+        tx_all.append(tx)
+        # 按修正增量更新资金快照，并重算费用汇总字段。
+        state["cash"] = float(state.get("cash", 0.0) or 0.0) + float(delta_cash)
+        holdings_value = float(state.get("holdings_value", 0.0) or 0.0)
+        state["fund_value"] = float(state["cash"]) + holdings_value
+        state["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        state["trade_count"] = int(len(tx_all))
+        state["trade_details"] = tx_all[-20:]
+        total_cost = 0.0
+        total_commission = 0.0
+        total_stamp_duty = 0.0
+        total_transfer_fee = 0.0
+        for item in tx_all:
+            if not isinstance(item, dict):
+                continue
+            total_cost += float(item.get("cost", 0.0) or 0.0)
+            total_commission += float(item.get("commission", 0.0) or 0.0)
+            total_stamp_duty += float(item.get("stamp_duty", 0.0) or 0.0)
+            total_transfer_fee += float(item.get("transfer_fee", 0.0) or 0.0)
+        state["fee_summary"] = {
+            "total_cost": round(total_cost, 4),
+            "total_commission": round(total_commission, 4),
+            "total_stamp_duty": round(total_stamp_duty, 4),
+            "total_transfer_fee": round(total_transfer_fee, 4)
+        }
+        payload["state"] = state
+        payload["transactions_all"] = tx_all
+        _write_json_file(file_path, payload)
+        return {"status": "success", "msg": f"fund pool adjusted: {code}", "tx": tx}
+    except Exception as e:
+        return {"status": "error", "msg": f"adjust persisted fund pool failed: {e}"}
 
 def _collect_live_fund_pools(codes=None, include_transactions=False, tx_limit=200, include_persisted=False):
     target = []
@@ -2560,6 +2905,20 @@ class SourceSwitchRequest(BaseModel):
 class LiveFundPoolResetRequest(BaseModel):
     stock_code: str
     initial_capital: Optional[float] = None
+
+class LiveFundPoolAdjustRequest(BaseModel):
+    stock_code: str
+    # 现金修正增量：正数=补现金，负数=扣现金。
+    delta_cash: Optional[float] = 0.0
+    # 费用修正增量：建议与三项费用分量保持一致。
+    delta_cost: Optional[float] = 0.0
+    delta_commission: Optional[float] = 0.0
+    delta_stamp_duty: Optional[float] = 0.0
+    delta_transfer_fee: Optional[float] = 0.0
+    # 修正原因用于审计追踪，建议填写。
+    reason: Optional[str] = ""
+    # 操作人用于审计追踪，建议填写。
+    operator: Optional[str] = ""
 
 class WebhookRetryRequest(BaseModel):
     event_ids: Optional[list[str]] = None
@@ -8106,6 +8465,21 @@ async def api_get_live_fund_pool(stock_code: Optional[str] = None, include_trans
         return {"status": "success", "stock_code": str(stock_code).upper(), "fund_pool": snap}
     return {"status": "success", "fund_pools": _collect_live_fund_pools(include_transactions=include_transactions, tx_limit=limit)}
 
+@app.get("/api/live/fund_pool/statement")
+async def api_get_live_fund_pool_statement(stock_code: str, include_trade_details: bool = False, detail_limit: int = 500):
+    # 资金池对账单接口：用于核对资产、持仓、买卖和费用闭环。
+    code = str(stock_code or "").strip().upper()
+    if not code:
+        return {"status": "error", "msg": "stock_code required"}
+    statement = _build_live_fund_pool_statement(
+        stock_code=code,
+        include_trade_details=bool(include_trade_details),
+        detail_limit=max(1, min(int(detail_limit or 500), 10000)),
+    )
+    if not isinstance(statement, dict):
+        return {"status": "error", "msg": "fund pool not found", "stock_code": code}
+    return {"status": "success", "stock_code": code, "statement": statement}
+
 @app.post("/api/live/fund_pool/reset")
 async def api_reset_live_fund_pool(req: LiveFundPoolResetRequest):
     code = str(req.stock_code or "").strip().upper()
@@ -8131,6 +8505,34 @@ async def api_reset_live_fund_pool(req: LiveFundPoolResetRequest):
     payload = _empty_live_fund_pool_state(code, cap)
     _write_json_file(_live_fund_pool_file(code), payload)
     return {"status": "success", "msg": f"fund pool reset: {code}", "fund_pool": payload.get("state", {})}
+
+@app.post("/api/live/fund_pool/adjust")
+async def api_adjust_live_fund_pool(req: LiveFundPoolAdjustRequest):
+    """
+    资金池修正接口：
+    - 允许手工修正现金与费用；
+    - 自动追加 ADJUST 审计流水；
+    - 返回最新对账单，便于前端即时展示闭环状态。
+    """
+    result = _apply_live_fund_pool_adjustment(req)
+    if str(result.get("status", "")).lower() != "success":
+        return result
+    code = str(req.stock_code or "").strip().upper()
+    statement = _build_live_fund_pool_statement(stock_code=code, include_trade_details=False, detail_limit=200)
+    # 广播最新资金池快照，确保前端表格与卡片同步。
+    try:
+        snap = _load_live_fund_pool_snapshot(code, include_transactions=False, tx_limit=200)
+        if isinstance(snap, dict):
+            await emit_event_to_ws("fund_pool", snap, stock_code=code)
+    except Exception:
+        pass
+    return {
+        "status": "success",
+        "msg": result.get("msg", f"fund pool adjusted: {code}"),
+        "stock_code": code,
+        "adjust_tx": result.get("tx", {}),
+        "statement": statement if isinstance(statement, dict) else {}
+    }
 
 @app.get("/api/webhook/failed")
 async def api_webhook_failed(limit: int = 200):
@@ -9048,13 +9450,60 @@ async def startup_event():
     logging.getLogger("uvicorn.access").addFilter(_UvicornAccessPathFilter())
     logger.info("Initializing Cabinet Server...")
 
-    t0 = time.time()
-    load_report_history()
-    logger.info(f"[startup] load_report_history done in {time.time()-t0:.2f}s")
+    # 启动阶段耗时探针：记录每个关键阶段的开始/结束，便于定位“卡住在哪一步”。
+    startup_trace = {
+        "current_stage": "init",
+        "started_at": time.time(),
+        "stage_started_at": time.time(),
+    }
+    # 初始化全局快照，供 desktop launcher 在启动等待期间读取。
+    _update_startup_trace(stage="startup_event", status="running", detail="startup_event entered")
 
+    def _mark_stage(stage_name: str):
+        # 统一记录阶段切换，减少重复日志模板。
+        startup_trace["current_stage"] = str(stage_name or "unknown")
+        startup_trace["stage_started_at"] = time.time()
+        _update_startup_trace(stage=startup_trace["current_stage"], status="running", detail="stage started")
+        logger.info(f"[startup] >>> {startup_trace['current_stage']} started")
+        # 使用 print 强制写入桌面日志，避免用户环境下 logging 级别导致关键启动信息缺失。
+        print(f"[startup] >>> {startup_trace['current_stage']} started")
+
+    async def _run_blocking_stage(stage_name: str, func, timeout_sec: int, fallback_value=None):
+        """在线程中执行阻塞步骤并设置超时，超时后降级继续启动。"""
+        _mark_stage(stage_name)
+        begin_ts = time.time()
+        try:
+            result = await asyncio.wait_for(asyncio.to_thread(func), timeout=max(1, int(timeout_sec)))
+            cost = time.time() - begin_ts
+            _update_startup_trace(status="running", detail=f"{stage_name} done in {cost:.2f}s")
+            logger.info(f"[startup] {stage_name} done in {cost:.2f}s")
+            print(f"[startup] {stage_name} done in {cost:.2f}s")
+            return result
+        except asyncio.TimeoutError:
+            cost = time.time() - begin_ts
+            _update_startup_trace(status="degraded", detail=f"{stage_name} timeout {cost:.2f}s")
+            logger.error(f"[startup] {stage_name} timeout after {cost:.2f}s (limit={timeout_sec}s), continue with fallback")
+            print(f"[startup] {stage_name} timeout after {cost:.2f}s (limit={timeout_sec}s), continue with fallback")
+            return fallback_value
+        except Exception as e:
+            cost = time.time() - begin_ts
+            _update_startup_trace(status="degraded", detail=f"{stage_name} failed {type(e).__name__}: {e}")
+            logger.error(f"[startup] {stage_name} failed in {cost:.2f}s: {e}", exc_info=True)
+            print(f"[startup] {stage_name} failed in {cost:.2f}s: {type(e).__name__}: {e}")
+            return fallback_value
+
+    cfg = ConfigLoader.reload()
+    startup_timeout_cfg = cfg.get("desktop", {}) if isinstance(cfg.get("desktop", {}), dict) else {}
+    report_timeout = int(startup_timeout_cfg.get("report_load_timeout_seconds", 25) or 25)
+    strategy_timeout = int(startup_timeout_cfg.get("strategy_load_timeout_seconds", 40) or 40)
+
+    await _run_blocking_stage("load_report_history", lambda: load_report_history(), report_timeout, None)
+
+    _mark_stage("pattern_thumb_warmup_task")
     t0 = time.time()
     _ensure_pattern_thumb_warmup_task()
     logger.info(f"[startup] _ensure_pattern_thumb_warmup_task done in {time.time()-t0:.2f}s")
+    print(f"[startup] _ensure_pattern_thumb_warmup_task done in {time.time()-t0:.2f}s")
 
     # Log registered routes
     logger.info("--- Registered API Endpoints ---")
@@ -9063,15 +9512,21 @@ async def startup_event():
             logger.info(f"{route.methods} {route.path}")
     logger.info("--------------------------------")
 
-    t0 = time.time()
-    strategies = strategy_factory_module.create_strategies()
-    logger.info(f"[startup] create_strategies done in {time.time()-t0:.2f}s")
+    strategies = await _run_blocking_stage(
+        "create_strategies",
+        lambda: strategy_factory_module.create_strategies(),
+        strategy_timeout,
+        [],
+    )
     logger.info(f"Loaded {len(strategies)} Strategies: {[s.name for s in strategies]}")
+    print(f"[startup] loaded strategies: {len(strategies)}")
 
+    _mark_stage("config_reload_and_private_check")
     t0 = time.time()
     cfg = ConfigLoader.reload()
     _startup_private_data_check(cfg)
     logger.info(f"[startup] _startup_private_data_check done in {time.time()-t0:.2f}s")
+    print(f"[startup] _startup_private_data_check done in {time.time()-t0:.2f}s")
 
     if bool(cfg.get("history_sync.scheduler_enabled", False)):
         history_sync_scheduler_task = asyncio.create_task(_history_sync_scheduler_loop())
@@ -9079,19 +9534,25 @@ async def startup_event():
         # 自动实盘启动调度器始终常驻，由运行模式决定是否触发。
         live_auto_start_scheduler_task = asyncio.create_task(_live_auto_start_scheduler_loop())
 
+    _mark_stage("evolution_setup")
     t0 = time.time()
     evolution_runtime.set_event_sink(_push_evolution_ws_event)
     evolution_platform_hub.set_event_sink(_push_evolution_ws_event)
     evolution_platform_hub.start_services(auto_backup=bool(cfg.get("evolution.platform.auto_backup_enabled", False)))
     logger.info(f"[startup] evolution setup done in {time.time()-t0:.2f}s")
+    print(f"[startup] evolution setup done in {time.time()-t0:.2f}s")
 
     if evolution_ws_pump_task is None or evolution_ws_pump_task.done():
         evolution_ws_pump_task = asyncio.create_task(_evolution_ws_pump_loop())
 
+    _mark_stage("server_bind_announce")
     server_host = startup_server_host if startup_server_host else _server_host(cfg)
     server_port = startup_server_port if startup_server_port else _server_port(cfg)
     access_host = "localhost" if server_host in {"0.0.0.0", "::"} else server_host
     logger.info(f"Server Started. Access dashboard at http://{access_host}:{server_port}")
+    logger.info(f"[startup] all stages done in {time.time() - startup_trace['started_at']:.2f}s")
+    print(f"[startup] all stages done in {time.time() - startup_trace['started_at']:.2f}s")
+    _update_startup_trace(stage="startup_done", status="ready", detail=f"all stages done in {time.time() - startup_trace['started_at']:.2f}s")
 
 async def shutdown_event():
     global history_sync_scheduler_task, evolution_ws_pump_task, live_auto_start_scheduler_task

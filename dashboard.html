@@ -993,6 +993,9 @@
                                         </select>
                                         <input id="fund-pool-capital-input" type="number" min="10000" step="10000" class="bg-slate-800 border border-slate-600 text-slate-200 rounded px-1 py-0.5 text-[10px] w-24" placeholder="初始资金" />
                                         <button onclick="refreshFundPoolPanel()" class="text-[10px] px-2 py-0.5 rounded bg-slate-700 hover:bg-slate-600 text-slate-100 border border-slate-500">刷新</button>
+                                        <button onclick="generateFundPoolStatementByUI(false)" class="text-[10px] px-2 py-0.5 rounded bg-indigo-800 hover:bg-indigo-700 text-indigo-100 border border-indigo-700">对账单</button>
+                                        <button onclick="generateFundPoolStatementByUI(true)" class="text-[10px] px-2 py-0.5 rounded bg-cyan-800 hover:bg-cyan-700 text-cyan-100 border border-cyan-700">导出CSV</button>
+                                        <button onclick="adjustFundPoolByUI()" class="text-[10px] px-2 py-0.5 rounded bg-amber-800 hover:bg-amber-700 text-amber-100 border border-amber-700">修正</button>
                                         <button onclick="resetFundPoolByUI()" class="text-[10px] px-2 py-0.5 rounded bg-rose-800 hover:bg-rose-700 text-rose-100 border border-rose-700">重置</button>
                                     </div>
                                 </div>
@@ -1014,6 +1017,10 @@
                                         <div class="text-slate-500">已实现盈亏</div>
                                         <div id="fund-pool-realized" class="font-mono text-slate-200">--</div>
                                     </div>
+                                </div>
+                                <div class="bg-slate-950/70 border border-slate-700 rounded p-2 mb-2">
+                                    <div class="text-[10px] text-slate-400 mb-1">资金池对账单（资产/持仓/买卖/费用闭环）</div>
+                                    <pre id="fund-pool-statement-view" class="max-h-28 overflow-auto text-[10px] text-slate-200 font-mono bg-slate-950/70 border border-slate-800 rounded p-1 whitespace-pre-wrap break-words">点击“对账单”生成</pre>
                                 </div>
                                 <div class="bg-slate-950/70 border border-slate-700 rounded p-2 mb-2">
                                     <div class="flex items-center justify-between mb-1">
@@ -1079,7 +1086,10 @@
                                                     <th class="text-left py-0.5">方向</th>
                                                     <th class="text-right py-0.5">数量</th>
                                                     <th class="text-right py-0.5">价格</th>
-                                                    <th class="text-right py-0.5">手续费</th>
+                                                    <th class="text-right py-0.5">手续费(总)</th>
+                                                    <th class="text-right py-0.5">佣金</th>
+                                                    <th class="text-right py-0.5">印花税</th>
+                                                    <th class="text-right py-0.5">过户费</th>
                                                     <th class="text-right py-0.5">盈亏</th>
                                                 </tr>
                                             </thead>
@@ -1275,7 +1285,7 @@
                             <button onclick="openFeatureFromHub('webhook')" class="bg-amber-700 hover:bg-amber-600 text-white px-3 py-2 rounded text-xs border border-amber-500">推送补偿</button>
                             <button onclick="openFeatureFromHub('pattern')" class="bg-slate-700 hover:bg-slate-600 text-white px-3 py-2 rounded text-xs border border-slate-500">经典形态</button>
                             <button onclick="openFeatureFromHub('evolution')" class="bg-cyan-700 hover:bg-cyan-600 text-white px-3 py-2 rounded text-xs border border-cyan-500">策略进化</button>
-                            <!-- <button onclick="openFeatureFromHub('screener')" class="bg-emerald-700 hover:bg-emerald-600 text-white px-3 py-2 rounded text-xs border border-emerald-500">条件筛选</button> -->
+                            <button onclick="openFeatureFromHub('screener')" class="bg-emerald-700 hover:bg-emerald-600 text-white px-3 py-2 rounded text-xs border border-emerald-500">条件筛选</button>
                         </div>
                     </div>
                 </div>
@@ -2675,6 +2685,60 @@
             <div id="fund-pool-modal-host" class="flex-1 overflow-auto p-3"></div>
         </div>
     </div>
+    <div id="fund-pool-adjust-modal" class="hidden fixed inset-0 bg-black/80 z-[159] items-center justify-center p-4">
+        <div class="w-[760px] max-w-[98vw] bg-slate-900 border border-amber-700/60 rounded-lg shadow-2xl overflow-hidden flex flex-col">
+            <div class="px-4 py-3 border-b border-amber-900/60 flex items-center justify-between">
+                <div class="text-white font-semibold text-sm">资金池修正（结构化表单）</div>
+                <button onclick="closeFundPoolAdjustModal()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="p-4 space-y-3 text-xs">
+                <div class="grid grid-cols-2 gap-2">
+                    <div class="bg-slate-950/70 border border-slate-700 rounded p-2">
+                        <div class="text-slate-500 mb-1">祖宗代码</div>
+                        <div id="fund-pool-adjust-stock" class="font-mono text-slate-200">--</div>
+                    </div>
+                    <div class="bg-slate-950/70 border border-slate-700 rounded p-2">
+                        <div class="text-slate-500 mb-1">操作人</div>
+                        <input id="fund-pool-adjust-operator" type="text" class="w-full bg-slate-800 border border-slate-600 text-slate-200 rounded px-2 py-1 text-xs font-mono" placeholder="例如：ops_01" />
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                    <label class="bg-slate-950/70 border border-slate-700 rounded p-2">
+                        <div class="text-slate-400 mb-1">现金修正增量 `delta_cash`（元）</div>
+                        <input id="fund-pool-adjust-delta-cash" type="number" step="0.01" class="w-full bg-slate-800 border border-slate-600 text-slate-200 rounded px-2 py-1 text-xs font-mono" value="0" />
+                    </label>
+                    <label class="bg-slate-950/70 border border-slate-700 rounded p-2">
+                        <div class="text-slate-400 mb-1">费用总增量 `delta_cost`（元）</div>
+                        <input id="fund-pool-adjust-delta-cost" type="number" step="0.01" class="w-full bg-slate-800 border border-slate-600 text-slate-200 rounded px-2 py-1 text-xs font-mono" value="0" />
+                    </label>
+                </div>
+                <div class="grid grid-cols-3 gap-2">
+                    <label class="bg-slate-950/70 border border-slate-700 rounded p-2">
+                        <div class="text-slate-400 mb-1">佣金 `delta_commission`</div>
+                        <input id="fund-pool-adjust-delta-commission" type="number" step="0.01" class="w-full bg-slate-800 border border-slate-600 text-slate-200 rounded px-2 py-1 text-xs font-mono" value="0" />
+                    </label>
+                    <label class="bg-slate-950/70 border border-slate-700 rounded p-2">
+                        <div class="text-slate-400 mb-1">印花税 `delta_stamp_duty`</div>
+                        <input id="fund-pool-adjust-delta-stamp" type="number" step="0.01" class="w-full bg-slate-800 border border-slate-600 text-slate-200 rounded px-2 py-1 text-xs font-mono" value="0" />
+                    </label>
+                    <label class="bg-slate-950/70 border border-slate-700 rounded p-2">
+                        <div class="text-slate-400 mb-1">过户费 `delta_transfer_fee`</div>
+                        <input id="fund-pool-adjust-delta-transfer" type="number" step="0.01" class="w-full bg-slate-800 border border-slate-600 text-slate-200 rounded px-2 py-1 text-xs font-mono" value="0" />
+                    </label>
+                </div>
+                <div id="fund-pool-adjust-cost-hint" class="text-[11px] text-slate-400 font-mono">费用校验：--</div>
+                <label class="block bg-slate-950/70 border border-slate-700 rounded p-2">
+                    <div class="text-slate-400 mb-1">修正原因（必填）</div>
+                    <textarea id="fund-pool-adjust-reason" rows="3" class="w-full bg-slate-800 border border-slate-600 text-slate-200 rounded px-2 py-1 text-xs" placeholder="例如：补录券商手续费、日终清算差异修正"></textarea>
+                </label>
+                <div id="fund-pool-adjust-error" class="hidden text-[11px] text-rose-300 font-mono bg-rose-950/30 border border-rose-800 rounded p-2">--</div>
+            </div>
+            <div class="px-4 py-3 border-t border-slate-700 flex items-center justify-end gap-2">
+                <button onclick="closeFundPoolAdjustModal()" class="bg-slate-700 hover:bg-slate-600 text-white px-3 py-1.5 rounded text-xs border border-slate-600">取消</button>
+                <button id="fund-pool-adjust-submit-btn" onclick="submitFundPoolAdjustForm()" class="bg-amber-700 hover:bg-amber-600 text-white px-3 py-1.5 rounded text-xs border border-amber-500">确认修正</button>
+            </div>
+        </div>
+    </div>
 
     <div id="evolution-top-detail-modal" class="hidden fixed inset-0 bg-black/80 z-[157] items-center justify-center p-3">
         <div class="w-[98vw] max-w-[98vw] h-[94vh] bg-slate-900 border border-cyan-700/60 rounded-lg shadow-2xl overflow-hidden flex flex-col">
@@ -2874,6 +2938,10 @@
         let liveFundTradeRows = [];
         let liveFundLastFetchAt = 0;
         let liveFundCurveMetric = 'fund_value';
+        // 缓存最近一次资金池对账单，供导出 CSV 复用。
+        let fundPoolLastStatement = null;
+        // 记录已告警的费用异常键，避免前端轮询导致重复刷屏。
+        const fundPoolFeeAlertCache = new Set();
         const FUND_POOL_PORTFOLIO_KEY = '__PORTFOLIO__';
         const LIVE_ACCOUNT_GLOBAL_KEY = '__GLOBAL__';
         const liveFundCurveMap = {};
@@ -5005,8 +5073,10 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 if (sidLike && !xSid.includes(sidLike)) return false;
                 return true;
             });
+            // 在渲染前校验费用字段：发现异常时红色弹窗并写系统日志。
+            detectAndNotifyFundPoolFeeAnomalies(filtered);
             if (!filtered.length) {
-                tbody.innerHTML = '<tr><td colspan="7" class="text-slate-500 py-1">暂无成交记录</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="10" class="text-slate-500 py-1">暂无成交记录</td></tr>';
                 return;
             }
             tbody.innerHTML = filtered.slice(-300).reverse().map(r => {
@@ -5016,11 +5086,86 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 const qty = Number(r?.quantity || 0);
                 const price = Number(r?.price || 0);
                 const fee = Number(r?.cost || 0);
+                const commission = Number(r?.commission || 0);
+                const stampDuty = Number(r?.stamp_duty || 0);
+                const transferFee = Number(r?.transfer_fee || 0);
                 const pnl = Number(r?.pnl || 0);
                 const pnlCls = pnl > 0 ? 'text-rose-300' : (pnl < 0 ? 'text-emerald-300' : 'text-slate-300');
                 const dirCls = d === 'BUY' ? 'text-cyan-300' : (d === 'SELL' ? 'text-amber-300' : 'text-slate-300');
-                return `<tr class="border-t border-slate-800"><td class="py-0.5">${t}</td><td class="py-0.5">${sid}</td><td class="py-0.5 ${dirCls}">${d}</td><td class="py-0.5 text-right">${qty}</td><td class="py-0.5 text-right">${price.toFixed(3)}</td><td class="py-0.5 text-right">${fee.toFixed(2)}</td><td class="py-0.5 text-right ${pnlCls}">${pnl.toFixed(2)}</td></tr>`;
+                return `<tr class="border-t border-slate-800"><td class="py-0.5">${t}</td><td class="py-0.5">${sid}</td><td class="py-0.5 ${dirCls}">${d}</td><td class="py-0.5 text-right">${qty}</td><td class="py-0.5 text-right">${price.toFixed(3)}</td><td class="py-0.5 text-right">${fee.toFixed(2)}</td><td class="py-0.5 text-right">${commission.toFixed(2)}</td><td class="py-0.5 text-right">${stampDuty.toFixed(2)}</td><td class="py-0.5 text-right">${transferFee.toFixed(2)}</td><td class="py-0.5 text-right ${pnlCls}">${pnl.toFixed(2)}</td></tr>`;
             }).join('');
+        }
+
+        function showDangerToast(message) {
+            // 使用轻量级红色浮层提示，避免阻塞交互（替代 window.alert）。
+            let wrap = document.getElementById('global-danger-toast-wrap');
+            if (!wrap) {
+                wrap = document.createElement('div');
+                wrap.id = 'global-danger-toast-wrap';
+                wrap.className = 'fixed top-3 right-3 z-[9999] flex flex-col gap-2 max-w-[520px]';
+                document.body.appendChild(wrap);
+            }
+            const item = document.createElement('div');
+            item.className = 'bg-rose-900/95 border border-rose-500 text-rose-100 text-xs px-3 py-2 rounded shadow-lg whitespace-pre-wrap';
+            item.innerText = String(message || '');
+            wrap.appendChild(item);
+            setTimeout(() => {
+                item.remove();
+                if (!wrap.childElementCount) wrap.remove();
+            }, 6000);
+        }
+
+        function detectAndNotifyFundPoolFeeAnomalies(rows) {
+            const list = Array.isArray(rows) ? rows : [];
+            const found = [];
+            for (const row of list) {
+                const cost = Number(row?.cost || 0);
+                const commission = Number(row?.commission || 0);
+                const stampDuty = Number(row?.stamp_duty || 0);
+                const transferFee = Number(row?.transfer_fee || 0);
+                if (![cost, commission, stampDuty, transferFee].every(Number.isFinite)) {
+                    continue;
+                }
+                const negative = (cost < -1e-9) || (commission < -1e-9) || (stampDuty < -1e-9) || (transferFee < -1e-9);
+                const expectedCost = commission + stampDuty + transferFee;
+                // 允许 0.01 元以内的浮点/展示误差。
+                const mismatch = Math.abs(cost - expectedCost) > 0.01;
+                if (!negative && !mismatch) continue;
+                const dtText = String(row?.dt || '--').replace('T', ' ').slice(0, 19);
+                const sid = String(row?.strategy_id || '--');
+                const direction = String(row?.direction || '--').toUpperCase();
+                const qty = Number(row?.quantity || 0);
+                const key = `${dtText}|${sid}|${direction}|${qty}|${cost.toFixed(4)}|${commission.toFixed(4)}|${stampDuty.toFixed(4)}|${transferFee.toFixed(4)}`;
+                if (fundPoolFeeAlertCache.has(key)) continue;
+                fundPoolFeeAlertCache.add(key);
+                found.push({
+                    dtText,
+                    sid,
+                    direction,
+                    qty,
+                    cost,
+                    commission,
+                    stampDuty,
+                    transferFee,
+                    expectedCost,
+                    negative,
+                    mismatch
+                });
+            }
+            // 清理缓存规模，避免长时间运行后内存增长。
+            if (fundPoolFeeAlertCache.size > 3000) {
+                fundPoolFeeAlertCache.clear();
+            }
+            if (!found.length) return;
+            for (const item of found.slice(0, 5)) {
+                const reason = [
+                    item.negative ? '出现负费用' : '',
+                    item.mismatch ? 'cost 与三项费用不一致' : ''
+                ].filter(Boolean).join(' + ');
+                const msg = `资金池费用异常 [${item.dtText}] S${item.sid} ${item.direction} qty=${item.qty} | cost=${item.cost.toFixed(2)} commission=${item.commission.toFixed(2)} stamp_duty=${item.stampDuty.toFixed(2)} transfer_fee=${item.transferFee.toFixed(2)} expected=${item.expectedCost.toFixed(2)} | 原因: ${reason}`;
+                showDangerToast(`资金池费用异常\n${msg}`);
+                logMessage('户部', msg, 'danger');
+            }
         }
 
         function renderFundPoolPanel(snap, stockCode) {
@@ -5089,11 +5234,15 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             const selected = String(stockCode || liveFundPoolSelectedCode || fundPoolSelectedCodeFallback() || '').toUpperCase();
             if (!selected) {
                 renderFundPoolPanel(null, '');
+                const statementEl = document.getElementById('fund-pool-statement-view');
+                if (statementEl) statementEl.innerText = '点击“对账单”生成';
                 return;
             }
             liveFundPoolSelectedCode = selected;
             if (selected === FUND_POOL_PORTFOLIO_KEY) {
                 renderFundPoolPanel(buildPortfolioFundPoolSnapshot(), FUND_POOL_PORTFOLIO_KEY);
+                const statementEl = document.getElementById('fund-pool-statement-view');
+                if (statementEl) statementEl.innerText = '组合总览不支持单账户对账，请选择具体祖宗后生成';
                 liveFundLastFetchAt = Date.now();
                 return;
             }
@@ -5178,10 +5327,347 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             try {
                 await requestReset(selected);
                 logMessage('SYSTEM', `资金池已重置: ${selected}`, 'warning');
+                // 重置后清空旧对账单缓存，避免导出历史数据。
+                fundPoolLastStatement = null;
+                const statementEl = document.getElementById('fund-pool-statement-view');
+                if (statementEl) statementEl.innerText = '资金池已重置，请重新生成对账单';
                 await refreshFundPoolPanel(selected);
             } catch (e) {
                 logMessage('SYSTEM', `资金池重置失败(${selected}): ${e}`, 'danger');
             }
+        }
+
+        function formatFundStatementAmount(value) {
+            const n = Number(value);
+            if (!Number.isFinite(n)) return '--';
+            return n.toFixed(2);
+        }
+
+        function renderFundPoolStatement(statement) {
+            const el = document.getElementById('fund-pool-statement-view');
+            if (!el) return;
+            if (!statement || typeof statement !== 'object') {
+                el.innerText = '对账单为空';
+                return;
+            }
+            const snap = statement.snapshot || {};
+            const agg = statement.trade_agg || {};
+            const rec = statement.reconcile || {};
+            const statusText = rec.all_ok ? 'PASS' : 'FAIL';
+            // 以纯文本形式展示核心对账结果，便于复制留档。
+            const lines = [
+                `状态=${statusText} 祖宗=${statement.stock_code || '--'} 生成时间=${statement.generated_at || '--'}`,
+                `总资产=${formatFundStatementAmount(snap.fund_value)} 现金=${formatFundStatementAmount(snap.cash)} 持仓=${formatFundStatementAmount(snap.holdings_value)} 初始资金=${formatFundStatementAmount(snap.initial_capital)}`,
+                `买入笔数=${agg.buy_count ?? 0} 卖出笔数=${agg.sell_count ?? 0} 修正笔数=${agg.adjust_count ?? 0} 买入额=${formatFundStatementAmount(agg.buy_amount_total)} 卖出额=${formatFundStatementAmount(agg.sell_amount_total)} 修正现金=${formatFundStatementAmount(agg.adjust_cash_total)}`,
+                `手续费总=${formatFundStatementAmount(agg.total_cost)} 佣金=${formatFundStatementAmount(agg.total_commission)} 印花税=${formatFundStatementAmount(agg.total_stamp_duty)} 过户费=${formatFundStatementAmount(agg.total_transfer_fee)}`,
+                `费用闭环: ${rec.fee_component_ok ? 'OK' : 'ERR'} diff=${formatFundStatementAmount(rec.fee_component_diff)} | 行校验: ${rec.row_fee_ok ? 'OK' : 'ERR'} 负费用=${rec.row_negative_fee_count ?? 0} 不一致行=${rec.row_fee_mismatch_count ?? 0}`,
+                `现金闭环: ${rec.cash_reconcile_ok ? 'OK' : 'ERR'} expected=${formatFundStatementAmount(rec.expected_cash)} diff=${formatFundStatementAmount(rec.cash_diff)}`,
+                `资产闭环: ${rec.fund_reconcile_ok ? 'OK' : 'ERR'} expected=${formatFundStatementAmount(rec.expected_fund_value)} diff=${formatFundStatementAmount(rec.fund_diff)}`,
+                `持仓闭环: ${rec.holdings_reconcile_ok ? 'OK' : 'ERR'} positions_sum=${formatFundStatementAmount(rec.holdings_from_positions)} diff=${formatFundStatementAmount(rec.holdings_diff)}`
+            ];
+            el.innerText = lines.join('\n');
+            el.className = rec.all_ok
+                ? 'max-h-28 overflow-auto text-[10px] text-emerald-200 font-mono bg-slate-950/70 border border-emerald-900 rounded p-1 whitespace-pre-wrap break-words'
+                : 'max-h-28 overflow-auto text-[10px] text-rose-200 font-mono bg-slate-950/70 border border-rose-900 rounded p-1 whitespace-pre-wrap break-words';
+        }
+
+        function csvEsc(value) {
+            const raw = String(value ?? '');
+            const needQuote = raw.includes(',') || raw.includes('"') || raw.includes('\n');
+            const safe = raw.replace(/"/g, '""');
+            return needQuote ? `"${safe}"` : safe;
+        }
+
+        function downloadTextFile(fileName, text, mimeType = 'text/plain;charset=utf-8') {
+            // 浏览器端通用下载实现。
+            const blob = new Blob([text], { type: mimeType });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = fileName;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+        }
+
+        function exportFundPoolStatementCsv(statement) {
+            if (!statement || typeof statement !== 'object') {
+                throw new Error('对账单为空，无法导出');
+            }
+            const snap = statement.snapshot || {};
+            const agg = statement.trade_agg || {};
+            const rec = statement.reconcile || {};
+            const rows = [];
+            // 段1：对账单总览。
+            rows.push(['section', 'key', 'value']);
+            rows.push(['summary', 'stock_code', statement.stock_code || '--']);
+            rows.push(['summary', 'generated_at', statement.generated_at || '--']);
+            rows.push(['summary', 'fund_value', snap.fund_value ?? '']);
+            rows.push(['summary', 'cash', snap.cash ?? '']);
+            rows.push(['summary', 'holdings_value', snap.holdings_value ?? '']);
+            rows.push(['summary', 'initial_capital', snap.initial_capital ?? '']);
+            rows.push(['summary', 'buy_count', agg.buy_count ?? '']);
+            rows.push(['summary', 'sell_count', agg.sell_count ?? '']);
+            rows.push(['summary', 'adjust_count', agg.adjust_count ?? '']);
+            rows.push(['summary', 'buy_amount_total', agg.buy_amount_total ?? '']);
+            rows.push(['summary', 'sell_amount_total', agg.sell_amount_total ?? '']);
+            rows.push(['summary', 'adjust_cash_total', agg.adjust_cash_total ?? '']);
+            rows.push(['summary', 'total_cost', agg.total_cost ?? '']);
+            rows.push(['summary', 'total_commission', agg.total_commission ?? '']);
+            rows.push(['summary', 'total_stamp_duty', agg.total_stamp_duty ?? '']);
+            rows.push(['summary', 'total_transfer_fee', agg.total_transfer_fee ?? '']);
+            rows.push(['summary', 'fee_component_ok', rec.fee_component_ok ?? '']);
+            rows.push(['summary', 'row_fee_ok', rec.row_fee_ok ?? '']);
+            rows.push(['summary', 'cash_reconcile_ok', rec.cash_reconcile_ok ?? '']);
+            rows.push(['summary', 'fund_reconcile_ok', rec.fund_reconcile_ok ?? '']);
+            rows.push(['summary', 'holdings_reconcile_ok', rec.holdings_reconcile_ok ?? '']);
+            rows.push(['summary', 'all_ok', rec.all_ok ?? '']);
+
+            // 空行分隔。
+            rows.push([]);
+            // 段2：成交明细（如果后端返回了 trade_rows）。
+            rows.push(['trade_dt', 'strategy_id', 'direction', 'price', 'quantity', 'amount', 'cost', 'commission', 'stamp_duty', 'transfer_fee', 'expected_cost', 'fee_diff', 'pnl']);
+            const tradeRows = Array.isArray(statement.trade_rows) ? statement.trade_rows : [];
+            for (const item of tradeRows) {
+                rows.push([
+                    item.dt ?? '',
+                    item.strategy_id ?? '',
+                    item.direction ?? '',
+                    item.price ?? '',
+                    item.quantity ?? '',
+                    item.amount ?? '',
+                    item.cost ?? '',
+                    item.commission ?? '',
+                    item.stamp_duty ?? '',
+                    item.transfer_fee ?? '',
+                    item.expected_cost ?? '',
+                    item.fee_diff ?? '',
+                    item.pnl ?? ''
+                ]);
+            }
+            const csv = rows.map(line => line.map(csvEsc).join(',')).join('\n');
+            const code = String(statement.stock_code || 'UNKNOWN').toUpperCase();
+            const ts = String(statement.generated_at || '').replace(/[:T]/g, '-').slice(0, 19) || Date.now();
+            downloadTextFile(`fund_pool_statement_${code}_${ts}.csv`, csv, 'text/csv;charset=utf-8');
+        }
+
+        async function generateFundPoolStatementByUI(exportCsv = false) {
+            const selected = String(liveFundPoolSelectedCode || fundPoolSelectedCodeFallback() || '').toUpperCase();
+            const statementEl = document.getElementById('fund-pool-statement-view');
+            if (!selected || selected === FUND_POOL_PORTFOLIO_KEY) {
+                if (statementEl) statementEl.innerText = '请先选择具体祖宗后再生成对账单';
+                logMessage('SYSTEM', '请先选择具体祖宗后再生成对账单', 'warning');
+                return;
+            }
+            try {
+                if (statementEl) statementEl.innerText = '正在生成对账单...';
+                const includeTradeDetails = !!exportCsv;
+                const detailLimit = exportCsv ? 10000 : 800;
+                const url = `/api/live/fund_pool/statement?stock_code=${encodeURIComponent(selected)}&include_trade_details=${includeTradeDetails ? 'true' : 'false'}&detail_limit=${detailLimit}`;
+                const res = await fetch(url);
+                const data = await res.json();
+                if (!res.ok || data.status !== 'success' || !data.statement) {
+                    throw new Error(data.msg || '对账单生成失败');
+                }
+                fundPoolLastStatement = data.statement;
+                renderFundPoolStatement(data.statement);
+                const allOk = !!(data.statement?.reconcile?.all_ok);
+                logMessage('户部', `资金池对账单生成完成: ${selected}，闭环=${allOk ? 'PASS' : 'FAIL'}`, allOk ? 'success' : 'danger');
+                if (exportCsv) {
+                    exportFundPoolStatementCsv(data.statement);
+                    logMessage('户部', `资金池对账单CSV已导出: ${selected}`, 'success');
+                }
+            } catch (e) {
+                if (statementEl) statementEl.innerText = `对账单生成失败: ${String(e?.message || e || 'unknown')}`;
+                logMessage('SYSTEM', `资金池对账单生成失败(${selected}): ${e}`, 'danger');
+            }
+        }
+
+        function _fundPoolAdjustToNum(value) {
+            // 统一将表单字段转为数字，异常时返回 NaN 供上层校验。
+            const n = Number(String(value ?? '').trim());
+            return Number.isFinite(n) ? n : NaN;
+        }
+
+        function updateFundPoolAdjustCostHint() {
+            // 动态展示费用总额与分项费用的差异，帮助用户在提交前自检。
+            const costEl = document.getElementById('fund-pool-adjust-delta-cost');
+            const commEl = document.getElementById('fund-pool-adjust-delta-commission');
+            const stampEl = document.getElementById('fund-pool-adjust-delta-stamp');
+            const transferEl = document.getElementById('fund-pool-adjust-delta-transfer');
+            const hintEl = document.getElementById('fund-pool-adjust-cost-hint');
+            if (!costEl || !commEl || !stampEl || !transferEl || !hintEl) return;
+            const deltaCost = _fundPoolAdjustToNum(costEl.value);
+            const deltaCommission = _fundPoolAdjustToNum(commEl.value);
+            const deltaStampDuty = _fundPoolAdjustToNum(stampEl.value);
+            const deltaTransferFee = _fundPoolAdjustToNum(transferEl.value);
+            if (![deltaCost, deltaCommission, deltaStampDuty, deltaTransferFee].every(Number.isFinite)) {
+                hintEl.className = 'text-[11px] text-rose-300 font-mono';
+                hintEl.innerText = '费用校验：存在非法数字输入';
+                return;
+            }
+            const expected = deltaCommission + deltaStampDuty + deltaTransferFee;
+            const resolvedCost = Math.abs(deltaCost) < 1e-12 ? expected : deltaCost;
+            const diff = resolvedCost - expected;
+            const ok = Math.abs(diff) <= 0.01;
+            hintEl.className = ok ? 'text-[11px] text-emerald-300 font-mono' : 'text-[11px] text-rose-300 font-mono';
+            hintEl.innerText = `费用校验：delta_cost=${resolvedCost.toFixed(2)} | 分项合计=${expected.toFixed(2)} | diff=${diff.toFixed(2)} | ${ok ? 'OK' : 'ERR'}`;
+        }
+
+        function openFundPoolAdjustModal() {
+            // 打开结构化修正弹窗并初始化默认值。
+            const selected = String(liveFundPoolSelectedCode || fundPoolSelectedCodeFallback() || '').toUpperCase();
+            const statementEl = document.getElementById('fund-pool-statement-view');
+            if (!selected || selected === FUND_POOL_PORTFOLIO_KEY) {
+                if (statementEl) statementEl.innerText = '请先选择具体祖宗后再执行修正';
+                logMessage('SYSTEM', '请先选择具体祖宗后再执行修正', 'warning');
+                return false;
+            }
+            const modal = document.getElementById('fund-pool-adjust-modal');
+            const stockEl = document.getElementById('fund-pool-adjust-stock');
+            const operatorEl = document.getElementById('fund-pool-adjust-operator');
+            const reasonEl = document.getElementById('fund-pool-adjust-reason');
+            const errorEl = document.getElementById('fund-pool-adjust-error');
+            const cashEl = document.getElementById('fund-pool-adjust-delta-cash');
+            const costEl = document.getElementById('fund-pool-adjust-delta-cost');
+            const commEl = document.getElementById('fund-pool-adjust-delta-commission');
+            const stampEl = document.getElementById('fund-pool-adjust-delta-stamp');
+            const transferEl = document.getElementById('fund-pool-adjust-delta-transfer');
+            const submitBtn = document.getElementById('fund-pool-adjust-submit-btn');
+            if (!modal || !stockEl || !operatorEl || !reasonEl || !errorEl || !cashEl || !costEl || !commEl || !stampEl || !transferEl || !submitBtn) {
+                logMessage('SYSTEM', '修正弹窗初始化失败：缺少必要控件', 'danger');
+                return false;
+            }
+            stockEl.innerText = selected;
+            operatorEl.value = String(operatorEl.value || 'dashboard_user').trim() || 'dashboard_user';
+            reasonEl.value = '';
+            cashEl.value = '0';
+            costEl.value = '0';
+            commEl.value = '0';
+            stampEl.value = '0';
+            transferEl.value = '0';
+            errorEl.classList.add('hidden');
+            errorEl.innerText = '--';
+            submitBtn.disabled = false;
+            submitBtn.classList.remove('opacity-60', 'cursor-not-allowed');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            updateFundPoolAdjustCostHint();
+            return true;
+        }
+
+        function closeFundPoolAdjustModal() {
+            // 关闭结构化修正弹窗并清理错误状态。
+            const modal = document.getElementById('fund-pool-adjust-modal');
+            const errorEl = document.getElementById('fund-pool-adjust-error');
+            const submitBtn = document.getElementById('fund-pool-adjust-submit-btn');
+            if (errorEl) {
+                errorEl.classList.add('hidden');
+                errorEl.innerText = '--';
+            }
+            if (submitBtn) {
+                submitBtn.disabled = false;
+                submitBtn.classList.remove('opacity-60', 'cursor-not-allowed');
+            }
+            if (!modal) return;
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        async function submitFundPoolAdjustForm() {
+            // 读取结构化表单并提交修正请求。
+            const statementEl = document.getElementById('fund-pool-statement-view');
+            const stockEl = document.getElementById('fund-pool-adjust-stock');
+            const operatorEl = document.getElementById('fund-pool-adjust-operator');
+            const reasonEl = document.getElementById('fund-pool-adjust-reason');
+            const errorEl = document.getElementById('fund-pool-adjust-error');
+            const cashEl = document.getElementById('fund-pool-adjust-delta-cash');
+            const costEl = document.getElementById('fund-pool-adjust-delta-cost');
+            const commEl = document.getElementById('fund-pool-adjust-delta-commission');
+            const stampEl = document.getElementById('fund-pool-adjust-delta-stamp');
+            const transferEl = document.getElementById('fund-pool-adjust-delta-transfer');
+            const submitBtn = document.getElementById('fund-pool-adjust-submit-btn');
+            if (!stockEl || !operatorEl || !reasonEl || !errorEl || !cashEl || !costEl || !commEl || !stampEl || !transferEl || !submitBtn) {
+                logMessage('SYSTEM', '修正提交失败：表单控件缺失', 'danger');
+                return;
+            }
+            const selected = String(stockEl.innerText || '').toUpperCase();
+            const deltaCash = _fundPoolAdjustToNum(cashEl.value);
+            const deltaCost = _fundPoolAdjustToNum(costEl.value);
+            const deltaCommission = _fundPoolAdjustToNum(commEl.value);
+            const deltaStampDuty = _fundPoolAdjustToNum(stampEl.value);
+            const deltaTransferFee = _fundPoolAdjustToNum(transferEl.value);
+            const reason = String(reasonEl.value || '').trim();
+            const operator = String(operatorEl.value || '').trim() || 'dashboard_user';
+            const showErr = (msg) => {
+                errorEl.classList.remove('hidden');
+                errorEl.innerText = String(msg || '');
+            };
+            errorEl.classList.add('hidden');
+            if (![deltaCash, deltaCost, deltaCommission, deltaStampDuty, deltaTransferFee].every(Number.isFinite)) {
+                showErr('修正参数非法：请输入有效数字');
+                return;
+            }
+            if (!reason) {
+                showErr('修正原因必填');
+                return;
+            }
+            if (Math.abs(deltaCash) < 1e-12 && Math.abs(deltaCost) < 1e-12 && Math.abs(deltaCommission) < 1e-12 && Math.abs(deltaStampDuty) < 1e-12 && Math.abs(deltaTransferFee) < 1e-12) {
+                showErr('至少填写一个非零修正值');
+                return;
+            }
+            const expectedCost = deltaCommission + deltaStampDuty + deltaTransferFee;
+            const checkCost = (Math.abs(deltaCost) < 1e-12) ? expectedCost : deltaCost;
+            if (Math.abs(checkCost - expectedCost) > 0.01) {
+                showErr('delta_cost 与三项费用之和不一致（容差0.01）');
+                return;
+            }
+            const confirmText = `确认执行资金池修正？\n祖宗=${selected}\n现金增量=${deltaCash.toFixed(2)}\n费用总增量=${checkCost.toFixed(2)}\n佣金=${deltaCommission.toFixed(2)} 印花税=${deltaStampDuty.toFixed(2)} 过户费=${deltaTransferFee.toFixed(2)}\n操作人=${operator}\n原因=${reason}`;
+            if (!window.confirm(confirmText)) return;
+            try {
+                submitBtn.disabled = true;
+                submitBtn.classList.add('opacity-60', 'cursor-not-allowed');
+                if (statementEl) statementEl.innerText = '正在执行修正...';
+                const payload = {
+                    stock_code: selected,
+                    delta_cash: deltaCash,
+                    delta_cost: deltaCost,
+                    delta_commission: deltaCommission,
+                    delta_stamp_duty: deltaStampDuty,
+                    delta_transfer_fee: deltaTransferFee,
+                    reason,
+                    operator
+                };
+                const res = await fetch('/api/live/fund_pool/adjust', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+                if (!res.ok || data.status !== 'success') {
+                    throw new Error(data.msg || '修正失败');
+                }
+                logMessage('户部', `资金池修正成功: ${selected} | 现金=${deltaCash.toFixed(2)} 费用总=${checkCost.toFixed(2)} | 原因=${reason}`, 'warning');
+                if (data.statement && typeof data.statement === 'object') {
+                    fundPoolLastStatement = data.statement;
+                    renderFundPoolStatement(data.statement);
+                }
+                closeFundPoolAdjustModal();
+                await refreshFundPoolPanel(selected);
+            } catch (e) {
+                if (statementEl) statementEl.innerText = `修正失败: ${String(e?.message || e || 'unknown')}`;
+                showErr(`修正失败: ${String(e?.message || e || 'unknown')}`);
+                logMessage('SYSTEM', `资金池修正失败(${selected}): ${e}`, 'danger');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.classList.remove('opacity-60', 'cursor-not-allowed');
+            }
+        }
+
+        async function adjustFundPoolByUI() {
+            // 兼容现有按钮入口：升级为打开结构化弹窗。
+            openFundPoolAdjustModal();
         }
 
         function toggleDebugPanel() {
@@ -15783,6 +16269,15 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
         document.getElementById('fundamental-module-detail-modal')?.addEventListener('click', (e) => {
             if (e.target && e.target.id === 'fundamental-module-detail-modal') closeFundamentalModuleDetailModal();
         });
+        document.getElementById('fund-pool-adjust-modal')?.addEventListener('click', (e) => {
+            // 点击遮罩关闭修正弹窗，提升交互体验。
+            if (e.target && e.target.id === 'fund-pool-adjust-modal') closeFundPoolAdjustModal();
+        });
+        // 监听费用输入框，实时展示费用闭环检查结果。
+        document.getElementById('fund-pool-adjust-delta-cost')?.addEventListener('input', updateFundPoolAdjustCostHint);
+        document.getElementById('fund-pool-adjust-delta-commission')?.addEventListener('input', updateFundPoolAdjustCostHint);
+        document.getElementById('fund-pool-adjust-delta-stamp')?.addEventListener('input', updateFundPoolAdjustCostHint);
+        document.getElementById('fund-pool-adjust-delta-transfer')?.addEventListener('input', updateFundPoolAdjustCostHint);
         document.getElementById('fundamental-detail-scroll')?.addEventListener('scroll', saveFundamentalDetailScroll);
         document.getElementById('evolution-top-detail-modal')?.addEventListener('click', (e) => {
             if (e.target && e.target.id === 'evolution-top-detail-modal') closeEvolutionTopDetail();
@@ -15838,6 +16333,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 closeFundamentalDetailModal();
                 closeEvolutionTopDetail();
                 closeEvolutionRunDetail();
+                closeFundPoolAdjustModal();
             }
         });
         document.addEventListener('mousedown', (e) => {
