@@ -659,7 +659,6 @@
             </a>
             <button onclick="openConsistencyReportModal()" class="bg-emerald-700 hover:bg-emerald-600 text-white px-3 py-1.5 rounded text-xs transition-all border border-emerald-500">
                 <i class="fa-solid fa-scale-balanced"></i> 一致性校验            </button>
-            <div class="w-2 h-2 rounded-full bg-trading-green animate-pulse-fast shadow-[0_0_10px_rgba(16,185,129,0.5)]" title="System Online"></div>
         </div>
     </header>
 
@@ -1181,6 +1180,9 @@
                 <button onclick="openConfigCenter()" class="bg-purple-700 hover:bg-purple-600 text-white px-4 py-2 rounded font-bold text-sm transition-all border border-purple-500 min-w-[92px] lg:min-w-[108px]">
                     <i class="fa-solid fa-sliders"></i> 配置中心
                 </button>
+                <div id="llm-status-wrap" onclick="toggleLlmStatusPanel()" class="inline-flex items-center justify-center w-2 h-2 rounded-full bg-slate-700 cursor-pointer" title="点击查看LLM状态详情">
+                    <span id="llm-status-dot" class="w-2 h-2 rounded-full bg-rose-500 shadow-[0_0_10px_rgba(244,63,94,0.45)]"></span>
+                </div>
             </div>
             <div id="action-more-wrap" class="relative hidden">
                 <button id="action-more-btn" onclick="toggleActionMoreMenu()" class="bg-slate-700 hover:bg-slate-600 text-white px-3 py-2 rounded font-bold text-sm transition-all border border-slate-500 min-w-[88px]">
@@ -1195,6 +1197,13 @@
             </div>
         </div>
     </footer>
+    <div id="llm-status-panel" class="hidden fixed top-16 right-4 z-[170] w-[440px] max-w-[92vw] bg-slate-900 border border-slate-600 rounded shadow-2xl p-3 text-[11px] text-slate-200">
+        <div class="flex items-center justify-between mb-2">
+            <div class="text-cyan-300 font-bold">统一模型层状态详情</div>
+            <button onclick="closeLlmStatusPanel()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div id="llm-status-panel-body" class="space-y-1 font-mono text-[10px] text-slate-300">加载中...</div>
+    </div>
     <div class="px-4 pb-2 text-[11px] text-slate-500 border-t border-slate-800 bg-trading-bg">
         模式说明：底部“单票回测”=当前股票/策略/时间即时回测；批量任务相关功能统一在“操作工作台”中。
     </div>
@@ -5680,7 +5689,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 ],
                 fields: [
                     { path: 'evolution.llm.enabled', label: '启用真实LLM', type: 'boolean', desc: '关闭时使用内置Mock生成；开启后按以下配置调用真实模型' },
-                    { path: 'evolution.llm.provider', label: '服务类型', type: 'select', options: [{ value: 'openai_compatible', label: 'OpenAI兼容' }] },
+                    { path: 'evolution.llm.provider', label: '服务类型', type: 'select', options: [{ value: 'openai_compatible', label: 'OpenAI兼容' }, { value: 'zhipu', label: '智谱GLM' }] },
                     { path: 'evolution.llm.base_url', label: 'API地址', type: 'text', placeholder: '例如 https://xxx/v1 或 https://xxx/v1/chat/completions' },
                     { path: 'evolution.llm.api_key', label: 'API密钥', type: 'password', secret: true, desc: '密钥字段会走 private_config_path 覆盖，不写入公开配置' },
                     { path: 'evolution.llm.model', label: '模型名', type: 'text', placeholder: '例如 gpt-4o-mini / deepseek-chat' },
@@ -5698,6 +5707,8 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 fields: [
                     { path: 'history_sync.write_mode', label: '写入模式', type: 'select', options: [{ value: 'api', label: 'api（写default_api_url）' }, { value: 'direct_db', label: 'direct_db（直连数据库）' }] },
                     { path: 'history_sync.direct_db_source', label: '直连数据库源', type: 'select', options: [{ value: 'mysql', label: 'mysql' }, { value: 'postgresql', label: 'postgresql' }, { value: 'duckdb', label: 'duckdb' }] },
+                    { path: 'history_sync.interval_minutes', label: '定时间隔(分钟)', type: 'number', min: 1, max: 1440, step: 1, slider: true },
+                    { path: 'history_sync.scheduler_start_time', label: '定时开启时间', type: 'text', placeholder: '例如：09:30', desc: '格式：HH:MM（24小时制），定时同步每日从该时间开始触发' },
                     { path: 'history_sync.time_mode', label: '时间模式', type: 'select', options: [{ value: 'lookback', label: 'lookback（最近N天）' }, { value: 'custom', label: 'custom（自定义区间）' }] },
                     { path: 'history_sync.lookback_days', label: '默认回看天数', type: 'number', min: 1, max: 3650, step: 1, slider: true },
                     { path: 'history_sync.custom_start_time', label: '自定义开始时间', type: 'text', placeholder: '例如：2026-03-01 09:30:00', desc: '格式：YYYY-MM-DD HH:MM:SS；time_mode=custom时生效' },
@@ -6524,6 +6535,27 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                         </button>
                         <span id="config-tdx-test-status" class="text-[10px] text-slate-400">Windows 可自动探测 vipdoc；mac/无 vipdoc 时自动校验 mootdx 网络镜像模式</span>
                     </div>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <button id="config-llm-strategy-test-btn" onclick="testStrategyManagerLlmConnectivity()" class="bg-violet-700 hover:bg-violet-600 text-white px-3 py-1.5 rounded text-xs border border-violet-500">
+                            <i id="config-llm-strategy-test-icon" class="fa-solid fa-robot"></i>
+                            <span id="config-llm-strategy-test-label">测试新增策略模型</span>
+                        </button>
+                        <span id="config-llm-strategy-test-status" class="text-[10px] text-slate-400">测试 data_provider.strategy_llm_* 配置域</span>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <button id="config-llm-general-test-btn" onclick="testDataProviderLlmConnectivity()" class="bg-violet-700 hover:bg-violet-600 text-white px-3 py-1.5 rounded text-xs border border-violet-500">
+                            <i id="config-llm-general-test-icon" class="fa-solid fa-robot"></i>
+                            <span id="config-llm-general-test-label">测试通用模型</span>
+                        </button>
+                        <span id="config-llm-general-test-status" class="text-[10px] text-slate-400">测试 data_provider.llm_* 配置域</span>
+                    </div>
+                `;
+                body.appendChild(ops);
+            } else if (String(title || '') === '工部增量同步') {
+                const ops = document.createElement('div');
+                ops.className = 'mt-2 border border-cyan-800/60 rounded p-3 bg-slate-950/50 space-y-2';
+                ops.innerHTML = `
+                    <div class="text-[11px] text-cyan-300 font-bold">工程增量同步</div>
                     <div class="flex flex-wrap gap-2">
                         <button id="history-sync-run-btn" onclick="runHistorySync()" class="bg-teal-700 hover:bg-teal-600 text-white px-3 py-1.5 rounded text-xs border border-teal-500">
                             <i id="history-sync-run-icon" class="fa-solid fa-database"></i>
@@ -6542,7 +6574,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                             <span>刷新状态</span>
                         </button>
                     </div>
-                    <div class="text-[10px] text-slate-400">同步范围由 history_sync 配置项控制，可先 dry_run 预览。</div>
+                    <div class="text-[10px] text-slate-400">同步范围由 history_sync 配置项控制；定时同步每日从 history_sync.scheduler_start_time 开始执行。</div>
                 `;
                 body.appendChild(ops);
             } else if (String(title || '') === '通告推送') {
@@ -6556,6 +6588,20 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                             <span id="config-webhook-test-label">发送测试消息</span>
                         </button>
                         <span id="config-webhook-test-status" class="text-[10px] text-slate-400">点击后将向已配置 Webhook/飞书发送一条测试通知</span>
+                    </div>
+                `;
+                body.appendChild(ops);
+            } else if (String(title || '') === '太常寺策略进化（LLM）') {
+                const ops = document.createElement('div');
+                ops.className = 'mt-2 border border-cyan-800/60 rounded p-3 bg-slate-950/50 space-y-2';
+                ops.innerHTML = `
+                    <div class="text-[11px] text-cyan-300 font-bold">模型连通性测试</div>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <button id="config-llm-test-btn" onclick="testUnifiedLlmConnectivity()" class="bg-violet-700 hover:bg-violet-600 text-white px-3 py-1.5 rounded text-xs border border-violet-500">
+                            <i id="config-llm-test-icon" class="fa-solid fa-robot"></i>
+                            <span id="config-llm-test-label">测试进化模型</span>
+                        </button>
+                        <span id="config-llm-test-status" class="text-[10px] text-slate-400">测试 evolution.llm.* 配置域</span>
                     </div>
                 `;
                 body.appendChild(ops);
@@ -8935,6 +8981,8 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 const liveReady = data.live_enabled === true;
                 if (status) status.innerText = `保存成功，已生效（模式=${savedMode}，近似实时生效=${liveReady ? '是' : '否'}）`;
                 await syncStatus();
+                // 配置变更后强制刷新一次 LLM 状态灯，避免展示旧缓存。
+                await refreshLlmStatusLamp(true);
                 logMessage('SYSTEM', `配置保存成功并已生效（模式=${savedMode}，近似实时生效=${liveReady ? '是' : '否'}）`, 'success');
 
                 // Reset compliance flag after successful save
@@ -9054,6 +9102,67 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 if (icon) icon.className = 'fa-solid fa-magnifying-glass';
                 if (label) label.innerText = '探测TDX模式并测试';
             }
+        }
+
+        async function testLlmConnectivityByScope(scope, domIdPrefix, scenario) {
+            const btn = document.getElementById(`${domIdPrefix}-btn`);
+            const icon = document.getElementById(`${domIdPrefix}-icon`);
+            const label = document.getElementById(`${domIdPrefix}-label`);
+            const status = document.getElementById(`${domIdPrefix}-status`);
+            const originLabel = label ? String(label.innerText || '') : '';
+            // 统一状态渲染，保持配置中心测试交互风格一致。
+            const setStatus = (text, level = 'info') => {
+                if (!status) return;
+                status.innerText = String(text || '');
+                status.className = `text-[10px] ${level === 'ok' ? 'text-emerald-300' : (level === 'error' ? 'text-rose-300' : 'text-slate-400')}`;
+            };
+            try {
+                if (btn) btn.disabled = true;
+                if (icon) icon.className = 'fa-solid fa-spinner fa-spin';
+                if (label) label.innerText = '测试中...';
+                setStatus('正在请求统一模型层探活...', 'info');
+                const res = await fetch('/api/llm/ping', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ scenario: String(scenario || 'config_center'), scope: String(scope || 'unified') })
+                });
+                const data = await res.json();
+                if (!res.ok || data.status !== 'success' || data.ok !== true) {
+                    throw new Error(data.msg || '模型层连通性测试失败');
+                }
+                const provider = String(data.provider || '--');
+                const model = String(data.model || '--');
+                const latency = Number(data.latency_ms || 0);
+                const preview = String(data.preview || '').trim();
+                const activeSources = (data && typeof data.active_sources === 'object' && data.active_sources) ? data.active_sources : {};
+                const sourceModel = String(activeSources.model || '--');
+                const okMsg = `连通成功：scope=${String(scope || 'unified')} provider=${provider} model=${model} source=${sourceModel} latency=${latency}ms${preview ? ` preview=${preview}` : ''}`;
+                setStatus(okMsg, 'ok');
+                logMessage('SYSTEM', okMsg, 'success');
+            } catch (e) {
+                const errMsg = `模型连通失败：${String(e)}`;
+                setStatus(errMsg, 'error');
+                logMessage('SYSTEM', errMsg, 'danger');
+            } finally {
+                if (btn) btn.disabled = false;
+                if (icon) icon.className = 'fa-solid fa-robot';
+                if (label) label.innerText = originLabel || '测试模型';
+            }
+        }
+
+        async function testUnifiedLlmConnectivity() {
+            // 太常寺策略进化（LLM）对应 evolution.llm.* 配置域。
+            await testLlmConnectivityByScope('evolution', 'config-llm-test', 'config_center_evolution');
+        }
+
+        async function testStrategyManagerLlmConnectivity() {
+            // 工部数据源中“新增策略模型”对应 data_provider.strategy_llm_* 配置域。
+            await testLlmConnectivityByScope('strategy_manager', 'config-llm-strategy-test', 'config_center_strategy_manager');
+        }
+
+        async function testDataProviderLlmConnectivity() {
+            // 工部数据源中“通用模型”对应 data_provider.llm_* 配置域。
+            await testLlmConnectivityByScope('data_provider', 'config-llm-general-test', 'config_center_data_provider');
         }
 
         async function testWebhookDelivery() {
@@ -10181,6 +10290,88 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             }
         }
 
+        function closeLlmStatusPanel() {
+            const panel = document.getElementById('llm-status-panel');
+            if (panel) panel.classList.add('hidden');
+        }
+
+        function toggleLlmStatusPanel() {
+            const panel = document.getElementById('llm-status-panel');
+            if (!panel) return;
+            if (panel.classList.contains('hidden')) {
+                panel.classList.remove('hidden');
+                renderLlmStatusPanel();
+                return;
+            }
+            panel.classList.add('hidden');
+        }
+
+        function renderLlmStatusPanel() {
+            const body = document.getElementById('llm-status-panel-body');
+            if (!body) return;
+            const data = (window.__llmStatusLast && typeof window.__llmStatusLast === 'object') ? window.__llmStatusLast : {};
+            const health = String(data.health || '--').toUpperCase();
+            const provider = String(data.provider || '--');
+            const model = String(data.model || '--');
+            const msg = String(data.msg || '--');
+            const cached = Boolean(data.cached);
+            const latency = Number(data.latency_ms || 0);
+            const activeSources = (data && typeof data.active_sources === 'object' && data.active_sources) ? data.active_sources : {};
+            const candidates = (data && typeof data.model_candidates === 'object' && data.model_candidates) ? data.model_candidates : {};
+            const candidateItems = (candidates && typeof candidates.items === 'object' && candidates.items) ? candidates.items : {};
+            const lines = [
+                `health=${health}`,
+                `cached=${cached}`,
+                `provider=${provider}`,
+                `model=${model}`,
+                `latency_ms=${latency > 0 ? latency : '--'}`,
+                `message=${msg}`,
+                `active_source.provider=${String(activeSources.provider || '--')}`,
+                `active_source.model=${String(activeSources.model || '--')}`,
+                `active_source.base_url=${String(activeSources.base_url || '--')}`,
+                `active_source.api_key=${String(activeSources.api_key || '--')}`,
+            ];
+            Object.entries(candidateItems).forEach(([k, v]) => lines.push(`candidate.${String(k)}=${String(v)}`));
+            body.innerHTML = lines.map(x => `<div>${x}</div>`).join('');
+        }
+
+        async function refreshLlmStatusLamp(forceRefresh = false) {
+            const wrap = document.getElementById('llm-status-wrap');
+            const dot = document.getElementById('llm-status-dot');
+            if (!wrap || !dot) return;
+            try {
+                const url = forceRefresh ? '/api/llm/status?force_refresh=true' : '/api/llm/status';
+                const res = await fetch(url);
+                const data = await res.json();
+                const health = String(data.health || 'red').toLowerCase();
+                const provider = String(data.provider || '--');
+                const model = String(data.model || '--');
+                const latency = Number(data.latency_ms || 0);
+                const cached = Boolean(data.cached);
+                const candidates = (data && typeof data.model_candidates === 'object' && data.model_candidates) ? data.model_candidates : {};
+                const candidateCount = Number(candidates.count || 0);
+                const candidateItems = (candidates && typeof candidates.items === 'object' && candidates.items) ? candidates.items : {};
+                const activeSources = (data && typeof data.active_sources === 'object' && data.active_sources) ? data.active_sources : {};
+                const prefix = cached ? '[缓存]' : '[实时]';
+                if (health === 'green') {
+                    dot.className = 'w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.55)] animate-pulse-fast';
+                } else if (health === 'yellow') {
+                    dot.className = 'w-2 h-2 rounded-full bg-amber-400 shadow-[0_0_10px_rgba(251,191,36,0.45)] animate-pulse-fast';
+                } else {
+                    dot.className = 'w-2 h-2 rounded-full bg-rose-500 shadow-[0_0_10px_rgba(244,63,94,0.45)]';
+                }
+                const tail = latency > 0 ? ` ${latency}ms` : '';
+                const sourceModel = String(activeSources.model || '--');
+                wrap.title = `LLM: ${health.toUpperCase()} ${prefix} ${provider}/${model}${tail} · source=${sourceModel} · 候选=${candidateCount}`;
+                window.__llmStatusLast = data;
+                const panel = document.getElementById('llm-status-panel');
+                if (panel && !panel.classList.contains('hidden')) renderLlmStatusPanel();
+            } catch (e) {
+                dot.className = 'w-2 h-2 rounded-full bg-rose-500 shadow-[0_0_10px_rgba(244,63,94,0.45)]';
+                wrap.title = `统一模型层状态获取失败：${String(e)}`;
+            }
+        }
+
         function renderHistorySyncButtons() {
             const runBtn = document.getElementById('history-sync-run-btn');
             const runIcon = document.getElementById('history-sync-run-icon');
@@ -10329,6 +10520,8 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     const writeMode = String(getByPath(cfg, 'history_sync.write_mode', 'api') || 'api');
                     const directDbSource = String(getByPath(cfg, 'history_sync.direct_db_source', 'mysql') || 'mysql');
                     const timeMode = String(getByPath(cfg, 'history_sync.time_mode', 'lookback') || 'lookback');
+                    // 定时开启时间支持用户自定义，默认 09:30。
+                    const schedulerStartTime = String(getByPath(cfg, 'history_sync.scheduler_start_time', '09:30') || '09:30').trim();
                     const customStartTime = String(getByPath(cfg, 'history_sync.custom_start_time', '') || '').trim();
                     const customEndTime = String(getByPath(cfg, 'history_sync.custom_end_time', '') || '').trim();
                     const sessionOnly = Boolean(getByPath(cfg, 'history_sync.session_only', true));
@@ -10345,6 +10538,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             interval_minutes: Math.max(1, Math.floor(intervalMinutes)),
+                            scheduler_start_time: schedulerStartTime,
                             lookback_days: Math.max(1, Math.floor(lookbackDays)),
                             max_codes: Math.max(1, Math.floor(maxCodes)),
                             batch_size: Math.max(1, Math.floor(batchSize)),
@@ -10362,7 +10556,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     });
                     const data = await res.json();
                     if (!res.ok || data.status !== 'success') throw new Error(data.msg || '启动失败');
-                    logMessage('SYSTEM', '定时增量同步已开启（每60分钟）', 'success');
+                    logMessage('SYSTEM', `定时增量同步已开启（每日 ${schedulerStartTime} 起，每 ${Math.max(1, Math.floor(intervalMinutes))} 分钟）`, 'success');
                 } else {
                     const res = await fetch('/api/history_sync/scheduler/stop', { method: 'POST' });
                     const data = await res.json();
@@ -14677,6 +14871,15 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 closeEvolutionRunDetail();
             }
         });
+        document.addEventListener('mousedown', (e) => {
+            const panel = document.getElementById('llm-status-panel');
+            const trigger = document.getElementById('llm-status-wrap');
+            if (!panel || panel.classList.contains('hidden')) return;
+            const target = e && e.target ? e.target : null;
+            if (!target) return;
+            if (panel.contains(target) || (trigger && trigger.contains(target))) return;
+            closeLlmStatusPanel();
+        });
         window.addEventListener('resize', () => {
             const container = document.getElementById('kline-modal-chart');
             if (klineChart && container && klineModalOpened) {
@@ -14704,6 +14907,10 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             syncStatus();
         }, 3000);
         setInterval(() => {
+            // 顶部状态灯走缓存接口，降低探活频率与开销。
+            refreshLlmStatusLamp(false);
+        }, 15000);
+        setInterval(() => {
             // Evolution 默认走 WS 推送，此处仅做兜底修正，避免网络抖动导致的状态漂移
             refreshEvolutionDashboard({
                 withHistory: false,
@@ -14720,6 +14927,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
         setTimeout(() => {
             if (!strategyCatalog.length) fetchGlobalStrategies();
         }, 800);
+        refreshLlmStatusLamp(false);
         syncActionLayout();
         renderLiveStatus();
         updateConfidenceScore();

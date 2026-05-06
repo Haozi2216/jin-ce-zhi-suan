@@ -14,7 +14,7 @@ from src.evolution.adapters.strategy_library_adapter import StrategyLibraryAdapt
 from src.evolution.core.event_bus import EventBus
 from src.evolution.core.evolution_profile import EvolutionProfile
 from src.evolution.core.strategy_loader import StrategyLoader
-from src.evolution.llm.client_factory import OpenAICompatibleStrategyLLM
+from src.evolution.llm.client_factory import build_primary_llm_client
 from src.evolution.llm.client_factory import load_evolution_llm_config
 from src.evolution.memory.analysis_store import AnalysisStore
 from src.evolution.memory.strategy_memory import MemoryAgent
@@ -239,7 +239,8 @@ class EvolutionOrchestrator:
         mock = MockStrategyLLM()
         if not cfg.is_ready():
             return mock
-        primary = OpenAICompatibleStrategyLLM(cfg)
+        # 由工厂根据 provider 选择 openai_compatible / zhipu 等实现。
+        primary = build_primary_llm_client(cfg)
         if cfg.fallback_to_mock:
             return FallbackStrategyLLM(primary=primary, fallback=mock)
         return primary
@@ -249,4 +250,3 @@ class EvolutionOrchestrator:
         if not isinstance(profile_override, dict) or not profile_override:
             return base
         return base.merged(profile_override)
-

@@ -1,0 +1,25 @@
+{
+  "data_provider": {
+    "default_api_key": "自建API类型数据源的密钥",
+    "tushare_token": "tushare账号下申请的token",
+    "mysql_password": "msyql数据库密码",
+    "default_api_url": "自建API类型数据源的地址",
+    "llm_api_key": "通用的大模型API key  例如 回测报告的AI分析",
+    "strategy_llm_api_key": "新增策略用的大模型API  key"
+  },
+  "evolution": {
+    "llm": {
+      "api_key": "策略进化用的大模型API key"
+    }
+  },
+  "webhook_notification": {
+    "feishu_webhook_url": "飞书机器人地址"
+  },
+  "targets": [
+    "标的代码.SH",
+    "标的代码.SZ"
+  ],
+  "strategies": {
+    "active_ids": []
+  }
+}

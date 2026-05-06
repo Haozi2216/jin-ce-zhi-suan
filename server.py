@@ -69,6 +69,7 @@ from src.evolution.memory.gene_run_store import PostgresGeneRunRepository
 from src.evolution.memory.profile_update_store import PostgresProfileUpdateRepository
 from src.evolution.memory.analysis_store import AnalysisStore
 from src.evolution.adapters.gene_strategy_adapter import GeneStrategyAdapter
+from src.evolution.adapters.llm_gateway_adapter import build_unified_llm_client
 from src.evolution.platform.platform_hub import EvolutionPlatformHub
 from src.consistency.storage.live_snapshot_store import LiveSnapshotStore
 from src.consistency.replay.replay_builder import ReplayBuilder
@@ -218,6 +219,22 @@ backtest_kline_payload_cache = {}
 BACKTEST_KLINE_PAYLOAD_CACHE_TTL_SECONDS = 8
 BACKTEST_KLINE_PAYLOAD_CACHE_MAX_ITEMS = 120
 report_strategy_kline_cache = {}
+# LLM 健康状态缓存：用于 /api/llm/status，避免频繁探活导致额外开销。
+LLM_STATUS_CACHE_TTL_SECONDS = 30
+LLM_STATUS_DEGRADED_SECONDS = 600
+llm_status_cache_lock = threading.Lock()
+llm_status_cache: Dict[str, Any] = {
+    "cached_at": 0.0,
+    "provider": "",
+    "model": "",
+    "health": "red",
+    "ok": False,
+    "msg": "未探活",
+    "latency_ms": None,
+    "preview": "",
+    "last_success_at": 0.0,
+    "error": "",
+}
 report_ai_review_cache = {}
 report_buffett_review_cache = {}
 fundamental_adapter_manager = FundamentalAdapterManager()
@@ -267,6 +284,9 @@ config = ConfigLoader()
 intent_engine = StrategyIntentEngine()
 history_sync_service = HistoryDiffSyncService()
 history_sync_scheduler_task = None
+# 记录定时同步的日内锚点与下次触发时间，支持“指定开启时间后按间隔执行”。
+history_sync_scheduler_anchor_date = ""
+history_sync_scheduler_next_run_ts = 0.0
 live_auto_start_scheduler_task = None
 live_auto_start_last_trigger_date = ""
 live_auto_start_last_invalid_time = ""
@@ -2570,6 +2590,14 @@ class TdxConnectivityTestRequest(BaseModel):
     stock_code: Optional[str] = None
     auto_detect: bool = True
 
+class LlmConnectivityTestRequest(BaseModel):
+    # 可选场景标记，仅用于日志与提示，不影响模型调用主流程。
+    scenario: Optional[str] = "strategy_codegen"
+    # 可选测试提示词，默认使用轻量化探活提示词。
+    prompt: Optional[str] = None
+    # 可选配置域：unified / evolution / strategy_manager / data_provider
+    scope: Optional[str] = "unified"
+
 class StrategyToggleRequest(BaseModel):
     strategy_id: str
     enabled: bool
@@ -2688,6 +2716,7 @@ class HistorySyncRunRequest(BaseModel):
 
 class HistorySyncScheduleRequest(BaseModel):
     interval_minutes: int = 60
+    scheduler_start_time: Optional[str] = None
     lookback_days: int = 10
     time_mode: Optional[str] = None
     custom_start_time: Optional[str] = None
@@ -2947,44 +2976,16 @@ def _build_tdx_formula_by_llm(prompt_text, kline_type):
     requirement = str(prompt_text or "").strip()
     tf = _normalize_kline_type(kline_type)
     fallback_formula = "MA5:=MA(C,5);\nMA10:=MA(C,10);\nCROSS(MA5,MA10)"
-    cfg = ConfigLoader.reload()
-    api_key = str(
-        cfg.get("data_provider.strategy_llm_api_key", "")
-        or cfg.get("data_provider.llm_api_key", "")
-        or cfg.get("data_provider.api_key", "")
-        or cfg.get("data_provider.default_api_key", "")
-        or ""
-    ).strip()
-    base_url = str(
-        cfg.get("data_provider.strategy_llm_api_url", "")
-        or cfg.get("data_provider.llm_api_url", "")
-        or cfg.get("data_provider.default_api_url", "")
-        or ""
-    ).strip()
-    model_name = str(
-        cfg.get("data_provider.strategy_llm_model", "")
-        or cfg.get("data_provider.llm_model", "")
-        or ""
-    ).strip() or "gpt-4o-mini"
-    timeout_sec = int(
-        cfg.get("data_provider.strategy_llm_timeout_sec", 0)
-        or cfg.get("data_provider.llm_timeout_sec", 0)
-        or 120
-    )
-    timeout_sec = max(30, min(timeout_sec, 300))
-    if not api_key or not base_url:
+    # 统一走模型网关适配器，兼容 evolution.llm 与 data_provider 历史配置。
+    llm_client = build_unified_llm_client(ConfigLoader.reload())
+    if not llm_client.cfg.is_ready():
         return {
             "formula_text": fallback_formula,
             "kline_type": tf,
             "model": "",
             "msg": "未检测到可用大模型配置，已回退示例公式。"
         }
-    url = base_url.rstrip("/")
-    if not url.endswith("/chat/completions"):
-        if url.endswith("/v1"):
-            url = f"{url}/chat/completions"
-        else:
-            url = f"{url}/v1/chat/completions"
+    model_name = str(llm_client.cfg.model or "")
     system_prompt = (
         "你是通达信公式专家。只输出通达信条件选股/交易公式，不要输出Python代码。"
         "允许使用变量赋值与最终布尔表达式，输出必须可被编译器解析。"
@@ -2997,25 +2998,14 @@ def _build_tdx_formula_by_llm(prompt_text, kline_type):
         "可使用函数: MA, EMA, HHV, LLV, REF, COUNT, IF, CROSS, ABS, MAX, MIN, STD。"
         "最后一行必须是布尔信号表达式。"
     )
-    payload = {
-        "model": model_name,
-        "temperature": 0.2,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ]
-    }
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
     try:
-        req = urllib.request.Request(
-            url=url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            method="POST"
-        )
-        with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
-            raw = resp.read().decode("utf-8")
-        result = json.loads(raw)
-        content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+        completion = llm_client.complete(messages=messages, temperature=0.2)
+        content = str(completion.get("content", "") or "")
+        model_name = str(completion.get("model", model_name) or model_name)
         formula_text = _extract_tdx_formula_text(content)
         if not formula_text:
             formula_text = fallback_formula
@@ -3024,21 +3014,6 @@ def _build_tdx_formula_by_llm(prompt_text, kline_type):
             "kline_type": tf,
             "model": model_name,
             "msg": "已生成公式。"
-        }
-    except urllib.error.HTTPError as e:
-        detail = ""
-        try:
-            detail = e.read().decode("utf-8", errors="ignore")[:240]
-        except Exception:
-            detail = ""
-        msg = f"大模型生成失败（HTTP {int(e.code)}）"
-        if detail:
-            msg = f"{msg}：{detail}"
-        return {
-            "formula_text": fallback_formula,
-            "kline_type": tf,
-            "model": model_name,
-            "msg": f"{msg}，已回退示例公式。"
         }
     except Exception as e:
         err = str(e).strip()
@@ -3127,35 +3102,12 @@ def _build_ai_analysis(strategy_intent, strategy_id, strategy_name, code_templat
     intent_obj = intent_engine.normalize(strategy_intent)
     intent = intent_obj.to_dict()
     intent_explain = intent_obj.explain()
-    cfg = ConfigLoader.reload()
-    api_key = str(
-        cfg.get("data_provider.strategy_llm_api_key", "")
-        or cfg.get("data_provider.llm_api_key", "")
-        or cfg.get("data_provider.api_key", "")
-        or cfg.get("data_provider.default_api_key", "")
-        or ""
-    ).strip()
-    base_url = str(
-        cfg.get("data_provider.strategy_llm_api_url", "")
-        or cfg.get("data_provider.llm_api_url", "")
-        or cfg.get("data_provider.default_api_url", "")
-        or ""
-    ).strip()
-    model_name = str(
-        cfg.get("data_provider.strategy_llm_model", "")
-        or cfg.get("data_provider.llm_model", "")
-        or ""
-    ).strip() or "gpt-4o-mini"
-    timeout_sec = int(
-        cfg.get("data_provider.strategy_llm_timeout_sec", 0)
-        or cfg.get("data_provider.llm_timeout_sec", 0)
-        or 120
-    )
-    timeout_sec = max(30, min(timeout_sec, 300))
     strategy_name = str(strategy_name or f"AI策略{strategy_id}").strip()
     fallback_code = build_fallback_strategy_code(strategy_id, strategy_name, intent_explain)
     fallback_class_name = _extract_first_class_name(fallback_code)
-    if not api_key or not base_url:
+    # 新建策略生成统一走模型网关适配器，确保与进化链路配置一致。
+    llm_client = build_unified_llm_client(ConfigLoader.reload())
+    if not llm_client.cfg.is_ready():
         return {
             "analysis_text": "未检测到可用大模型配置，已返回可执行默认策略代码。",
             "code": fallback_code,
@@ -3163,12 +3115,6 @@ def _build_ai_analysis(strategy_intent, strategy_id, strategy_name, code_templat
             "strategy_intent": intent,
             "intent_explain": intent_explain
         }
-    url = base_url.rstrip("/")
-    if not url.endswith("/chat/completions"):
-        if url.endswith("/v1"):
-            url = f"{url}/chat/completions"
-        else:
-            url = f"{url}/v1/chat/completions"
     system_prompt = (
         "你是资深量化开发专家。你只能根据StrategyIntent生成策略代码，禁止基于原始自然语言直接生成代码。"
         "只生成一个类，继承BaseImplementedStrategy，类中必须实现on_bar。"
@@ -3192,25 +3138,13 @@ def _build_ai_analysis(strategy_intent, strategy_id, strategy_name, code_templat
         f"请尽量遵循以下代码骨架与风格约束：\n{str(code_template or '').strip()}\n\n"
         "返回格式：先给Intent可解释性说明，再给```python```代码块。代码需可直接运行于当前项目。"
     )
-    payload = {
-        "model": model_name,
-        "temperature": 0.2,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ]
-    }
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
     try:
-        req = urllib.request.Request(
-            url=url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-            method="POST"
-        )
-        with urllib.request.urlopen(req, timeout=timeout_sec) as resp:
-            raw = resp.read().decode("utf-8")
-        result = json.loads(raw)
-        content = result.get("choices", [{}])[0].get("message", {}).get("content", "")
+        completion = llm_client.complete(messages=messages, temperature=0.2)
+        content = str(completion.get("content", "") or "")
         code = _extract_code_block(content)
         class_name = _extract_first_class_name(code)
         if not code or not class_name:
@@ -3228,22 +3162,6 @@ def _build_ai_analysis(strategy_intent, strategy_id, strategy_name, code_templat
             "analysis_text": analysis_text,
             "code": code,
             "class_name": class_name,
-            "strategy_intent": intent,
-            "intent_explain": intent_explain
-        }
-    except urllib.error.HTTPError as e:
-        detail = ""
-        try:
-            detail = e.read().decode("utf-8", errors="ignore")[:240]
-        except Exception:
-            detail = ""
-        msg = f"大模型分析调用失败（HTTP {int(e.code)}）"
-        if detail:
-            msg = f"{msg}：{detail}"
-        return {
-            "analysis_text": f"{msg}，已回退默认策略代码。",
-            "code": fallback_code,
-            "class_name": fallback_class_name,
             "strategy_intent": intent,
             "intent_explain": intent_explain
         }
@@ -5680,6 +5598,245 @@ async def api_test_tdx_connectivity(req: TdxConnectivityTestRequest):
         return {"status": "error", "ok": False, "msg": str(e)}
 
 
+@app.post("/api/llm/ping")
+async def api_llm_ping(req: Optional[LlmConnectivityTestRequest] = None):
+    """统一模型层连通性测试接口，用于配置中心快速探活。"""
+    provider = ""
+    model = ""
+    try:
+        req_prompt = str(getattr(req, "prompt", "") or "").strip() if req is not None else ""
+        req_scenario = str(getattr(req, "scenario", "strategy_codegen") or "strategy_codegen") if req is not None else "strategy_codegen"
+        req_scope = str(getattr(req, "scope", "unified") or "unified") if req is not None else "unified"
+        # 统一调用探活核心逻辑，避免 ping/status 两套实现漂移。
+        payload = _probe_llm_connectivity(
+            prompt=req_prompt,
+            scenario=req_scenario,
+            scope=req_scope,
+            update_cache=True,
+        )
+        provider = str(payload.get("provider", "") or "")
+        model = str(payload.get("model", "") or "")
+        return payload
+    except Exception as e:
+        logger.error(f"/api/llm/ping failed: {e}", exc_info=True)
+        return {"status": "error", "ok": False, "msg": str(e), "provider": provider, "model": model}
+
+
+def _probe_llm_connectivity(
+    prompt: str = "",
+    scenario: str = "strategy_codegen",
+    scope: str = "unified",
+    update_cache: bool = True,
+) -> Dict[str, Any]:
+    """执行一次真实 LLM 探活，并可选择回写缓存。"""
+    # 使用统一网关适配器，保证与新建策略/进化生成使用同一配置来源。
+    llm_client = build_unified_llm_client(ConfigLoader.reload(), scope=scope)
+    provider = str(llm_client.cfg.provider or "")
+    model = str(llm_client.cfg.model or "")
+    now_ts = time.time()
+    if not llm_client.cfg.is_ready():
+        active_sources = _collect_llm_active_sources(scope=scope)
+        out = {
+            "status": "error",
+            "ok": False,
+            "msg": "未检测到可用LLM配置（请检查 provider/api_key/model/base_url）",
+            "provider": provider,
+            "model": model,
+            "scenario": scenario,
+            "scope": scope,
+            "active_sources": active_sources,
+        }
+        if update_cache:
+            _update_llm_status_cache(ok=False, payload=out, now_ts=now_ts)
+        return out
+    prompt_text = str(prompt or "").strip() or "请回复：LLM_PING_OK"
+    started = time.perf_counter()
+    try:
+        completion = llm_client.complete(
+            messages=[
+                {"role": "system", "content": "你是量化系统模型连通性探活助手，只输出简短文本。"},
+                {"role": "user", "content": prompt_text},
+            ],
+            temperature=0.0,
+            max_tokens=64,
+        )
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        content = str(completion.get("content", "") or "").strip()
+        preview = content[:120]
+        out = {
+            "status": "success",
+            "ok": True,
+            "msg": "LLM 连通性测试通过",
+            "provider": str(completion.get("provider", provider) or provider),
+            "model": str(completion.get("model", model) or model),
+            "latency_ms": elapsed_ms,
+            "preview": preview,
+            "scenario": scenario,
+            "scope": scope,
+            "active_sources": _collect_llm_active_sources(scope=scope),
+        }
+    except Exception as exc:
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        out = {
+            "status": "error",
+            "ok": False,
+            "msg": str(exc),
+            "provider": provider,
+            "model": model,
+            "latency_ms": elapsed_ms,
+            "preview": "",
+            "scenario": scenario,
+            "scope": scope,
+            "active_sources": _collect_llm_active_sources(scope=scope),
+        }
+    if update_cache:
+        _update_llm_status_cache(ok=bool(out.get("ok", False)), payload=out, now_ts=now_ts)
+    return out
+
+
+def _update_llm_status_cache(ok: bool, payload: Dict[str, Any], now_ts: Optional[float] = None) -> None:
+    """更新 LLM 健康缓存，供 /api/llm/status 快速读取。"""
+    ts = float(now_ts if now_ts is not None else time.time())
+    provider = str(payload.get("provider", "") or "")
+    model = str(payload.get("model", "") or "")
+    latency = payload.get("latency_ms")
+    preview = str(payload.get("preview", "") or "")
+    msg = str(payload.get("msg", "") or "")
+    error = "" if ok else msg
+    with llm_status_cache_lock:
+        last_success_at = float(llm_status_cache.get("last_success_at", 0.0) or 0.0)
+        if ok:
+            last_success_at = ts
+        # 健康等级规则：
+        # green: 本次成功。
+        # yellow: 本次失败但近期有成功（降级状态）。
+        # red: 本次失败且近期无成功（不可用状态）。
+        if ok:
+            health = "green"
+        else:
+            health = "yellow" if (last_success_at > 0 and (ts - last_success_at) <= LLM_STATUS_DEGRADED_SECONDS) else "red"
+        llm_status_cache.update({
+            "cached_at": ts,
+            "provider": provider,
+            "model": model,
+            "health": health,
+            "ok": bool(ok),
+            "msg": msg if msg else ("可用" if ok else "不可用"),
+            "latency_ms": latency,
+            "preview": preview,
+            "last_success_at": last_success_at,
+            "error": error,
+        })
+
+
+def _collect_llm_model_candidates(scope: str = "unified") -> Dict[str, Any]:
+    """收集配置中的模型候选，便于前端说明当前生效模型与候选池。"""
+    cfg = ConfigLoader.reload()
+    candidates: Dict[str, str] = {}
+    scope_norm = str(scope or "unified").strip().lower()
+    paths = ["evolution.llm.model", "data_provider.strategy_llm_model", "data_provider.llm_model"]
+    if scope_norm == "evolution":
+        paths = ["evolution.llm.model"]
+    elif scope_norm == "strategy_manager":
+        paths = ["data_provider.strategy_llm_model"]
+    elif scope_norm == "data_provider":
+        paths = ["data_provider.llm_model"]
+    for path in paths:
+        val = str(cfg.get(path, "") or "").strip()
+        if val:
+            candidates[path] = val
+    return {
+        "count": len(candidates),
+        "items": candidates,
+    }
+
+
+def _collect_llm_active_sources(scope: str = "unified") -> Dict[str, str]:
+    """返回统一网关当前命中的关键配置来源路径。"""
+    client = build_unified_llm_client(ConfigLoader.reload(), scope=scope)
+    cfg = client.cfg
+    return {
+        "provider": str(getattr(cfg, "provider_source", "") or ""),
+        "model": str(getattr(cfg, "model_source", "") or ""),
+        "base_url": str(getattr(cfg, "base_url_source", "") or ""),
+        # 出于安全考虑仅返回来源，不返回 api_key 内容。
+        "api_key": str(getattr(cfg, "api_key_source", "") or ""),
+    }
+
+
+@app.get("/api/llm/status")
+async def api_llm_status(force_refresh: bool = False):
+    """LLM 状态接口（缓存版）：支持快速读取，并可按需强制刷新。"""
+    now_ts = time.time()
+    try:
+        with llm_status_cache_lock:
+            cached_at = float(llm_status_cache.get("cached_at", 0.0) or 0.0)
+            cache_snapshot = dict(llm_status_cache)
+        cache_age = max(0.0, now_ts - cached_at) if cached_at > 0 else 10**9
+        cache_valid = (cache_age <= LLM_STATUS_CACHE_TTL_SECONDS)
+        if (not force_refresh) and cache_valid:
+            candidates = _collect_llm_model_candidates(scope="unified")
+            active_sources = _collect_llm_active_sources(scope="unified")
+            return {
+                "status": "success",
+                "cached": True,
+                "cache_age_seconds": round(cache_age, 3),
+                "health": str(cache_snapshot.get("health", "red") or "red"),
+                "ok": bool(cache_snapshot.get("ok", False)),
+                "msg": str(cache_snapshot.get("msg", "") or ""),
+                "provider": str(cache_snapshot.get("provider", "") or ""),
+                "model": str(cache_snapshot.get("model", "") or ""),
+                "latency_ms": cache_snapshot.get("latency_ms"),
+                "preview": str(cache_snapshot.get("preview", "") or ""),
+                "last_success_at": cache_snapshot.get("last_success_at", 0.0),
+                "updated_at": cache_snapshot.get("cached_at", 0.0),
+                "model_candidates": candidates,
+                "active_sources": active_sources,
+            }
+        # 缓存失效或强制刷新时，主动探活并写回缓存。
+        # 探活失败时返回 red/yellow 状态，而不是让接口直接抛错。
+        probe_ok = False
+        try:
+            probe = _probe_llm_connectivity(prompt="", scenario="status_probe", scope="unified", update_cache=True)
+            probe_ok = bool(probe.get("ok", False))
+        except Exception as probe_exc:
+            cfg_client = build_unified_llm_client(ConfigLoader.reload())
+            _update_llm_status_cache(
+                ok=False,
+                payload={
+                    "provider": str(cfg_client.cfg.provider or ""),
+                    "model": str(cfg_client.cfg.model or ""),
+                    "msg": str(probe_exc),
+                    "preview": "",
+                    "latency_ms": None,
+                },
+                now_ts=now_ts,
+            )
+        with llm_status_cache_lock:
+            snapshot = dict(llm_status_cache)
+        candidates = _collect_llm_model_candidates(scope="unified")
+        active_sources = _collect_llm_active_sources(scope="unified")
+        return {
+            "status": "success" if probe_ok else "error",
+            "cached": False,
+            "cache_age_seconds": 0.0,
+            "health": str(snapshot.get("health", "red") or "red"),
+            "ok": bool(snapshot.get("ok", False)),
+            "msg": str(snapshot.get("msg", "") or ""),
+            "provider": str(snapshot.get("provider", "") or ""),
+            "model": str(snapshot.get("model", "") or ""),
+            "latency_ms": snapshot.get("latency_ms"),
+            "preview": str(snapshot.get("preview", "") or ""),
+            "last_success_at": snapshot.get("last_success_at", 0.0),
+            "updated_at": snapshot.get("cached_at", 0.0),
+            "model_candidates": candidates,
+            "active_sources": active_sources,
+        }
+    except Exception as e:
+        logger.error(f"/api/llm/status failed: {e}", exc_info=True)
+        return {"status": "error", "health": "red", "ok": False, "msg": str(e)}
+
+
 @app.get("/api/fundamental/catalog")
 async def api_fundamental_catalog():
     try:
@@ -8008,10 +8165,36 @@ async def _run_history_sync_once(payload: dict):
     logger.info(f"history sync finished: {result.get('status')}")
     return result
 
+def _resolve_history_sync_scheduler_start(cfg=None):
+    """解析定时同步开始时间（HH:MM），非法值回退到 09:30。"""
+    c = cfg if cfg is not None else ConfigLoader.reload()
+    raw_time = str(c.get("history_sync.scheduler_start_time", "09:30") or "09:30").strip()
+    # 仅接受 HH:MM（24小时制），保证调度循环输入稳定。
+    matched = re.match(r"^([01]?\d|2[0-3])\s*[:：]\s*([0-5]\d)$", raw_time)
+    if not matched:
+        return 9, 30, "09:30", raw_time
+    hour = int(matched.group(1))
+    minute = int(matched.group(2))
+    return hour, minute, f"{hour:02d}:{minute:02d}", raw_time
+
 async def _history_sync_scheduler_loop():
+    global history_sync_scheduler_anchor_date, history_sync_scheduler_next_run_ts
     while True:
         cfg = ConfigLoader.reload()
         interval = max(1, int(cfg.get("history_sync.interval_minutes", 60) or 60))
+        # 每日从指定开启时间作为锚点，之后按 interval 分钟执行。
+        hour, minute, _, _ = _resolve_history_sync_scheduler_start(cfg)
+        now = datetime.now()
+        today = now.strftime("%Y-%m-%d")
+        if history_sync_scheduler_anchor_date != today:
+            history_sync_scheduler_anchor_date = today
+            day_anchor = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            history_sync_scheduler_next_run_ts = day_anchor.timestamp()
+        now_ts = now.timestamp()
+        if history_sync_scheduler_next_run_ts > now_ts:
+            # 使用小步 sleep，保证关闭调度或配置刷新时可快速响应。
+            await asyncio.sleep(min(5.0, max(0.2, history_sync_scheduler_next_run_ts - now_ts)))
+            continue
         payload = {
             "codes": cfg.get("history_sync.codes", None),
             "tables": cfg.get("history_sync.tables", list(DEFAULT_SYNC_TABLES)),
@@ -8034,7 +8217,8 @@ async def _history_sync_scheduler_loop():
             await _run_history_sync_once(payload)
         except Exception as e:
             logger.error(f"history sync scheduler failed: {e}", exc_info=True)
-        await asyncio.sleep(interval * 60)
+        # 下一次执行时间从“本轮结束时刻”推进，避免追赶堆积。
+        history_sync_scheduler_next_run_ts = max(time.time(), history_sync_scheduler_next_run_ts) + (interval * 60)
 
 async def _auto_start_live_from_config(cfg=None):
     global live_capital_plan_mode, live_capital_plan_weights
@@ -8168,10 +8352,14 @@ async def api_history_sync_record_detail(run_id: str):
 
 @app.post("/api/history_sync/scheduler/start")
 async def api_history_sync_scheduler_start(req: HistorySyncScheduleRequest):
-    global history_sync_scheduler_task
+    global history_sync_scheduler_task, history_sync_scheduler_anchor_date, history_sync_scheduler_next_run_ts
     cfg = ConfigLoader.reload()
     cfg.set("history_sync.scheduler_enabled", True)
     cfg.set("history_sync.interval_minutes", max(1, int(req.interval_minutes or 1)))
+    cfg.set(
+        "history_sync.scheduler_start_time",
+        str(req.scheduler_start_time or cfg.get("history_sync.scheduler_start_time", "09:30") or "09:30").strip(),
+    )
     cfg.set("history_sync.lookback_days", max(1, int(req.lookback_days or 1)))
     cfg.set("history_sync.time_mode", str(req.time_mode or cfg.get("history_sync.time_mode", "lookback") or "lookback"))
     cfg.set("history_sync.custom_start_time", req.custom_start_time if req.custom_start_time is not None else cfg.get("history_sync.custom_start_time", None))
@@ -8192,6 +8380,9 @@ async def api_history_sync_scheduler_start(req: HistorySyncScheduleRequest):
     cfg.set("history_sync.write_mode", str(req.write_mode or "api"))
     cfg.set("history_sync.direct_db_source", str(req.direct_db_source or "mysql"))
     cfg.save()
+    # 每次开启都重置日内锚点，确保新设置的开始时间立即生效。
+    history_sync_scheduler_anchor_date = ""
+    history_sync_scheduler_next_run_ts = 0.0
     if history_sync_scheduler_task is None or history_sync_scheduler_task.done():
         history_sync_scheduler_task = asyncio.create_task(_history_sync_scheduler_loop())
     return {
@@ -8202,10 +8393,13 @@ async def api_history_sync_scheduler_start(req: HistorySyncScheduleRequest):
 
 @app.post("/api/history_sync/scheduler/stop")
 async def api_history_sync_scheduler_stop():
-    global history_sync_scheduler_task
+    global history_sync_scheduler_task, history_sync_scheduler_anchor_date, history_sync_scheduler_next_run_ts
     cfg = ConfigLoader.reload()
     cfg.set("history_sync.scheduler_enabled", False)
     cfg.save()
+    # 停止时清空调度状态，避免下次开启沿用旧上下文。
+    history_sync_scheduler_anchor_date = ""
+    history_sync_scheduler_next_run_ts = 0.0
     if history_sync_scheduler_task and not history_sync_scheduler_task.done():
         history_sync_scheduler_task.cancel()
     return {"status": "success", "msg": "history sync scheduler stopped"}

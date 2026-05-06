@@ -8,6 +8,7 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Protocol
 
+from src.evolution.adapters.llm_zhipu_adapter import ZhipuStrategyLLM
 from src.utils.config_loader import ConfigLoader
 
 
@@ -28,6 +29,7 @@ class EvolutionLLMConfig:
     timeout_seconds: int = 30
     retry_times: int = 1
     fallback_to_mock: bool = True
+    zhipu_thinking_enabled: bool = False
     system_prompt: str = (
         "你是量化策略生成助手。只输出可执行Python策略代码，"
         "必须继承BaseImplementedStrategy，必须包含on_bar，不要输出解释。"
@@ -62,11 +64,18 @@ class EvolutionLLMConfig:
             timeout_seconds=max(5, int(cfg.get("evolution.llm.timeout_seconds", 30) or 30)),
             retry_times=max(0, int(cfg.get("evolution.llm.retry_times", 1) or 1)),
             fallback_to_mock=bool(cfg.get("evolution.llm.fallback_to_mock", True)),
+            zhipu_thinking_enabled=bool(cfg.get("evolution.llm.zhipu_thinking_enabled", False)),
             system_prompt=str(cfg.get("evolution.llm.system_prompt", cls.system_prompt) or cls.system_prompt),
         )
 
     def is_ready(self) -> bool:
-        return self.enabled and bool(self.base_url) and bool(self.model)
+        # zhipu SDK 不依赖 base_url；openai_compatible 仍要求 base_url。
+        provider = str(self.provider or "openai_compatible").strip().lower()
+        if not self.enabled or not bool(self.model):
+            return False
+        if provider in {"zhipu", "zhipuai", "glm"}:
+            return bool(self.api_key)
+        return bool(self.base_url)
 
 
 class OpenAICompatibleStrategyLLM:
@@ -161,3 +170,22 @@ class OpenAICompatibleStrategyLLM:
 def load_evolution_llm_config() -> EvolutionLLMConfig:
     cfg = ConfigLoader.reload()
     return EvolutionLLMConfig.from_config(cfg)
+
+
+def build_primary_llm_client(cfg: EvolutionLLMConfig) -> StrategyLLMClient:
+    """按 provider 构建主 LLM 客户端，保持对旧配置兼容。"""
+    provider = str(cfg.provider or "openai_compatible").strip().lower()
+    # 兼容常见别名，减少配置迁移成本。
+    if provider in {"zhipu", "zhipuai", "glm"}:
+        return ZhipuStrategyLLM(
+            api_key=cfg.api_key,
+            model=cfg.model,
+            temperature=cfg.temperature,
+            max_tokens=cfg.max_tokens,
+            timeout_seconds=cfg.timeout_seconds,
+            retry_times=cfg.retry_times,
+            system_prompt=cfg.system_prompt,
+            # 策略进化场景固定关闭 thinking，避免高延迟影响批量生成吞吐。
+            thinking_enabled=False,
+        )
+    return OpenAICompatibleStrategyLLM(cfg)

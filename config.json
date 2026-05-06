@@ -80,7 +80,7 @@
     "llm_model": "Qwen/Qwen3-VL-235B-A22B-Instruct",
     "strategy_llm_api_url": "https://api.siliconflow.cn/v1",
     "strategy_llm_api_key": "",
-    "strategy_llm_model": "Qwen/Qwen3-VL-235B-A22B-Instruct",
+    "strategy_llm_model": "Qwen/Qwen3-30B-A3B-Instruct-2507",
     "strategy_llm_timeout_sec": 240,
     "api_key": "",
     "adjustment_mode": "hfq",
@@ -95,6 +95,7 @@
   "history_sync": {
     "scheduler_enabled": false,
     "interval_minutes": 60,
+    "scheduler_start_time": "09:30",
     "time_mode": "custom",
     "lookback_days": 20,
     "custom_start_time": "2026-04-01 09:30:00",
