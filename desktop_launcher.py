@@ -320,6 +320,52 @@ def read_config_port():
                 pass
         return 8000
 
+def _safe_int(value, default_value):
+    """安全转换整数；非法值时返回默认值。"""
+    try:
+        return int(value)
+    except Exception:
+        return int(default_value)
+
+def read_desktop_startup_timeout():
+    """读取桌面端启动超时时间（秒）。
+
+    优先级（高 -> 低）：
+    1) 环境变量 JZ_DESKTOP_STARTUP_TIMEOUT
+    2) 用户目录 config.json: desktop.startup_timeout_seconds
+    3) 打包内置 config.json: desktop.startup_timeout_seconds
+    4) 默认值 180
+    """
+    # 默认值适当放宽，避免弱机器/首启时误判为失败。
+    default_timeout = 180
+
+    # 环境变量可用于运维快速覆盖，不需要改配置文件。
+    env_value = str(os.environ.get("JZ_DESKTOP_STARTUP_TIMEOUT", "") or "").strip()
+    if env_value:
+        return max(30, _safe_int(env_value, default_timeout))
+
+    # 用户配置优先，符合桌面端部署可定制预期。
+    user_dir = os.environ.get("DESKTOP_CONFIG_DIR", "")
+    if user_dir:
+        user_cfg = os.path.join(user_dir, "config.json")
+        try:
+            with open(user_cfg, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+            v = payload.get("desktop", {}).get("startup_timeout_seconds", default_timeout)
+            return max(30, _safe_int(v, default_timeout))
+        except Exception:
+            pass
+
+    # 回退读取打包内置配置，保证无用户配置时也有可控默认行为。
+    bundle_cfg = _bundle_path("config.json")
+    try:
+        with open(bundle_cfg, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        v = payload.get("desktop", {}).get("startup_timeout_seconds", default_timeout)
+        return max(30, _safe_int(v, default_timeout))
+    except Exception:
+        return default_timeout
+
 def find_free_port(start_port=8000):
     port = start_port
     while port < 65535:
@@ -371,6 +417,83 @@ def _ensure_deps_in_path():
             sys.path.insert(0, sp)
     if meipass and meipass not in sys.path:
         sys.path.insert(0, meipass)
+
+def _install_windows_socketpair_patch():
+    """在 Windows 冻结模式下完全绕过 socketpair 自唤醒机制。
+
+    背景：
+    - ProactorEventLoop 创建时调用 socket.socketpair() 构建 self-pipe。
+    - 实测对方的 Win11 机器上，TCP socketpair（bind+listen+accept）超时，
+      UDP socketpair（互相 connect+send/recv）也超时。
+    - 说明该机器上进程内 socket 间通信被安全软件拦截。
+    - 但简单的 bind/listen 单端口操作（如 server 端口）不受影响。
+
+    方案：
+    - 替换 socket.socketpair 为返回"假 socket"对象。
+    - 假对象的 fileno() 返回 -1，使 signal.set_wakeup_fd(-1) 成功（移除唤醒 fd）。
+    - send()/close()/setblocking() 均为空操作。
+    - 自唤醒在 Windows ProactorEventLoop 中本质是非必需的，
+      因为信号机制在 Windows 上基本无效。
+    - 通过环境变量 JZ_PATCH_SOCKETPAIR 控制开关（默认开启）。
+    """
+    if sys.platform != "win32" or (not getattr(sys, "frozen", False)):
+        return
+    enabled = str(os.environ.get("JZ_PATCH_SOCKETPAIR", "1") or "").strip()
+    if enabled != "1":
+        print("[desktop] Skip socketpair patch (JZ_PATCH_SOCKETPAIR!=1)")
+        return
+
+    try:
+        import socket as _socket
+        import asyncio.proactor_events
+
+        if getattr(_socket, "_jz_socketpair_patched", False):
+            return
+
+        class _JzFakeSocket:
+            """假 socket 对象，替代 socketpair 产物。
+            fileno() 返回 -1 使 signal.set_wakeup_fd 静默，
+            send/close/setblocking 均为空操作。"""
+            def __init__(self):
+                self._closed = False
+
+            def fileno(self):
+                return -1
+
+            def setblocking(self, flag):
+                pass
+
+            def send(self, data):
+                return len(data) if data else 0
+
+            def close(self):
+                self._closed = True
+
+            def __repr__(self):
+                return f"<_JzFakeSocket closed={self._closed}>"
+
+        def _jz_socketpair(family=_socket.AF_INET, type=_socket.SOCK_STREAM, proto=0):
+            return _JzFakeSocket(), _JzFakeSocket()
+
+        _socket.socketpair = _jz_socketpair
+        _socket._jz_socketpair_patched = True
+        print("[desktop] Patched socket.socketpair with dummy (no TCP/UDP needed)")
+
+        # 额外补丁：直接替换 asyncio.proactor_events 模块里的 socket 引用
+        try:
+            _proactor = asyncio.proactor_events
+            _proactor_socket = getattr(_proactor, "socket", None) or _socket
+            if not getattr(_proactor_socket, "_jz_socketpair_patched", False):
+                _proactor_socket._jz_socketpair_patched = True
+                _proactor_socket.socketpair = _jz_socketpair
+                if hasattr(_proactor_socket, "_fallback_socketpair"):
+                    _proactor_socket._fallback_socketpair = _jz_socketpair
+        except Exception as proactor_err:
+            print(f"[desktop] Failed to patch asyncio.proactor_events socket: {proactor_err}")
+    except Exception as patch_err:
+        print(f"[desktop] Failed to install socketpair patch: {patch_err}")
+        traceback.print_exc()
+
 
 # ---------------------------------------------------------------------------
 # 系统托盘图标
@@ -481,6 +604,30 @@ server_thread = [None]
 server_running = threading.Event()
 server_error = [None]
 uvicorn_server = [None]  # 保存 uvicorn.Server 实例引用
+server_module_ref = [None]  # 保存导入后的 server 模块引用，用于读取启动阶段快照
+
+def _dump_all_threads_stack(reason):
+    """将当前进程所有线程调用栈写入日志，用于定位启动卡死点。"""
+    try:
+        print(f"[desktop] ===== THREAD DUMP BEGIN: {reason} =====")
+        frames = sys._current_frames()  # noqa: SLF001 - 诊断用途，读取所有线程栈
+        thread_map = {t.ident: t for t in threading.enumerate()}
+        for ident, frame in frames.items():
+            t = thread_map.get(ident)
+            t_name = t.name if t is not None else "unknown"
+            t_alive = t.is_alive() if t is not None else False
+            print(f"[desktop] --- thread ident={ident} name={t_name} alive={t_alive} ---")
+            try:
+                stack_lines = traceback.format_stack(frame)
+                for ln in stack_lines:
+                    line = str(ln or "").rstrip("\n")
+                    if line:
+                        print(f"[desktop] {line}")
+            except Exception as stack_err:
+                print(f"[desktop] format_stack failed: {stack_err}")
+        print(f"[desktop] ===== THREAD DUMP END: {reason} =====")
+    except Exception as dump_err:
+        print(f"[desktop] Thread dump failed: {dump_err}")
 
 def _stop_server_and_wait(timeout=5.0):
     # 停止 uvicorn 并等待线程退出；用于“退出应用即停止服务”
@@ -496,7 +643,10 @@ def _stop_server_and_wait(timeout=5.0):
 def _server_thread_target(port):
     """启动服务器线程。通过捕获 uvicorn.Server 实例实现优雅停止。"""
     try:
+        # 记录服务线程 ID，供 watchdog 定位当前执行栈。
+        server_tid = threading.get_ident()
         _ensure_deps_in_path()
+        _install_windows_socketpair_patch()
 
         server_dir = _bundle_path("")
         if server_dir not in sys.path:
@@ -524,9 +674,32 @@ def _server_thread_target(port):
             raise RuntimeError(f"Cannot load {server_py}")
         server_mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(server_mod)
+        # 保存模块引用，供主线程读取 get_startup_trace_snapshot() 诊断启动卡点。
+        server_module_ref[0] = server_mod
         print("[desktop] Server module imported.")
 
         import uvicorn
+        # Windows 冻结环境事件循环策略控制：
+        # - 该客户机日志已定位到 SelectorEventLoop 在 socket._fallback_socketpair() 卡住；
+        # - 因此默认采用 Proactor，避免 selector 自唤醒管道构建卡死。
+        # 可通过环境变量 JZ_EVENT_LOOP_POLICY 覆盖：
+        #   proactor / selector / auto
+        if sys.platform == "win32" and getattr(sys, "frozen", False):
+            loop_policy = str(os.environ.get("JZ_EVENT_LOOP_POLICY", "proactor") or "").strip().lower()
+            if loop_policy == "selector":
+                try:
+                    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+                    print("[desktop] Applied WindowsSelectorEventLoopPolicy")
+                except Exception as policy_err:
+                    print(f"[desktop] Failed to apply selector event loop policy: {policy_err}")
+            elif loop_policy == "proactor":
+                try:
+                    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+                    print("[desktop] Applied WindowsProactorEventLoopPolicy")
+                except Exception as policy_err:
+                    print(f"[desktop] Failed to apply proactor event loop policy: {policy_err}")
+            else:
+                print(f"[desktop] Keep default event loop policy (JZ_EVENT_LOOP_POLICY={loop_policy})")
         print("[desktop] Starting uvicorn...")
         cfg = uvicorn.Config(
             server_mod.app,
@@ -539,16 +712,56 @@ def _server_thread_target(port):
         )
         svr = uvicorn.Server(cfg)
         uvicorn_server[0] = svr
+        # watchdog：周期打印 uvicorn 关键状态，判断是否卡在 run/serve 早期阶段。
+        watchdog_stop = threading.Event()
+        def _uvicorn_watchdog():
+            while not watchdog_stop.wait(5.0):
+                try:
+                    # 周期采样服务线程栈顶，便于识别卡点（无需等待超时后的全量 thread dump）。
+                    stack_tip = "unavailable"
+                    try:
+                        frames = sys._current_frames()  # noqa: SLF001 - 仅诊断使用
+                        frame = frames.get(server_tid)
+                        if frame is not None:
+                            tips = []
+                            cur = frame
+                            depth = 0
+                            while cur is not None and depth < 6:
+                                code = cur.f_code
+                                tips.append(f"{os.path.basename(code.co_filename)}:{cur.f_lineno}:{code.co_name}")
+                                cur = cur.f_back
+                                depth += 1
+                            if tips:
+                                stack_tip = " <- ".join(tips)
+                    except Exception as stack_tip_err:
+                        stack_tip = f"stack_sample_failed:{stack_tip_err}"
+                    print(
+                        "[desktop] uvicorn watchdog: started={} should_exit={} force_exit={} stack={}".format(
+                            getattr(svr, "started", None),
+                            getattr(svr, "should_exit", None),
+                            getattr(svr, "force_exit", None),
+                            stack_tip,
+                        )
+                    )
+                except Exception as wd_err:
+                    print(f"[desktop] uvicorn watchdog error: {wd_err}")
+        wd_thread = threading.Thread(target=_uvicorn_watchdog, name="uvicorn-watchdog", daemon=True)
+        wd_thread.start()
+        print(f"[desktop] Entering uvicorn.run thread={threading.current_thread().name}")
         svr.run()
+        watchdog_stop.set()
+        print("[desktop] uvicorn.run returned")
     except SystemExit:
         pass
     except BaseException as e:
         server_error[0] = e
         import traceback
         traceback.print_exc()
+        _dump_all_threads_stack(f"server_thread_exception:{type(e).__name__}")
     finally:
         server_running.clear()
         uvicorn_server[0] = None
+        server_module_ref[0] = None
 
 def _start_server_thread(port):
     if server_running.is_set():
@@ -561,25 +774,58 @@ def _start_server_thread(port):
 
     _mac_notify("金策智算", "正在启动服务…")
 
-    timeout = 90
+    timeout = read_desktop_startup_timeout()
     start_ts = time.time()
     notified_slow = False
+    last_progress_log_ts = 0.0
+
+    def _read_server_startup_trace():
+        """读取 server.py 启动阶段快照；失败时返回空字典。"""
+        mod = server_module_ref[0]
+        if mod is None:
+            return {}
+        getter = getattr(mod, "get_startup_trace_snapshot", None)
+        if getter is None:
+            return {}
+        try:
+            snap = getter()
+            return snap if isinstance(snap, dict) else {}
+        except Exception:
+            return {}
+
+    def _finalize_server_ready():
+        """服务就绪后的收口动作：写回 URL、通知并尝试打开浏览器。"""
+        server_running.set()
+        url = f"http://127.0.0.1:{port}"
+        try:
+            if _desktop_last_url_path[0]:
+                with open(_desktop_last_url_path[0], "w", encoding="utf-8") as f:
+                    f.write(url)
+        except Exception:
+            pass
+        print(f"[desktop] Server ready: {url}")
+        _mac_notify("金策智算", "启动成功，正在打开浏览器…")
+        if not _open_url(url):
+            print("[desktop] Failed to open browser automatically.")
+            if sys.platform == "darwin" and getattr(sys, "frozen", False):
+                _show_crash_dialog(f"服务已启动，但无法自动打开浏览器。\n请手动访问：{url}\n日志：{_desktop_log_path[0] or '未知'}")
+
+    def _wait_server_ready_in_background():
+        """超时后继续后台等待，避免把“慢启动”误报成“启动失败”。
+
+        这里不设置总超时：线程为 daemon，不阻塞退出；只要服务最终起来就自动拉起浏览器。
+        """
+        while server_error[0] is None:
+            if wait_for_server("127.0.0.1", port, timeout=2):
+                if not server_running.is_set():
+                    print("[desktop] Server became ready after initial timeout.")
+                    _finalize_server_ready()
+                return
+            time.sleep(1.0)
+
     while True:
         if wait_for_server("127.0.0.1", port, timeout=2):
-            server_running.set()
-            url = f"http://127.0.0.1:{port}"
-            try:
-                if _desktop_last_url_path[0]:
-                    with open(_desktop_last_url_path[0], "w", encoding="utf-8") as f:
-                        f.write(url)
-            except Exception:
-                pass
-            print(f"[desktop] Server ready: {url}")
-            _mac_notify("金策智算", "启动成功，正在打开浏览器…")
-            if not _open_url(url):
-                print("[desktop] Failed to open browser automatically.")
-                if sys.platform == "darwin" and getattr(sys, "frozen", False):
-                    _show_crash_dialog(f"服务已启动，但无法自动打开浏览器。\n请手动访问：{url}\n日志：{_desktop_log_path[0] or '未知'}")
+            _finalize_server_ready()
             break
 
         if server_error[0] is not None:
@@ -588,14 +834,40 @@ def _start_server_thread(port):
         if time.time() - start_ts > timeout:
             break
 
+        # 每 5 秒打印一次启动进度（含 server.py 阶段快照），便于用户日志快速定位卡点。
+        now_ts = time.time()
+        if now_ts - last_progress_log_ts >= 5.0:
+            elapsed = now_ts - start_ts
+            stage_info = _read_server_startup_trace()
+            if stage_info:
+                stage = str(stage_info.get("stage", "") or "unknown")
+                status = str(stage_info.get("status", "") or "unknown")
+                detail = str(stage_info.get("detail", "") or "")
+                print(f"[desktop] Waiting server... elapsed={elapsed:.1f}s stage={stage} status={status} detail={detail}")
+            else:
+                print(f"[desktop] Waiting server... elapsed={elapsed:.1f}s stage=unavailable")
+            last_progress_log_ts = now_ts
+
         if not notified_slow and time.time() - start_ts > 15:
             _mac_notify("金策智算", "启动较慢，仍在初始化…")
             notified_slow = True
 
     if not server_running.is_set():
         print(f"[desktop] Server did not start within {timeout}s.")
+        t_alive = bool(server_thread[0] and server_thread[0].is_alive())
+        print(f"[desktop] Server thread alive at timeout: {t_alive}")
+        # 超时时额外打印一次阶段快照，帮助快速判定卡在哪个阶段。
+        timeout_stage_info = _read_server_startup_trace()
+        if timeout_stage_info:
+            print(f"[desktop] Startup trace at timeout: {timeout_stage_info}")
+        _dump_all_threads_stack("startup_timeout")
         if server_error[0]:
             print(f"[desktop] Error: {server_error[0]}")
+        else:
+            # 非异常但超时，判定为“慢启动”并继续后台等待。
+            print("[desktop] Startup is taking longer than expected; continue waiting in background.")
+            _mac_notify("金策智算", "启动较慢，正在后台继续初始化…")
+            threading.Thread(target=_wait_server_ready_in_background, daemon=True).start()
         if sys.platform == "darwin" and getattr(sys, "frozen", False):
             msg = "服务启动失败或超时。\n\n"
             if server_error[0]:
