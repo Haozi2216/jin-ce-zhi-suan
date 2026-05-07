@@ -3227,6 +3227,7 @@ class BatchGenerateTasksRequest(BaseModel):
     generator_stocks_csv: Optional[str] = "data/任务生成_标的池.csv"
     generator_windows_csv: Optional[str] = "data/任务生成_区间池.csv"
     generator_scenarios_csv: Optional[str] = "data/任务生成_场景池.csv"
+    data_source: Optional[str] = None  # 配置中心当前数据源
 
 
 class BatchRunControlRequest(BaseModel):
@@ -4568,6 +4569,9 @@ async def api_batch_generate_tasks(req: BatchGenerateTasksRequest):
             "--generator-scenarios-csv",
             str(req.generator_scenarios_csv or "data/任务生成_场景池.csv"),
         ]
+        data_source = str(req.data_source or "").strip()
+        if data_source:
+            cmd += ["--data-source", data_source]
         proc = subprocess.run(
             cmd,
             cwd=os.path.abspath("."),
@@ -5549,6 +5553,7 @@ async def api_batch_overview(
                 "result_count": len(results_rows),
                 "summary_count": len(summary_rows),
             },
+            "tasks": tasks_rows,
             "task_status": status_counter,
             "batch_stats": sorted(list(batch_stats.values()), key=lambda x: str(x.get("batch_no", ""))),
             "strategy_board": strategy_board[:100],

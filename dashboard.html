@@ -2175,31 +2175,7 @@
                         </label>
                     </div>
                     <div class="bg-slate-950/70 border border-slate-700 rounded p-2 space-y-2 text-[11px]">
-                        <div class="text-slate-300">策略范围与组合参数</div>
-                        <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
-                            <label class="text-slate-300">策略范围
-                                <select id="batch-strategy-scope-mode" onchange="toggleBatchStrategyScopeUi()" class="mt-1 w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-200">
-                                    <option value="selected" selected>主界面已选策略</option>
-                                    <option value="all_enabled">全部启用策略</option>
-                                    <option value="manual_pick">手动勾选策略</option>
-                                </select>
-                            </label>
-                            <div class="md:col-span-2 bg-slate-900 border border-slate-700 rounded px-2 py-1 flex items-center justify-between">
-                                <div id="batch-strategy-range-summary" class="text-slate-300 font-mono">策略范围：--</div>
-                                <div class="text-slate-500">先选策略范围，再配置组合参数</div>
-                            </div>
-                        </div>
-                        <div id="batch-manual-strategy-wrap" class="hidden bg-slate-900 border border-slate-700 rounded p-2">
-                            <div class="flex items-center justify-between mb-2">
-                                <div class="text-[11px] text-slate-300">手动勾选策略（多选）</div>
-                                <div class="flex items-center gap-2">
-                                    <button onclick="selectAllBatchManualStrategies(true)" class="bg-slate-700 hover:bg-slate-600 text-white px-2 py-1 rounded text-[11px] border border-slate-500">全选</button>
-                                    <button onclick="selectAllBatchManualStrategies(false)" class="bg-slate-700 hover:bg-slate-600 text-white px-2 py-1 rounded text-[11px] border border-slate-500">清空</button>
-                                    <button onclick="loadBatchStrategyCatalog()" class="bg-slate-700 hover:bg-slate-600 text-white px-2 py-1 rounded text-[11px] border border-slate-500">刷新策略列表</button>
-                                </div>
-                            </div>
-                            <div id="batch-manual-strategy-select" class="w-full h-28 overflow-auto bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-100 font-mono space-y-1"></div>
-                        </div>
+                        <div class="text-slate-300">组合参数</div>
                         <div class="grid grid-cols-1 md:grid-cols-4 gap-2">
                             <label class="text-slate-300">组合模式
                                 <select id="batch-combo-mode" class="mt-1 w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-slate-200">
@@ -3653,7 +3629,6 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             if (allBox) allBox.checked = selectedStrategyIds.length === strategyCatalog.length && strategyCatalog.length > 0;
             renderStrategySelectionSummary();
             updateStrategyQuick(selectedStrategyIds.length === 1 ? String(selectedStrategyIds[0]) : 'all');
-            _refreshBatchStrategyRangeSummary();
             renderEvolutionSeedSourceUi();
         }
 
@@ -8547,8 +8522,6 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             const modal = document.getElementById('batch-dashboard-modal');
             if (modal) modal.classList.remove('hidden');
             _applyBatchCsvDefaultsToUi();
-            toggleBatchStrategyScopeUi();
-            applyBatchCombinationDefaultsFromCurrentStrategies(false);
             loadBatchOverview();
             refreshBatchRunStatus();
         }
@@ -9031,99 +9004,52 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             if (weightsEl) weightsEl.value = _serializeComboWeights(cfg.weights || {}, strategyIds);
         }
 
-        function _getManualPickedBatchStrategyIds() {
-            const wrap = document.getElementById('batch-manual-strategy-select');
-            if (!wrap) return [];
-            return Array.from(wrap.querySelectorAll('input[type="checkbox"][data-strategy-id]:checked') || [])
-                .map(el => String(el.getAttribute('data-strategy-id') || '').trim())
-                .filter(Boolean);
-        }
-
-        function _resolveBatchStrategyIdsForScope() {
-            const mode = String(document.getElementById('batch-strategy-scope-mode')?.value || 'selected').trim();
-            if (mode === 'manual_pick') {
-                const manual = _getManualPickedBatchStrategyIds();
-                if (manual.length) return manual;
-                return [];
+        // 从看板任务数据中自动提取策略 ID（首次调用时缓存）
+        let batchTaskStrategyCache = null;
+        let batchTaskStrategyExtracting = false;
+        async function _resolveBatchStrategyIdsForScope() {
+            // 确保已提取策略（可能来自 overview tasks 或 CSV 直读）
+            await _extractStrategiesFromTaskOverview();
+            if (batchTaskStrategyCache && batchTaskStrategyCache.length) {
+                return batchTaskStrategyCache.slice();
             }
-            if (mode === 'all_enabled') {
-                return (Array.isArray(strategyCatalog) ? strategyCatalog : [])
-                    .map(x => String(x?.id || '').trim())
-                    .filter(Boolean);
-            }
+            // fallback：主界面已选策略
             return _resolveBatchStrategyIdsFromUi();
         }
-
-        function _refreshBatchStrategyRangeSummary() {
-            const el = document.getElementById('batch-strategy-range-summary');
-            if (!el) return;
-            const mode = String(document.getElementById('batch-strategy-scope-mode')?.value || 'selected').trim();
-            const ids = _resolveBatchStrategyIdsForScope();
-            const modeLabel = mode === 'all_enabled' ? '全部启用策略' : (mode === 'manual_pick' ? '手动勾选策略' : '主界面已选策略');
-            if (!ids.length) {
-                el.innerText = `策略范围：${modeLabel}（0个）`;
-                return;
-            }
-            const brief = ids.slice(0, 8).join(',');
-            const tail = ids.length > 8 ? ` ... +${ids.length - 8}` : '';
-            el.innerText = `策略范围：${modeLabel}（${ids.length}个） ${brief}${tail}`;
-        }
-
-        async function loadBatchStrategyCatalog() {
+        async function _extractStrategiesFromTaskOverview() {
+            // 已有缓存则跳过
+            if (batchTaskStrategyCache && batchTaskStrategyCache.length) return;
+            if (batchTaskStrategyExtracting) return;
+            batchTaskStrategyExtracting = true;
             try {
-                if (!Array.isArray(strategyCatalog) || !strategyCatalog.length) {
-                    const res = await fetch('/api/strategies');
-                    const data = await res.json();
-                    if (res.ok && Array.isArray(data.strategies)) {
-                        strategyCatalog = data.strategies.map(item => ({
-                            id: String(item?.id || '').trim(),
-                            name: String(item?.name || '').trim(),
-                        })).filter(x => x.id);
-                    }
+                const tasksCsv = String(document.getElementById('batch-run-tasks-csv')?.value || document.getElementById('blk-tasks-csv')?.value || 'data/批量回测任务.csv').trim() || 'data/批量回测任务.csv';
+                // 优先从已加载的 overview tasks 字段取
+                const tasks = batchOverviewPayload?.tasks || [];
+                if (Array.isArray(tasks) && tasks.length) {
+                    const ids = tasks.map(t => String(t?.strategy_id || t['策略ID'] || '').trim()).filter(Boolean);
+                    batchTaskStrategyCache = [...new Set(ids)];
+                    return;
                 }
-            } catch (_) {}
-            const wrap = document.getElementById('batch-manual-strategy-select');
-            if (!wrap) return;
-            const existing = new Set(_getManualPickedBatchStrategyIds());
-            const rows = (Array.isArray(strategyCatalog) ? strategyCatalog : []).filter(x => String(x?.id || '').trim());
-            if (!rows.length) {
-                wrap.innerHTML = '<div class="text-slate-500">暂无策略</div>';
-                return;
+                // overview 无 tasks 字段时，直接读取任务 CSV 提取策略
+                const params = new URLSearchParams({ tasks_csv: tasksCsv, results_csv: '', summary_csv: '', limit: '1' });
+                const res = await fetch(`/api/batch/overview?${params.toString()}`);
+                const data = await res.json();
+                const csvTasks = data?.tasks || [];
+                if (Array.isArray(csvTasks) && csvTasks.length) {
+                    const ids = csvTasks.map(t => String(t?.strategy_id || t['策略ID'] || '').trim()).filter(Boolean);
+                    batchTaskStrategyCache = [...new Set(ids)];
+                }
+            } finally {
+                batchTaskStrategyExtracting = false;
             }
-            wrap.innerHTML = rows.map(r => {
-                const sid = String(r.id);
-                const checked = existing.has(sid) ? 'checked' : '';
-                return `<label class="flex items-center gap-2 px-1 py-0.5 rounded hover:bg-slate-700/50"><input type="checkbox" data-strategy-id="${sid}" ${checked} onchange="_refreshBatchStrategyRangeSummary()" /><span>${sid}${r.name ? ` | ${String(r.name)}` : ''}</span></label>`;
-            }).join('');
-            _refreshBatchStrategyRangeSummary();
         }
 
-        function selectAllBatchManualStrategies(checked) {
-            const wrap = document.getElementById('batch-manual-strategy-select');
-            if (!wrap) return;
-            Array.from(wrap.querySelectorAll('input[type="checkbox"][data-strategy-id]') || []).forEach(el => {
-                el.checked = !!checked;
-            });
-            _refreshBatchStrategyRangeSummary();
-        }
-
-        function toggleBatchStrategyScopeUi() {
-            const mode = String(document.getElementById('batch-strategy-scope-mode')?.value || 'selected').trim();
-            const wrap = document.getElementById('batch-manual-strategy-wrap');
-            if (wrap) {
-                if (mode === 'manual_pick') wrap.classList.remove('hidden');
-                else wrap.classList.add('hidden');
-            }
-            if (mode === 'manual_pick') {
-                loadBatchStrategyCatalog();
-            }
-            _refreshBatchStrategyRangeSummary();
-        }
-
-        function applyBatchCombinationDefaultsFromCurrentStrategies(showNotice = true) {
-            const strategyIds = _resolveBatchStrategyIdsForScope();
+        async function applyBatchCombinationDefaultsFromCurrentStrategies(showNotice = true) {
+            // Ensure strategies are extracted from the loaded task CSV
+            await _extractStrategiesFromTaskOverview();
+            const strategyIds = await _resolveBatchStrategyIdsForScope();
             if (!strategyIds.length) {
-                _setBatchComboHelpStatus('未找到策略范围，请先选择策略', 'error');
+                _setBatchComboHelpStatus('任务文件中未找到策略，请先加载看板', 'error');
                 const adviceEl = document.getElementById('batch-combo-ai-advice');
                 if (adviceEl) adviceEl.innerText = '--';
                 return;
@@ -9131,10 +9057,9 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             const cfg = _defaultBatchCombinationForStrategies(strategyIds);
             _applyBatchCombinationConfigToUi(cfg, strategyIds);
             if (showNotice) _setBatchComboHelpStatus(`默认组合参数已回填（${strategyIds.length}个策略）`, 'success');
-            _refreshBatchStrategyRangeSummary();
         }
 
-        function syncBatchComboConfigToBacktestOps() {
+        async function syncBatchComboConfigToBacktestOps() {
             const cfg = _readBatchCombinationConfigFromUi();
             const modeEl = document.getElementById('bt-combo-mode');
             const minEl = document.getElementById('bt-combo-min-agree');
@@ -9143,18 +9068,15 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             if (modeEl) modeEl.value = String(cfg.mode || 'or');
             if (minEl) minEl.value = String(cfg.min_agree_count || 1);
             if (tieEl) tieEl.value = String(cfg.tie_policy || 'skip');
-            if (weightsEl) weightsEl.value = _serializeComboWeights(cfg.weights || {}, _resolveBatchStrategyIdsForScope());
-            _setBatchComboHelpStatus('已同步到“回测组合参数”面板', 'success');
+            if (weightsEl) weightsEl.value = _serializeComboWeights(cfg.weights || {}, await _resolveBatchStrategyIdsForScope());
+            _setBatchComboHelpStatus('已同步到”回测组合参数”面板', 'success');
         }
 
         async function recommendBatchCombinationByAI() {
             if (batchComboRecommendPending) return;
-            const strategyIds = _resolveBatchStrategyIdsForScope();
-            if (!strategyIds.length) {
-                _setBatchComboHelpStatus('请先选择策略范围', 'error');
-                return;
-            }
-            const adviceEl = document.getElementById('batch-combo-ai-advice');
+            // Ensure strategies are extracted from the loaded task CSV
+            await _extractStrategiesFromTaskOverview();
+            const strategyIds = await _resolveBatchStrategyIdsForScope();
             batchComboRecommendPending = true;
             _setBatchComboHelpStatus('AI分析中...', 'info');
             try {
@@ -9181,11 +9103,13 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 const cfg = data.recommendation && typeof data.recommendation === 'object' ? data.recommendation : {};
                 _applyBatchCombinationConfigToUi(cfg, strategyIds);
                 const analysisText = String(data.analysis || '').trim();
+                const adviceEl = document.getElementById('batch-combo-ai-advice');
                 if (adviceEl) adviceEl.innerText = analysisText || JSON.stringify(cfg, null, 2);
                 const sourceText = String(data.source || '').trim();
                 _setBatchComboHelpStatus(`AI推荐已回填${sourceText ? `（${sourceText}）` : ''}`, 'success');
             } catch (e) {
                 _setBatchComboHelpStatus(`AI推荐失败: ${e}`, 'error');
+                const adviceEl = document.getElementById('batch-combo-ai-advice');
                 if (adviceEl) adviceEl.innerText = String(e || '');
             } finally {
                 batchComboRecommendPending = false;
@@ -9315,7 +9239,8 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                         generator_stocks_csv: stocksCsv,
                         generator_strategies_csv: strategiesCsv,
                         generator_windows_csv: 'data/任务生成_区间池.csv',
-                        generator_scenarios_csv: 'data/任务生成_场景池.csv'
+                        generator_scenarios_csv: 'data/任务生成_场景池.csv',
+                        data_source: currentSource || 'default'
                     })
                 });
                 const data = await res.json();
@@ -9373,7 +9298,10 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     throw new Error(data.msg || '加载失败');
                 }
                 batchOverviewPayload = data;
+                batchTaskStrategyCache = null;
                 renderBatchOverview();
+                await _extractStrategiesFromTaskOverview();
+                applyBatchCombinationDefaultsFromCurrentStrategies(false);
                 _setBatchOverviewStatus(`已加载：任务${Number(data?.meta?.task_count || 0)} 结果${Number(data?.meta?.result_count || 0)} 汇总${Number(data?.meta?.summary_count || 0)}`, 'success');
             } catch (e) {
                 _setBatchOverviewStatus(`加载失败: ${e}`, 'error');
@@ -9759,7 +9687,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             }
         }
 
-        function _collectBatchRunPayload() {
+        async function _collectBatchRunPayload() {
             const tasksCsv = _normalizeTaskCsvPath(String(document.getElementById('batch-run-tasks-csv')?.value || document.getElementById('blk-tasks-csv')?.value || DEFAULT_TASKS_CSV).trim(), DEFAULT_TASKS_CSV);
             const tasksInput = document.getElementById('batch-run-tasks-csv') || document.getElementById('blk-tasks-csv');
             if (tasksInput) tasksInput.value = tasksCsv;
@@ -9772,8 +9700,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             const archiveTasksCsv = DEFAULT_ARCHIVE_TASKS_CSV;
             const aiSystemPrompt = String(document.getElementById('batch-ai-system-prompt')?.value || '').trim();
             const aiUserPrompt = String(document.getElementById('batch-ai-user-prompt')?.value || '').trim();
-            const strategyScopeMode = String(document.getElementById('batch-strategy-scope-mode')?.value || 'selected').trim();
-            const comboStrategyIds = _resolveBatchStrategyIdsForScope();
+            const comboStrategyIds = await _resolveBatchStrategyIdsForScope();
             const combinationConfig = _readBatchCombinationConfigFromUi();
             return {
                 tasks_csv: tasksCsv,
@@ -9796,7 +9723,6 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 ai_analysis_system_prompt: aiSystemPrompt,
                 ai_analysis_prompt: aiUserPrompt,
                 ai_analysis_output_md: 'data/批量回测AI分析.md',
-                strategy_scope_mode: strategyScopeMode,
                 strategy_ids: comboStrategyIds,
                 combination_config: combinationConfig
             };
@@ -9849,7 +9775,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
 
         async function refreshBatchRunStatus() {
             try {
-                const payload = _collectBatchRunPayload();
+                const payload = await _collectBatchRunPayload();
                 const params = new URLSearchParams({
                     tasks_csv: payload.tasks_csv,
                     batch_no_filter: payload.batch_no_filter || '',
@@ -9882,7 +9808,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             if (stopBtn) stopBtn.disabled = false;
             _setBatchRunStatusText('提交启动中...');
             try {
-                const payload = _collectBatchRunPayload();
+                const payload = await _collectBatchRunPayload();
                 const res = await fetch('/api/batch/run/start', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -9915,7 +9841,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             if (stopBtn) stopBtn.disabled = false;
             _setBatchRunStatusText('提交AI分析中...');
             try {
-                const payload = _collectBatchRunPayload();
+                const payload = await _collectBatchRunPayload();
                 payload.ai_analyze_only = true;
                 payload.ai_analyze = true;
                 const res = await fetch('/api/batch/run/start', {

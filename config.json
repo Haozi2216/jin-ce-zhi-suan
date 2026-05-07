@@ -65,7 +65,7 @@
     "postgres_table_30min": "dat_30mins",
     "postgres_table_60min": "dat_60mins",
     "postgres_table_day": "dat_day",
-    "duckdb_path": "databases/duckdb/quantifydata.duckdb",
+    "duckdb_path": "G:\\duckdb\\quantifydata.duckdb",
     "duckdb_query_page_size": 20000,
     "duckdb_table_1min": "dat_1mins",
     "duckdb_table_5min": "dat_5mins",
@@ -77,7 +77,7 @@
     "backtest_cache_db_source": "",
     "llm_api_url": "https://api.siliconflow.cn/v1",
     "llm_api_key": "",
-    "llm_model": "Qwen/Qwen3-VL-235B-A22B-Instruct",
+    "llm_model": "Qwen/Qwen3-30B-A3B-Instruct-2507",
     "strategy_llm_api_url": "https://api.siliconflow.cn/v1",
     "strategy_llm_api_key": "",
     "strategy_llm_model": "Qwen/Qwen3-30B-A3B-Instruct-2507",
@@ -131,7 +131,7 @@
   },
   "trading_cost": {
     "commission_rate": 0.00025,
-    "min_commission": 5,
+    "min_commission": 5.0,
     "stamp_duty": 0.001,
     "transfer_fee": 0
   },

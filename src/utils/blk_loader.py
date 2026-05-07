@@ -28,6 +28,9 @@ def parse_blk_text(content: str) -> Dict[str, List[str]]:
         else:
             token = line.split()[0].strip()
         code = token.replace("\ufeff", "").upper()
+        if code.isdigit() and len(code) == 7 and code[0] in ("0", "1"):
+            suffix = ".SH" if code[0] == "1" else ".SZ"
+            code = code[1:] + suffix
         if not code:
             invalid_lines.append(f"{line_no}:{line}")
             continue

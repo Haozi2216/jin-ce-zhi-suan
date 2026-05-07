@@ -771,6 +771,36 @@ def 按策略汇总(results_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 
+# AI 分析用精简字段：只保留核心指标，裁剪任务元数据
+AI_ANALYSIS_RESULT_KEYS = [
+    "stock_code",
+    "strategy_id",
+    "scenario_tag",
+    "batch_no",
+    "total_trades",
+    "total_return",
+    "annualized_return",
+    "max_drawdown",
+    "win_rate",
+    "profit_factor",
+    "calmar",
+    "sharpe",
+    "violations",
+    "rejections",
+    "circuit_breaks",
+    "score_raw",
+    "score_penalty",
+    "score_final",
+    "grade",
+    "decision",
+]
+
+
+def 精简结果行(row: Dict[str, Any]) -> Dict[str, Any]:
+    """只保留 AI 分析需要的核心指标，去除目录、报告 ID 等元数据。"""
+    return {k: row.get(k, "") for k in AI_ANALYSIS_RESULT_KEYS if k in row}
+
+
 def 生成批量分析载荷(results_rows: List[Dict[str, Any]], summary_rows: List[Dict[str, Any]], max_results: int, max_strategies: int) -> Dict[str, Any]:
     rows = list(results_rows or [])
     sum_rows = list(summary_rows or [])
@@ -792,11 +822,15 @@ def 生成批量分析载荷(results_rows: List[Dict[str, Any]], summary_rows: L
         key=lambda x: 转浮点(x.get("median_score_final"), 0.0),
         reverse=True,
     )[: max(1, int(max_strategies or 1))]
+    # 精简结果行：只保留核心指标，减少 payload 体积
+    trimmed_success = [精简结果行(x) for x in success_rows]
     sample_results = sorted(
-        [x for x in success_rows if isinstance(x, dict)],
+        [x for x in trimmed_success if isinstance(x, dict)],
         key=lambda x: 转浮点(x.get("score_final"), 0.0),
         reverse=True,
     )[: max(1, int(max_results or 1))]
+    # 精简策略汇总
+    summary_top = [精简结果行(x) if isinstance(x, dict) else x for x in top_strategies]
     return {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "task_total": len(rows),
@@ -811,7 +845,7 @@ def 生成批量分析载荷(results_rows: List[Dict[str, Any]], summary_rows: L
         "median_max_drawdown": round(中位数(mdd_vals), 6),
         "median_win_rate": round(中位数(wr_vals), 6),
         "median_score_final": round(中位数(score_vals), 6),
-        "summary_top_strategies": top_strategies,
+        "summary_top_strategies": summary_top,
         "sample_results_top": sample_results,
     }
 
@@ -859,7 +893,20 @@ def 调用LLM生成批量分析(
     user_prompt = 渲染提示词模板(user_prompt, prompt_context)
     temperature = float(args.ai_analysis_temperature) if float(args.ai_analysis_temperature) >= 0 else 转浮点(cfg.get("batch_backtest.ai_analysis_temperature", 0.2), 0.2)
     max_tokens = max(256, int(args.ai_analysis_max_tokens or 1200))
-    timeout_sec = max(10, int(args.ai_analysis_timeout_sec or 60))
+    manual_timeout = max(10, int(args.ai_analysis_timeout_sec or 60))
+    # 根据数据量自动增加超时：结果样本体积 + 策略汇总体积
+    num_results = len(results_rows)
+    num_strategies = len(summary_rows)
+    max_results_cfg = max(1, int(args.ai_analysis_max_results or 1))
+    max_strategies_cfg = max(1, int(args.ai_analysis_max_strategies or 1))
+    # 估算实际注入的数据量（取实际数量与配置上限的较小值）
+    estimated_results = min(num_results, max_results_cfg)
+    estimated_strategies = min(num_strategies, max_strategies_cfg)
+    # 每条结果约贡献 0.3 秒处理时间，每个策略汇总约贡献 0.5 秒，上限 600 秒
+    auto_timeout = min(600, max(manual_timeout, int(estimated_results * 0.3 + estimated_strategies * 0.5 + 30)))
+    timeout_sec = auto_timeout
+    if auto_timeout > manual_timeout:
+        print(f"[AI分析] 数据量自动估算超时: {auto_timeout}s (results={estimated_results} strategies={estimated_strategies})")
     url = base_url.rstrip("/")
     if not url.endswith("/chat/completions"):
         if url.endswith("/v1"):
@@ -1234,6 +1281,7 @@ def 生成任务列表(
     场景池: List[Dict[str, Any]],
     生成模式: str,
     最大生成数: int,
+    当前数据源: str = "",
 ) -> Tuple[List[Dict[str, Any]], int, int]:
     策略有效 = [x for x in 策略池 if 解析布尔(x.get("enabled", "1")) and str(x.get("strategy_id", "")).strip()]
     标的有效 = [x for x in 标的池 if 解析布尔(x.get("enabled", "1")) and str(x.get("stock_code", "")).strip()]
@@ -1268,6 +1316,11 @@ def 生成任务列表(
                 for 场景 in 场景有效:
                     scene_tag = str(场景.get("scenario_tag", "")).strip() or "base"
                     mix_tag = f"{phase}_{scene_tag}" if phase else scene_tag
+                    场景数据源 = str(场景.get("data_source", "")).strip()
+                    if not 场景数据源 and 当前数据源:
+                        场景数据源 = 当前数据源
+                    if not 场景数据源:
+                        场景数据源 = "default"
                     row = {
                         "task_id": 新任务ID(下一个序号),
                         "batch_no": batch_no,
@@ -1279,7 +1332,7 @@ def 生成任务列表(
                         "end_date": end_date,
                         "capital": str(转浮点(场景.get("capital", 1000000), 1000000)),
                         "kline_type": str(场景.get("kline_type", "5min")).strip() or "5min",
-                        "data_source": str(场景.get("data_source", "default")).strip() or "default",
+                        "data_source": 场景数据源,
                         "scenario_tag": mix_tag,
                         "cost_profile": str(场景.get("cost_profile", "cost_base")).strip() or "cost_base",
                         "slippage_bp": str(场景.get("slippage_bp", "2")),
@@ -1684,6 +1737,7 @@ def run(args: argparse.Namespace) -> int:
             场景池=场景池,
             生成模式=args.generate_mode,
             最大生成数=args.generate_max_tasks,
+            当前数据源=str(getattr(args, "data_source", "") or "").strip(),
         )
         写入CSV(tasks_path, 任务列定义, 新任务)
         print(f"任务文件: {tasks_path}")
@@ -1799,6 +1853,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--generate-tasks", action="store_true", help="按策略池/标的池/区间池/场景池自动生成任务")
     p.add_argument("--generate-mode", default="append", choices=["append", "replace"], help="任务生成模式")
     p.add_argument("--generate-max-tasks", type=int, default=0, help="生成任务上限，0表示不限制")
+    p.add_argument("--data-source", default="", help="配置中心当前数据源，场景池未指定时使用此默认值")
     p.add_argument("--run-after-generate", action="store_true", help="生成任务后继续执行回测")
     p.add_argument("--coverage-check", action="store_true", help="执行覆盖率检查（策略行情/行业/市值）")
     p.add_argument("--coverage-required-phases", default="牛市,熊市,震荡", help="覆盖率检查的必需行情标签，逗号分隔")
