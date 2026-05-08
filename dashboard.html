@@ -2619,11 +2619,20 @@
                     <div class="text-xs text-slate-300">代码模版（供智能分析参考）</div>
                     <textarea id="strategy-code-template-input" class="flex-[3] min-h-0 w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs font-mono text-cyan-200" placeholder="可按项目规范调整代码骨架，帮助智能分析按模板产出"></textarea>
                 </div>
-                <div class="p-3 flex flex-col gap-2">
-                    <div class="text-xs text-slate-300">智能分析结论</div>
-                    <div id="strategy-analysis-output" class="flex-[6] min-h-0 overflow-auto bg-slate-950 border border-slate-700 rounded p-2 text-xs text-slate-300 whitespace-pre-wrap resize-y" style="resize: vertical;"></div>
+                <div class="p-3 flex flex-col gap-2 min-h-0 overflow-hidden">
+                    <div class="flex items-center justify-between">
+                        <div class="text-xs text-slate-300">智能分析结论</div>
+                        <!-- 折叠分析区，避免长文本影响代码查看与编辑 -->
+                        <button id="strategy-analysis-toggle-btn" onclick="toggleStrategyAnalysisPanel()" class="text-[11px] text-cyan-300 hover:text-cyan-200 border border-cyan-700/60 rounded px-2 py-0.5">
+                            <i id="strategy-analysis-toggle-icon" class="fa-solid fa-chevron-up mr-1"></i>
+                            <span id="strategy-analysis-toggle-label">折叠</span>
+                        </button>
+                    </div>
+                    <!-- 固定分析区与代码区的可视比例，避免长文本把下方代码区挤出可视范围 -->
+                    <div id="strategy-analysis-output" class="flex-1 min-h-[150px] max-h-[55%] overflow-auto bg-slate-950 border border-slate-700 rounded p-2 text-xs text-slate-300 whitespace-pre-wrap"></div>
                     <div class="text-xs text-slate-300">可执行策略代码</div>
-                    <textarea id="strategy-code-output" class="flex-[3] min-h-0 w-full bg-slate-950 border border-slate-700 rounded p-2 text-xs font-mono text-emerald-200"></textarea>
+                    <!-- 为代码区保留最小可视高度，确保分析后仍能直接查看和编辑代码 -->
+                    <textarea id="strategy-code-output" class="flex-1 min-h-[180px] w-full overflow-auto bg-slate-950 border border-slate-700 rounded p-2 text-xs font-mono text-emerald-200"></textarea>
                 </div>
             </div>
             <div class="px-4 py-3 border-t border-slate-700 flex items-center justify-end gap-2">
@@ -2906,6 +2915,8 @@
         let strategyManagerTotal = 0;
         let pendingGeneratedStrategy = null;
         let strategyAnalyzeInFlight = false;
+        // 记录“新增策略”弹窗中分析区是否折叠，折叠后优先展示代码区。
+        let strategyAnalysisCollapsed = false;
         let actionLayoutMode = 'expanded';
         let rightPanelPrefs = { strategy: true, console: true, stream: true };
         let rightLayoutPreset = 'balanced';
@@ -11370,9 +11381,35 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 : 'hidden absolute inset-0 items-center justify-center bg-slate-950/45 z-10';
         }
 
+        function setStrategyAnalysisCollapsed(collapsed) {
+            // 根据折叠状态切换分析区与代码区的显示优先级。
+            strategyAnalysisCollapsed = !!collapsed;
+            const analysis = document.getElementById('strategy-analysis-output');
+            const code = document.getElementById('strategy-code-output');
+            const btn = document.getElementById('strategy-analysis-toggle-btn');
+            const icon = document.getElementById('strategy-analysis-toggle-icon');
+            const label = document.getElementById('strategy-analysis-toggle-label');
+            if (analysis) analysis.classList.toggle('hidden', strategyAnalysisCollapsed);
+            if (code) {
+                // 折叠后提升代码区最小高度，确保大段代码可直接可见。
+                code.classList.toggle('min-h-[180px]', !strategyAnalysisCollapsed);
+                code.classList.toggle('min-h-[320px]', strategyAnalysisCollapsed);
+            }
+            if (btn) btn.title = strategyAnalysisCollapsed ? '展开智能分析结论' : '折叠智能分析结论';
+            if (icon) icon.className = strategyAnalysisCollapsed ? 'fa-solid fa-chevron-down mr-1' : 'fa-solid fa-chevron-up mr-1';
+            if (label) label.innerText = strategyAnalysisCollapsed ? '展开' : '折叠';
+        }
+
+        function toggleStrategyAnalysisPanel() {
+            // 供按钮点击触发，执行折叠状态反转。
+            setStrategyAnalysisCollapsed(!strategyAnalysisCollapsed);
+        }
+
         async function openStrategyCreateModal() {
             pendingGeneratedStrategy = null;
             setStrategyAnalyzeBusy(false);
+            // 每次打开弹窗都默认展开分析区，保证初次体验一致。
+            setStrategyAnalysisCollapsed(false);
             const modal = document.getElementById('strategy-create-modal');
             if (modal) modal.classList.remove('hidden');
             const status = document.getElementById('strategy-create-status');
