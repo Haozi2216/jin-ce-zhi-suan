@@ -4683,22 +4683,223 @@ def _extract_json_block(text: str) -> Dict[str, Any]:
     raw = str(text or "").strip()
     if not raw:
         return {}
+    # 兼容 LLM 常见输出：```json ... ``` 代码块包裹。
+    fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", raw, flags=re.IGNORECASE)
+    if fence_match:
+        fenced = str(fence_match.group(1) or "").strip()
+        try:
+            obj = json.loads(fenced)
+            if isinstance(obj, dict):
+                return obj
+        except Exception:
+            pass
     try:
         obj = json.loads(raw)
         if isinstance(obj, dict):
             return obj
     except Exception:
         pass
-    m = re.search(r"\{[\s\S]*\}", raw)
-    if not m:
+    # 使用括号平衡提取首个 JSON 对象，避免贪婪正则误吞后续文本。
+    start_idx = raw.find("{")
+    if start_idx < 0:
         return {}
+    depth = 0
+    in_string = False
+    escaped = False
+    end_idx = -1
+    for idx, ch in enumerate(raw[start_idx:], start=start_idx):
+        if in_string:
+            if escaped:
+                escaped = False
+                continue
+            if ch == "\\":
+                escaped = True
+                continue
+            if ch == "\"":
+                in_string = False
+            continue
+        if ch == "\"":
+            in_string = True
+            continue
+        if ch == "{":
+            depth += 1
+            continue
+        if ch == "}":
+            depth -= 1
+            if depth == 0:
+                end_idx = idx
+                break
+    if end_idx < 0:
+        return {}
+    candidate = raw[start_idx:end_idx + 1].strip()
     try:
-        obj = json.loads(m.group(0))
+        obj = json.loads(candidate)
         if isinstance(obj, dict):
             return obj
         return {}
     except Exception:
         return {}
+
+
+def _extract_ai_review_summary_loose(text: str) -> Dict[str, Any]:
+    # 宽松提取：兼容“看起来像 JSON 但不完全合法”的模型输出，优先保障摘要可展示。
+    raw = str(text or "").strip()
+    if not raw:
+        return {}
+
+    def _pick_str(pattern: str) -> str:
+        m = re.search(pattern, raw, flags=re.IGNORECASE | re.DOTALL)
+        if not m:
+            return ""
+        return str(m.group(1) or "").strip()
+
+    def _pick_num(pattern: str):
+        m = re.search(pattern, raw, flags=re.IGNORECASE)
+        if not m:
+            return None
+        try:
+            return float(m.group(1))
+        except Exception:
+            return None
+
+    def _pick_array_items(field_name: str) -> List[str]:
+        # 先截取目标数组体，再提取其中的双引号字符串项。
+        m = re.search(rf"\"{field_name}\"\s*:\s*\[([\s\S]*?)\]", raw, flags=re.IGNORECASE)
+        if not m:
+            return []
+        body = str(m.group(1) or "")
+        items = re.findall(r"\"((?:\\.|[^\"])*)\"", body)
+        out: List[str] = []
+        for it in items:
+            txt = str(it or "").replace("\\n", " ").replace("\\\"", "\"").strip()
+            if txt:
+                out.append(txt)
+        return out
+
+    loose = {
+        "source": "llm_loose_parse",
+        "title": _pick_str(r"\"title\"\s*:\s*\"([\s\S]*?)\""),
+        "verdict": _pick_str(r"\"verdict\"\s*:\s*\"([\s\S]*?)\""),
+        "score": _pick_num(r"\"score\"\s*:\s*(-?\d+(?:\.\d+)?)"),
+        "highlights": _pick_array_items("highlights"),
+        "risks": _pick_array_items("risks"),
+        "buy_points": [],
+        "sell_points": [],
+        "parameter_suggestions": [],
+        "next_experiments": [],
+    }
+    return _normalize_ai_review_summary(loose)
+
+
+def _split_leading_braced_block(text: str) -> tuple[str, str]:
+    # 拆分前置大括号块与剩余正文，允许前置块不是严格 JSON（用于去掉“原文里的 JSON 头”）。
+    raw = str(text or "").strip()
+    if not raw or not raw.startswith("{"):
+        return "", raw
+    depth = 0
+    in_string = False
+    escaped = False
+    end_idx = -1
+    for idx, ch in enumerate(raw):
+        if in_string:
+            if escaped:
+                escaped = False
+                continue
+            if ch == "\\":
+                escaped = True
+                continue
+            if ch == "\"":
+                in_string = False
+            continue
+        if ch == "\"":
+            in_string = True
+            continue
+        if ch == "{":
+            depth += 1
+            continue
+        if ch == "}":
+            depth -= 1
+            if depth == 0:
+                end_idx = idx
+                break
+    if end_idx < 0:
+        return "", raw
+    head = raw[:end_idx + 1].strip()
+    tail = raw[end_idx + 1:].strip()
+    return head, tail
+
+
+def _build_ai_markdown_from_summary(summary: Dict[str, Any]) -> str:
+    # 当模型只返回 JSON 时，按既定六段模板生成可读 Markdown，避免前端看到整段 JSON。
+    s = _normalize_ai_review_summary(summary if isinstance(summary, dict) else {})
+    title = str(s.get("title", "") or "本轮复盘已生成结构化结论。").strip()
+    highlights = s.get("highlights") if isinstance(s.get("highlights"), list) else []
+    risks = s.get("risks") if isinstance(s.get("risks"), list) else []
+    buy_points = s.get("buy_points") if isinstance(s.get("buy_points"), list) else []
+    sell_points = s.get("sell_points") if isinstance(s.get("sell_points"), list) else []
+    params = s.get("parameter_suggestions") if isinstance(s.get("parameter_suggestions"), list) else []
+    exps = s.get("next_experiments") if isinstance(s.get("next_experiments"), list) else []
+
+    def _fmt_list(items: List[str], empty_text: str) -> List[str]:
+        out = [f"- {str(x or '').strip()}" for x in items if str(x or "").strip()]
+        return out if out else [empty_text]
+
+    def _fmt_points(items: List[Dict[str, Any]], empty_text: str) -> List[str]:
+        out = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            dt = str(item.get("dt", "") or "--").strip()
+            reason = str(item.get("reason", "") or item.get("signal_logic", "") or "--").strip()
+            logic = str(item.get("signal_logic", "") or "--").strip()
+            out.append(f"- {dt}｜{reason}｜逻辑：{logic}")
+        return out if out else [empty_text]
+
+    def _fmt_params(items: List[Dict[str, Any]], empty_text: str) -> List[str]:
+        out = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name", "") or "--").strip()
+            suggested = str(item.get("suggested", "") or "--").strip()
+            why = str(item.get("why", "") or "--").strip()
+            out.append(f"- {name}：{suggested}（原因：{why}）")
+        return out if out else [empty_text]
+
+    def _fmt_exps(items: List[Dict[str, Any]], empty_text: str) -> List[str]:
+        out = []
+        for idx, item in enumerate(items, start=1):
+            if not isinstance(item, dict):
+                continue
+            label = str(item.get("label", "") or f"方案{idx}").strip()
+            expectation = str(item.get("expectation", "") or "--").strip()
+            params_text = json.dumps(item.get("params") if isinstance(item.get("params"), dict) else {}, ensure_ascii=False)
+            out.append(f"- {label}：参数={params_text}；预期={expectation}")
+        return out if out else [empty_text]
+
+    lines = [
+        "## 1) 核心结论",
+        title,
+        "",
+        "## 2) 关键问题",
+        *_fmt_list(highlights, "本周期无关键问题。"),
+        "",
+        "## 3) 基于交易明细的硅基节点分析",
+        *_fmt_points(buy_points, "本周期无该类交易节点。"),
+        "",
+        "## 4) 基于交易明细的流码节点分析",
+        *_fmt_points(sell_points, "本周期无该类交易节点。"),
+        "",
+        "## 5) 参数优化建议",
+        *_fmt_params(params, "本周期暂无参数建议。"),
+        "",
+        "## 6) 下一轮实验方案",
+        *_fmt_exps(exps, "本周期暂无实验方案。"),
+        "",
+        "### 风险补充",
+        *_fmt_list(risks, "暂无额外风险提示。"),
+    ]
+    return "\n".join(lines).strip()
 
 
 def _split_llm_json_and_markdown(text: str) -> tuple[Dict[str, Any], str]:
@@ -4773,27 +4974,182 @@ def _parse_key_value_items(text: str) -> list[Dict[str, Any]]:
     return items
 
 
+def _pick_first_non_empty(data: Dict[str, Any], keys: list[str], default: Any = "") -> Any:
+    # 从多个候选键中选择第一个非空值，兼容不同模型的字段命名。
+    for key in keys:
+        if key not in data:
+            continue
+        value = data.get(key)
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        if isinstance(value, (list, tuple, set, dict)) and not value:
+            continue
+        return value
+    return default
+
+
+def _normalize_text_list(value: Any) -> list[str]:
+    # 统一把字符串/数组转换成字符串数组，避免前端因类型不一致出现空展示。
+    if isinstance(value, str):
+        return [value.strip()] if value.strip() else []
+    if not isinstance(value, list):
+        return []
+    out = []
+    for item in value:
+        text = str(item or "").strip()
+        if text:
+            out.append(text)
+    return out
+
+
+def _normalize_point_items(value: Any, fallback_role: str) -> list[Dict[str, Any]]:
+    # 交易节点兼容：允许 dict 或 string，两者都归一到统一结构。
+    if not isinstance(value, list):
+        return []
+    out: list[Dict[str, Any]] = []
+    for item in value:
+        if isinstance(item, dict):
+            row = {
+                "dt": str(item.get("dt", "") or item.get("time", "") or "").strip(),
+                "reason": str(item.get("reason", "") or item.get("核心依据", "") or item.get("说明", "") or "").strip(),
+                "signal_logic": str(item.get("signal_logic", "") or item.get("logic", "") or item.get("信号逻辑", "") or "").strip(),
+                "role": str(item.get("role", "") or fallback_role).strip(),
+            }
+            if any(str(v or "").strip() for v in row.values()):
+                out.append(row)
+            continue
+        text = str(item or "").strip()
+        if text:
+            out.append({
+                "dt": "",
+                "reason": text,
+                "signal_logic": text,
+                "role": fallback_role,
+            })
+    return out
+
+
+def _normalize_parameter_suggestions(value: Any) -> list[Dict[str, Any]]:
+    # 参数建议兼容：支持 dict、string（例如“ATR周期：14”）。
+    if not isinstance(value, list):
+        return []
+    out: list[Dict[str, Any]] = []
+    for item in value:
+        if isinstance(item, dict):
+            row = {
+                "name": str(item.get("name", "") or item.get("参数名", "") or "").strip(),
+                "suggested": str(item.get("suggested", "") or item.get("建议值", "") or "").strip(),
+                "why": str(item.get("why", "") or item.get("原因", "") or "").strip(),
+            }
+            if row["name"] or row["suggested"] or row["why"]:
+                out.append(row)
+            continue
+        text = str(item or "").strip()
+        if not text:
+            continue
+        kv = _parse_key_value_items(text)
+        if kv:
+            out.extend(kv)
+        else:
+            out.append({"name": text, "suggested": text, "why": text})
+    return out
+
+
+def _normalize_next_experiments(value: Any) -> list[Dict[str, Any]]:
+    # 下一轮实验兼容：允许 dict 或 string，统一输出 label/params/expectation。
+    if not isinstance(value, list):
+        return []
+    out: list[Dict[str, Any]] = []
+    for idx, item in enumerate(value, start=1):
+        if isinstance(item, dict):
+            row = {
+                "label": str(item.get("label", "") or item.get("方案", "") or f"方案{idx}").strip(),
+                "params": item.get("params") if isinstance(item.get("params"), dict) else {},
+                "expectation": str(item.get("expectation", "") or item.get("预期", "") or item.get("说明", "") or "").strip(),
+            }
+            if row["label"] or row["params"] or row["expectation"]:
+                out.append(row)
+            continue
+        text = str(item or "").strip()
+        if text:
+            out.append({"label": f"方案{idx}", "params": {}, "expectation": text})
+    return out
+
+
 def _normalize_ai_review_summary(raw: Dict[str, Any]) -> Dict[str, Any]:
     data = raw if isinstance(raw, dict) else {}
-    title = str(data.get("title", "") or data.get("summary", "") or data.get("core_conclusion", "") or "").strip()
-    verdict = str(data.get("verdict", "") or data.get("stance", "") or "neutral").strip().lower() or "neutral"
-    score = data.get("score")
+    # 兼容模型把摘要包在 summary/analysis_summary/structured_summary 等子对象中的场景。
+    nested = _pick_first_non_empty(data, ["summary", "analysis_summary", "structured_summary", "structured", "result"], {})
+    if isinstance(nested, dict):
+        merged = dict(data)
+        merged.update(nested)
+        data = merged
+    title = str(_pick_first_non_empty(data, ["title", "summary", "core_conclusion", "核心结论", "结论"], "")).strip()
+    verdict = str(_pick_first_non_empty(data, ["verdict", "stance", "判断", "结论倾向"], "neutral")).strip().lower() or "neutral"
+    score = _pick_first_non_empty(data, ["score", "评分", "总分"], None)
     try:
         score_value = max(0.0, min(100.0, float(score))) if score is not None else None
     except Exception:
         score_value = None
+    highlights = _normalize_text_list(_pick_first_non_empty(data, ["highlights", "key_issues", "关键问题", "亮点"], []))
+    risks = _normalize_text_list(_pick_first_non_empty(data, ["risks", "风险", "主要风险"], []))
+    buy_points = _normalize_point_items(_pick_first_non_empty(data, ["buy_points", "buy_nodes", "硅基节点", "买点分析"], []), "buy")
+    sell_points = _normalize_point_items(_pick_first_non_empty(data, ["sell_points", "sell_nodes", "流码节点", "卖点分析"], []), "sell")
+    parameter_suggestions = _normalize_parameter_suggestions(_pick_first_non_empty(data, ["parameter_suggestions", "参数优化建议", "参数建议"], []))
+    next_experiments = _normalize_next_experiments(_pick_first_non_empty(data, ["next_experiments", "下一轮实验方案", "实验方案"], []))
     return {
         "schema_version": AI_REVIEW_SUMMARY_SCHEMA_VERSION,
-        "source": str(data.get("source", "llm_json") or "llm_json"),
+        "source": str(_pick_first_non_empty(data, ["source"], "llm_json") or "llm_json"),
         "title": title,
         "verdict": verdict,
         "score": score_value,
-        "highlights": [str(x or "").strip() for x in (data.get("highlights") or data.get("key_issues") or []) if str(x or "").strip()],
-        "risks": [str(x or "").strip() for x in (data.get("risks") or []) if str(x or "").strip()],
-        "buy_points": [x for x in (data.get("buy_points") or []) if isinstance(x, dict)],
-        "sell_points": [x for x in (data.get("sell_points") or []) if isinstance(x, dict)],
-        "parameter_suggestions": [x for x in (data.get("parameter_suggestions") or []) if isinstance(x, dict)],
-        "next_experiments": [x for x in (data.get("next_experiments") or []) if isinstance(x, dict)],
+        "highlights": highlights,
+        "risks": risks,
+        "buy_points": buy_points,
+        "sell_points": sell_points,
+        "parameter_suggestions": parameter_suggestions,
+        "next_experiments": next_experiments,
+    }
+
+
+def _ai_review_summary_is_meaningful(summary: Dict[str, Any]) -> bool:
+    # 判断 AI 结构化摘要是否有效，避免空壳摘要（只有 source 无内容）长期污染缓存展示。
+    s = summary if isinstance(summary, dict) else {}
+    title = str(s.get("title", "") or s.get("核心结论", "") or "").strip()
+    score = s.get("score", s.get("评分"))
+    highlights = s.get("highlights", s.get("关键问题"))
+    risks = s.get("risks", s.get("主要风险"))
+    buy_points = s.get("buy_points", s.get("硅基节点分析"))
+    sell_points = s.get("sell_points", s.get("流码节点分析"))
+    params = s.get("parameter_suggestions", s.get("参数优化建议"))
+    experiments = s.get("next_experiments", s.get("下一轮实验方案"))
+    if title:
+        return True
+    if score is not None and str(score).strip() != "":
+        return True
+    for value in (highlights, risks, buy_points, sell_points, params, experiments):
+        if isinstance(value, list) and len(value) > 0:
+            return True
+    return False
+
+
+def _localize_ai_review_summary(summary: Dict[str, Any]) -> Dict[str, Any]:
+    # 前端展示用：把 AI 结构化摘要字段标签统一转换为中文，便于直接渲染。
+    data = summary if isinstance(summary, dict) else {}
+    return {
+        "结构版本": data.get("schema_version"),
+        "来源": data.get("source"),
+        "核心结论": data.get("title"),
+        "结论倾向": data.get("verdict"),
+        "评分": data.get("score"),
+        "关键问题": data.get("highlights"),
+        "主要风险": data.get("risks"),
+        "硅基节点分析": data.get("buy_points"),
+        "流码节点分析": data.get("sell_points"),
+        "参数优化建议": data.get("parameter_suggestions"),
+        "下一轮实验方案": data.get("next_experiments"),
     }
 
 
@@ -4909,10 +5265,25 @@ def _build_ai_review_payload(report_item: Dict[str, Any], report_id: str) -> Dic
     rid = str(report_id or "").strip()
     text = (str(report_item.get("ai_review_text", "") or "") if int(report_item.get("ai_review_version", 0) or 0) == AI_REVIEW_SCHEMA_VERSION else "") or str(report_ai_review_cache.get(rid, "") or "")
     summary = _read_review_summary(report_item, report_ai_review_cache, rid, "ai_review_summary", "ai_review_summary_version", AI_REVIEW_SUMMARY_SCHEMA_VERSION, _parse_ai_review_summary_from_markdown)
+    # 若命中的是历史空壳摘要，则从原始复盘正文重新提取 JSON 并重建，保障页面可展示。
+    if (not _ai_review_summary_is_meaningful(summary)) and text:
+        parsed_from_text = _extract_json_block(text)
+        rebuilt = _normalize_ai_review_summary({**parsed_from_text, "source": "llm_json"} if isinstance(parsed_from_text, dict) else {})
+        if not _ai_review_summary_is_meaningful(rebuilt):
+            rebuilt = _extract_ai_review_summary_loose(text)
+        if (not _ai_review_summary_is_meaningful(rebuilt)) and text:
+            rebuilt = _parse_ai_review_summary_from_markdown(text)
+        if _ai_review_summary_is_meaningful(rebuilt):
+            summary = rebuilt
+            report_ai_review_cache[f"{rid}__summary"] = summary
+            report_ai_review_cache[f"{rid}__summary_v"] = AI_REVIEW_SUMMARY_SCHEMA_VERSION
+    # 对外返回中文标签版本，同时保留 raw 字段确保兼容老逻辑。
+    summary_localized = _localize_ai_review_summary(summary)
     return {
         "ai_review_text": str(text or ""),
         "ai_review_version": int(report_item.get("ai_review_version", 0) or 0),
-        "ai_review_summary": summary,
+        "ai_review_summary": summary_localized,
+        "ai_review_summary_raw": summary,
         "ai_review_summary_version": int(report_item.get("ai_review_summary_version", 0) or (AI_REVIEW_SUMMARY_SCHEMA_VERSION if summary else 0)),
     }
 
@@ -6967,9 +7338,25 @@ def _build_ai_report_review(report_item):
         normalized = _normalize_ai_review_summary({**parsed, "source": "llm_json"} if isinstance(parsed, dict) else {})
         if not markdown:
             markdown = content
+        # 兼容“仅返回 JSON 原文”场景：优先从 markdown 再提取一次 JSON。
+        if not normalized.get("title") and markdown:
+            parsed_from_markdown = _extract_json_block(markdown)
+            if isinstance(parsed_from_markdown, dict) and parsed_from_markdown:
+                normalized = _normalize_ai_review_summary({**parsed_from_markdown, "source": "llm_json"})
+        # 兜底：当 JSON 轻微不合法时，使用宽松提取保证核心摘要字段可用。
+        if not normalized.get("title") and markdown:
+            normalized = _extract_ai_review_summary_loose(markdown)
         if not normalized.get("title") and markdown:
             normalized = _parse_ai_review_summary_from_markdown(markdown)
-        return {"markdown": str(markdown or "").strip(), "summary": normalized if isinstance(normalized, dict) else {}}
+        # 清理前置 JSON 头：避免“AI原文”区域出现整段 JSON 噪声。
+        _, markdown_tail = _split_leading_braced_block(markdown)
+        markdown_clean = re.sub(r"^\s*---+\s*", "", str(markdown_tail or "").strip())
+        # 若正文为空，则根据结构化摘要回填标准 Markdown，确保前端渲染稳定。
+        if not markdown_clean and _ai_review_summary_is_meaningful(normalized):
+            markdown_clean = _build_ai_markdown_from_summary(normalized)
+        if not markdown_clean:
+            markdown_clean = str(markdown or "").strip()
+        return {"markdown": markdown_clean, "summary": normalized if isinstance(normalized, dict) else {}}
     except Exception as e:
         logger.error(f"ai_review llm call failed url={url} model={model_name} err={e}", exc_info=True)
         return {"markdown": "", "summary": {}}
@@ -7112,7 +7499,8 @@ async def api_report_ai_review(report_id: str, force: bool = False):
                 cached_ver = int(report_ai_review_cache.get(f"{rid}__v", 0) or 0)
                 cached_summary = report_ai_review_cache.get(f"{rid}__summary")
                 if cached and cached_ver == AI_REVIEW_SCHEMA_VERSION:
-                    return {"status": "success", "report_id": report_id, "analysis": cached, "analysis_summary": cached_summary if isinstance(cached_summary, dict) else {}, "cached": True}
+                    raw_summary = cached_summary if isinstance(cached_summary, dict) else {}
+                    return {"status": "success", "report_id": report_id, "analysis": cached, "analysis_summary": _localize_ai_review_summary(raw_summary), "analysis_summary_raw": raw_summary, "cached": True}
                 cached = str(r.get("ai_review_text", "") or "").strip()
                 persisted_ver = int(r.get("ai_review_version", 0) or 0)
                 if cached and persisted_ver == AI_REVIEW_SCHEMA_VERSION:
@@ -7120,7 +7508,8 @@ async def api_report_ai_review(report_id: str, force: bool = False):
                     report_ai_review_cache[f"{rid}__v"] = AI_REVIEW_SCHEMA_VERSION
                     report_ai_review_cache[f"{rid}__summary"] = r.get("ai_review_summary") if isinstance(r.get("ai_review_summary"), dict) else {}
                     report_ai_review_cache[f"{rid}__summary_v"] = int(r.get("ai_review_summary_version", 0) or 0)
-                    return {"status": "success", "report_id": report_id, "analysis": cached, "analysis_summary": report_ai_review_cache.get(f"{rid}__summary") if isinstance(report_ai_review_cache.get(f"{rid}__summary"), dict) else {}, "cached": True}
+                    raw_summary = report_ai_review_cache.get(f"{rid}__summary") if isinstance(report_ai_review_cache.get(f"{rid}__summary"), dict) else {}
+                    return {"status": "success", "report_id": report_id, "analysis": cached, "analysis_summary": _localize_ai_review_summary(raw_summary), "analysis_summary_raw": raw_summary, "cached": True}
             cfg = ConfigLoader.reload()
             missing = []
             if not str(cfg.get("data_provider.llm_api_url", "") or "").strip():
@@ -7143,7 +7532,7 @@ async def api_report_ai_review(report_id: str, force: bool = False):
             report_ai_review_cache[f"{rid}__summary"] = analysis_summary
             report_ai_review_cache[f"{rid}__summary_v"] = AI_REVIEW_SUMMARY_SCHEMA_VERSION if analysis_summary else 0
             persist_report_history()
-            return {"status": "success", "report_id": report_id, "analysis": analysis, "analysis_summary": analysis_summary, "cached": False}
+            return {"status": "success", "report_id": report_id, "analysis": analysis, "analysis_summary": _localize_ai_review_summary(analysis_summary), "analysis_summary_raw": analysis_summary, "cached": False}
         return {"status": "error", "msg": "report not found"}
     except Exception as e:
         logger.error(f"/api/report/{report_id}/ai_review failed: {e}", exc_info=True)

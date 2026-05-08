@@ -8,6 +8,8 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Markdown 渲染库：用于把 AI 原文中的 #、列表等语法渲染为可读格式。 -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <style>
         @keyframes fadeSlideIn {
             from { opacity: 0; transform: translateY(8px); }
@@ -15,6 +17,44 @@
         }
         .enter-anim {
             animation: fadeSlideIn .22s ease-out;
+        }
+        /* AI 原文 Markdown 的暗色主题排版，避免出现“井号原样显示”的阅读问题。 */
+        .report-markdown h1, .report-markdown h2, .report-markdown h3, .report-markdown h4 {
+            color: #f8fafc;
+            font-weight: 700;
+            margin-top: 0.8rem;
+            margin-bottom: 0.45rem;
+        }
+        .report-markdown h1 { font-size: 1.2rem; }
+        .report-markdown h2 { font-size: 1.08rem; }
+        .report-markdown h3 { font-size: 1rem; }
+        .report-markdown p {
+            color: #e2e8f0;
+            margin: 0.35rem 0;
+            line-height: 1.75;
+        }
+        .report-markdown ul, .report-markdown ol {
+            margin: 0.4rem 0 0.5rem 1.15rem;
+            color: #e2e8f0;
+        }
+        .report-markdown li {
+            margin: 0.2rem 0;
+            line-height: 1.7;
+        }
+        .report-markdown code {
+            color: #c4b5fd;
+            background: rgba(15, 23, 42, 0.7);
+            border: 1px solid rgba(100, 116, 139, 0.35);
+            border-radius: 0.25rem;
+            padding: 0.08rem 0.32rem;
+        }
+        .report-markdown pre {
+            background: rgba(2, 6, 23, 0.8);
+            border: 1px solid rgba(71, 85, 105, 0.5);
+            border-radius: 0.4rem;
+            padding: 0.55rem 0.7rem;
+            overflow: auto;
+            color: #e2e8f0;
         }
     </style>
 </head>
@@ -173,11 +213,12 @@
         }
 
         function renderMarkdownHtml(mdText) {
+            // 统一渲染 Markdown：优先使用 marked，回退为 pre 文本，保证内容总可读。
             const src = String(mdText || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
             if (window.marked && typeof window.marked.parse === 'function') {
-                return window.marked.parse(src);
+                return `<div class="report-markdown">${window.marked.parse(src)}</div>`;
             }
-            return `<pre class="whitespace-pre-wrap text-sm leading-7 text-slate-200">${src}</pre>`;
+            return `<pre class="report-markdown whitespace-pre-wrap text-sm leading-7 text-slate-200">${src}</pre>`;
         }
 
         function renderFundamentalReadonly(profile = null) {
@@ -253,19 +294,248 @@
         }
 
         function normalizeAiReviewSummary(summary = {}) {
+            // 兼容后端返回中英文键名（含 *_raw 与本地化键），避免结构化摘要空白。
             const src = (summary && typeof summary === 'object') ? summary : {};
-            return {
-                title: String(src.title || '').trim(),
-                verdict: String(src.verdict || '').trim(),
-                score: src.score,
-                highlights: Array.isArray(src.highlights) ? src.highlights.map(x => String(x || '').trim()).filter(Boolean) : [],
-                risks: Array.isArray(src.risks) ? src.risks.map(x => String(x || '').trim()).filter(Boolean) : [],
-                buyPoints: Array.isArray(src.buy_points) ? src.buy_points.filter(x => x && typeof x === 'object') : [],
-                sellPoints: Array.isArray(src.sell_points) ? src.sell_points.filter(x => x && typeof x === 'object') : [],
-                parameterSuggestions: Array.isArray(src.parameter_suggestions) ? src.parameter_suggestions.filter(x => x && typeof x === 'object') : [],
-                nextExperiments: Array.isArray(src.next_experiments) ? src.next_experiments.filter(x => x && typeof x === 'object') : [],
-                source: String(src.source || '').trim(),
+            const pick = (keys, fallback = '') => {
+                for (const key of (Array.isArray(keys) ? keys : [])) {
+                    if (!Object.prototype.hasOwnProperty.call(src, key)) continue;
+                    const val = src[key];
+                    if (val === null || val === undefined) continue;
+                    if (typeof val === 'string' && !val.trim()) continue;
+                    return val;
+                }
+                return fallback;
             };
+            const normalizeTextList = (value) => {
+                if (typeof value === 'string') {
+                    const t = value.trim();
+                    return t ? [t] : [];
+                }
+                if (!Array.isArray(value)) return [];
+                return value.map(x => String(x || '').trim()).filter(Boolean);
+            };
+            const normalizePointList = (value) => {
+                if (!Array.isArray(value)) return [];
+                return value.map((x) => {
+                    if (x && typeof x === 'object') return x;
+                    const text = String(x || '').trim();
+                    return text ? { dt: '', reason: text, signal_logic: text } : null;
+                }).filter(Boolean);
+            };
+            const normalizeDictList = (value) => {
+                if (!Array.isArray(value)) return [];
+                return value.map((x) => {
+                    if (x && typeof x === 'object') return x;
+                    const text = String(x || '').trim();
+                    return text ? { name: text, suggested: text, why: text } : null;
+                }).filter(Boolean);
+            };
+            return {
+                title: String(pick(['title', '核心结论', '结论'], '') || '').trim(),
+                verdict: String(pick(['verdict', '结论倾向'], '') || '').trim(),
+                score: pick(['score', '评分'], null),
+                highlights: normalizeTextList(pick(['highlights', 'key_issues', '关键问题'], [])),
+                risks: normalizeTextList(pick(['risks', '主要风险'], [])),
+                buyPoints: normalizePointList(pick(['buy_points', '硅基节点分析'], [])),
+                sellPoints: normalizePointList(pick(['sell_points', '流码节点分析'], [])),
+                parameterSuggestions: normalizeDictList(pick(['parameter_suggestions', '参数优化建议'], [])),
+                nextExperiments: normalizeDictList(pick(['next_experiments', '下一轮实验方案'], [])),
+                source: String(pick(['source', '来源'], '') || '').trim(),
+            };
+        }
+
+        function extractFirstJsonObject(text = '') {
+            // 从原文中提取首个平衡 JSON 对象，兜底结构化摘要解析。
+            const raw = String(text || '').trim();
+            if (!raw) return null;
+            const start = raw.indexOf('{');
+            if (start < 0) return null;
+            let depth = 0;
+            let inStr = false;
+            let escaped = false;
+            let end = -1;
+            for (let i = start; i < raw.length; i += 1) {
+                const ch = raw[i];
+                if (inStr) {
+                    if (escaped) {
+                        escaped = false;
+                        continue;
+                    }
+                    if (ch === '\\') {
+                        escaped = true;
+                        continue;
+                    }
+                    if (ch === '"') inStr = false;
+                    continue;
+                }
+                if (ch === '"') {
+                    inStr = true;
+                    continue;
+                }
+                if (ch === '{') depth += 1;
+                else if (ch === '}') {
+                    depth -= 1;
+                    if (depth === 0) {
+                        end = i;
+                        break;
+                    }
+                }
+            }
+            if (end < 0) return null;
+            const part = raw.slice(start, end + 1);
+            try {
+                const obj = JSON.parse(part);
+                return (obj && typeof obj === 'object' && !Array.isArray(obj)) ? obj : null;
+            } catch (_) {
+                return null;
+            }
+        }
+
+        function extractAiSummaryLooseFromText(text = '') {
+            // 宽松提取：兼容“近似 JSON 但不严格合法”的原文。
+            const raw = String(text || '');
+            if (!raw.trim()) return null;
+            const pickStr = (reg) => {
+                const m = raw.match(reg);
+                return m && m[1] ? String(m[1]).trim() : '';
+            };
+            const pickNum = (reg) => {
+                const m = raw.match(reg);
+                if (!m || !m[1]) return null;
+                const n = Number(m[1]);
+                return Number.isFinite(n) ? n : null;
+            };
+            const pickArray = (fieldName) => {
+                const reg = new RegExp(`"${fieldName}"\\s*:\\s*\\[([\\s\\S]*?)\\]`, 'i');
+                const m = raw.match(reg);
+                if (!m || !m[1]) return [];
+                const body = String(m[1]);
+                const items = [];
+                const itemReg = /"((?:\\.|[^"])*)"/g;
+                let hit = null;
+                while ((hit = itemReg.exec(body)) !== null) {
+                    const v = String(hit[1] || '').replace(/\\n/g, ' ').replace(/\\"/g, '"').trim();
+                    if (v) items.push(v);
+                }
+                return items;
+            };
+            const out = {
+                title: pickStr(/"title"\s*:\s*"([\s\S]*?)"/i),
+                verdict: pickStr(/"verdict"\s*:\s*"([\s\S]*?)"/i),
+                score: pickNum(/"score"\s*:\s*(-?\d+(?:\.\d+)?)/i),
+                highlights: pickArray('highlights'),
+                risks: pickArray('risks'),
+                buy_points: [],
+                sell_points: [],
+                parameter_suggestions: [],
+                next_experiments: [],
+                source: 'llm_loose_parse',
+            };
+            const hasData = Boolean(out.title) || (typeof out.score === 'number' && Number.isFinite(out.score))
+                || out.highlights.length > 0 || out.risks.length > 0;
+            return hasData ? out : null;
+        }
+
+        function fillAiSummaryFromMarkdown(summary = {}, markdown = '') {
+            // 若后端结构化摘要不完整，尝试从 markdown 内嵌 JSON 自动补全。
+            const base = normalizeAiReviewSummary(summary);
+            const hasCore = Boolean(base.title) || (typeof base.score === 'number' && Number.isFinite(base.score))
+                || base.highlights.length > 0 || base.risks.length > 0;
+            if (hasCore) return base;
+            const parsed = extractFirstJsonObject(markdown);
+            if (parsed) return normalizeAiReviewSummary(parsed);
+            const loose = extractAiSummaryLooseFromText(markdown);
+            if (loose) return normalizeAiReviewSummary(loose);
+            return base;
+        }
+
+        function buildAiMarkdownFromSummary(summary = {}) {
+            // 前端兜底：把结构化摘要生成可读 Markdown，避免原文区域直接显示 JSON。
+            const s = normalizeAiReviewSummary(summary);
+            const lines = [];
+            const pushList = (items, emptyText) => {
+                const arr = Array.isArray(items) ? items : [];
+                const valid = arr.map(x => String(x || '').trim()).filter(Boolean);
+                if (!valid.length) {
+                    lines.push(`- ${emptyText}`);
+                    return;
+                }
+                valid.forEach(x => lines.push(`- ${x}`));
+            };
+            const pointList = (items, emptyText) => {
+                const arr = Array.isArray(items) ? items : [];
+                const valid = arr.filter(x => x && typeof x === 'object');
+                if (!valid.length) {
+                    lines.push(`- ${emptyText}`);
+                    return;
+                }
+                valid.forEach((item) => {
+                    const dt = String(item.dt || '--').trim();
+                    const reason = String(item.reason || item.signal_logic || '--').trim();
+                    const logic = String(item.signal_logic || '--').trim();
+                    lines.push(`- ${dt}｜${reason}｜逻辑：${logic}`);
+                });
+            };
+            const paramList = (items, emptyText) => {
+                const arr = Array.isArray(items) ? items : [];
+                const valid = arr.filter(x => x && typeof x === 'object');
+                if (!valid.length) {
+                    lines.push(`- ${emptyText}`);
+                    return;
+                }
+                valid.forEach((item) => {
+                    const name = String(item.name || '--').trim();
+                    const suggested = String(item.suggested || '--').trim();
+                    const why = String(item.why || '--').trim();
+                    lines.push(`- ${name}：${suggested}（原因：${why}）`);
+                });
+            };
+            const expList = (items, emptyText) => {
+                const arr = Array.isArray(items) ? items : [];
+                const valid = arr.filter(x => x && typeof x === 'object');
+                if (!valid.length) {
+                    lines.push(`- ${emptyText}`);
+                    return;
+                }
+                valid.forEach((item, idx) => {
+                    const label = String(item.label || `方案${idx + 1}`).trim();
+                    const expectation = String(item.expectation || '--').trim();
+                    const params = item.params && typeof item.params === 'object' ? JSON.stringify(item.params) : '{}';
+                    lines.push(`- ${label}：参数=${params}；预期=${expectation}`);
+                });
+            };
+
+            lines.push('## 1) 核心结论');
+            lines.push(String(s.title || '本轮复盘已生成结构化结论。'));
+            lines.push('');
+            lines.push('## 2) 关键问题');
+            pushList(s.highlights, '本周期无关键问题。');
+            lines.push('');
+            lines.push('## 3) 基于交易明细的硅基节点分析');
+            pointList(s.buyPoints, '本周期无该类交易节点。');
+            lines.push('');
+            lines.push('## 4) 基于交易明细的流码节点分析');
+            pointList(s.sellPoints, '本周期无该类交易节点。');
+            lines.push('');
+            lines.push('## 5) 参数优化建议');
+            paramList(s.parameterSuggestions, '本周期暂无参数建议。');
+            lines.push('');
+            lines.push('## 6) 下一轮实验方案');
+            expList(s.nextExperiments, '本周期暂无实验方案。');
+            lines.push('');
+            lines.push('### 风险补充');
+            pushList(s.risks, '暂无额外风险提示。');
+            return lines.join('\n').trim();
+        }
+
+        function cleanupAiMarkdown(markdown = '', summary = {}) {
+            // 若原文是 JSON 块（无 markdown 结构），则改用结构化摘要生成的 Markdown。
+            const text = String(markdown || '').trim();
+            if (!text) return '';
+            const looksJson = (text.startsWith('{') && text.includes('"title"') && text.includes('"verdict"'))
+                || (text.startsWith('```json') || text.startsWith('```JSON'));
+            if (!looksJson) return text;
+            return buildAiMarkdownFromSummary(summary);
         }
 
         function normalizeBuffettReviewSummary(summary = {}) {
@@ -288,6 +558,11 @@
         function renderAiStructuredSummaryCard(summary = {}) {
             const s = normalizeAiReviewSummary(summary);
             const scoreText = (typeof s.score === 'number' && Number.isFinite(s.score)) ? Number(s.score).toFixed(1) : '--';
+            // 显示文案本地化：把英文枚举值转换为中文。
+            const verdictMap = { positive: '正向', neutral: '中性', negative: '负向' };
+            const sourceMap = { llm_json: '模型结构化', markdown_parse: 'Markdown解析', cache: '缓存' };
+            const verdictText = verdictMap[String(s.verdict || '').trim().toLowerCase()] || String(s.verdict || '--');
+            const sourceText = sourceMap[String(s.source || '').trim().toLowerCase()] || (s.source || '--');
             const buyItems = s.buyPoints.map((item) => `${String(item.dt || '--').trim()}｜${String(item.reason || item.signal_logic || '--').trim()}`);
             const sellItems = s.sellPoints.map((item) => `${String(item.dt || '--').trim()}｜${String(item.reason || item.signal_logic || '--').trim()}`);
             const paramItems = s.parameterSuggestions.map((item) => `${String(item.name || '--').trim()} → ${String(item.suggested || '--').trim()}${String(item.why || '').trim() ? `（${String(item.why || '').trim()}）` : ''}`);
@@ -295,13 +570,13 @@
             const metricsHtml = renderReviewMetricGrid([
                 { label: '核心结论', value: s.title || '--' },
                 { label: '综合评分', value: scoreText },
-                { label: '结构来源', value: s.source || '--' },
+                { label: '结构来源', value: sourceText },
             ]);
             return `
                 <div class="rounded border border-violet-500/20 bg-violet-500/5 px-3 py-3 mb-3">
                     <div class="flex items-center gap-2 flex-wrap mb-2">
                         <div class="text-sm font-semibold text-white">AI结构化摘要</div>
-                        ${renderReviewVerdictBadge(s.verdict, 'ai')}
+                        ${renderReviewVerdictBadge(verdictText, 'ai')}
                     </div>
                     ${metricsHtml}
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
@@ -352,17 +627,19 @@
             const error = String(opts.error || '').trim();
             const cached = Boolean(opts.cached);
             const summary = (opts.summary && typeof opts.summary === 'object') ? opts.summary : null;
+            const effectiveSummary = fillAiSummaryFromMarkdown(summary || {}, markdown || '');
+            const cleanedMarkdown = cleanupAiMarkdown(markdown, effectiveSummary);
             if (loading) {
                 card.classList.remove('hidden');
                 card.innerHTML = '<div class="text-sm text-slate-300"><i class="fa-solid fa-spinner fa-spin mr-2"></i>AI复盘生成中...</div>';
                 return;
             }
-            if (markdown || summary) {
+            if (cleanedMarkdown || summary) {
                 card.classList.remove('hidden');
                 card.innerHTML = `
                     <div class="text-lg font-semibold text-white mb-2">AI复盘分析 ${cached ? '<span class="text-xs text-slate-500">(缓存)</span>' : ''}</div>
-                    ${summary ? renderAiStructuredSummaryCard(summary) : ''}
-                    ${markdown ? `<div class="text-sm leading-7 text-slate-200">${renderMarkdownHtml(markdown)}</div>` : '<div class="text-slate-500 text-sm">暂无复盘正文</div>'}
+                    ${effectiveSummary ? renderAiStructuredSummaryCard(effectiveSummary) : ''}
+                    ${cleanedMarkdown ? `<div class="text-sm leading-7 text-slate-200">${renderMarkdownHtml(cleanedMarkdown)}</div>` : '<div class="text-slate-500 text-sm">暂无复盘正文</div>'}
                 `;
                 return;
             }
@@ -488,7 +765,10 @@
                 renderFundamentalReadonly(data.fundamental_profile || null);
                 if (!aiReviewLoading || aiReviewLoadingReportId !== currentReportId) {
                     const cached = String(data.ai_review_text || '').trim();
-                    const summary = (data.ai_review_summary && typeof data.ai_review_summary === 'object') ? data.ai_review_summary : null;
+                    // 优先使用 raw 结构，回退到本地化结构，确保不同版本后端都可展示。
+                    const summary = (data.ai_review_summary_raw && typeof data.ai_review_summary_raw === 'object')
+                        ? data.ai_review_summary_raw
+                        : ((data.ai_review_summary && typeof data.ai_review_summary === 'object') ? data.ai_review_summary : null);
                     if (cached || summary) {
                         setAiReviewState(currentReportId, { markdown: cached, summary, error: '', cached: true, loading: false });
                     }
@@ -946,7 +1226,10 @@
                 const data = await res.json();
                 if (data.status !== 'success') throw new Error(data.msg || '生成失败');
                 const md = String(data.analysis || '').trim() || '暂无复盘内容';
-                const summary = (data.analysis_summary && typeof data.analysis_summary === 'object') ? data.analysis_summary : null;
+                // 优先使用 raw 结构，兼容后端已本地化的 analysis_summary。
+                const summary = (data.analysis_summary_raw && typeof data.analysis_summary_raw === 'object')
+                    ? data.analysis_summary_raw
+                    : ((data.analysis_summary && typeof data.analysis_summary === 'object') ? data.analysis_summary : null);
                 setAiReviewState(rid, { loading: false, markdown: md, summary, error: '', cached: Boolean(data.cached) });
                 if (String(currentReportId || '') === rid) {
                     renderAiReviewCard(getAiReviewState(rid));
