@@ -13,11 +13,14 @@ import re
 import time
 import urllib.request
 import urllib.error
+from urllib.parse import urlparse
 import io
 import subprocess
 import threading
 import uuid
 import signal
+import socket
+import ssl
 from contextlib import asynccontextmanager
 from collections import deque
 import pandas as pd
@@ -1793,6 +1796,223 @@ def _check_provider_connectivity_for_code(provider, provider_source: str, stock_
     except Exception as e:
         return False, str(e)
 
+def _normalize_onboarding_error_text(raw: Any, max_len: int = 1200) -> str:
+    # 统一规整错误文本，避免空值和超长文案影响前端显示。
+    txt = str(raw or "").strip()
+    if not txt:
+        return ""
+    if len(txt) <= max_len:
+        return txt
+    return txt[:max_len] + "...(truncated)"
+
+def _match_onboarding_error_sop(detail: str, source: str) -> Dict[str, Any]:
+    # 错误知识库映射：把常见异常映射成标准修复SOP，便于运营化与新手自助修复。
+    txt = _normalize_onboarding_error_text(detail).lower()
+    src = str(source or "default").strip().lower()
+    catalog: List[Dict[str, Any]] = [
+        {
+            "code": "NET_TLS_EOF",
+            "title": "TLS握手中断（网络链路不稳定）",
+            "patterns": ["unexpected eof while reading", "eof occurred in violation of protocol", "ssl"],
+            "steps": [
+                "检查是否开启了代理/VPN，优先临时关闭后重试。",
+                "检查当前网络与 DNS 设置是否可访问目标数据源域名。",
+                "若 TLS 仍失败，尝试更换网络出口（如手机热点）再测试。"
+            ]
+        },
+        {
+            "code": "NET_MAX_RETRIES",
+            "title": "目标地址不可达（重试耗尽）",
+            "patterns": ["max retries exceeded", "failed to establish a new connection", "name or service not known"],
+            "steps": [
+                "确认 default_api_url 或 tushare_api_url 配置无误。",
+                "优先排查 DNS 解析是否失败（可通过系统命令行检查域名解析）。",
+                "若 DNS 失败，切换 DNS 或网络环境后重试。"
+            ]
+        },
+        {
+            "code": "AUTH_INVALID",
+            "title": "认证失败（Key/Token无效）",
+            "patterns": ["401", "403", "unauthorized", "forbidden", "invalid token", "token invalid", "api key"],
+            "steps": [
+                "打开配置中心检查 default_api_key / tushare_token 是否为空或过期。",
+                "确认私有配置文件已保存（private_config_path）。",
+                "保存配置后等待自动重试，或手动点击“开始环境检查”。"
+            ]
+        },
+        {
+            "code": "NET_TIMEOUT",
+            "title": "请求超时（服务慢或网络抖动）",
+            "patterns": ["timeout", "timed out"],
+            "steps": [
+                "先检查网络连通性，确认 TCP/TLS 是否可达。",
+                "若网络正常，稍后重试并观察是否偶发。",
+                "可切换到本地数据源（PostgreSQL/TDX）作为兜底。"
+            ]
+        },
+        {
+            "code": "DUCKDB_PATH_INVALID",
+            "title": "DuckDB 文件路径不可用",
+            "patterns": ["duckdb", "no such file", "cannot open file", "io error"],
+            "steps": [
+                "打开配置中心确认 data_provider.source=duckdb。",
+                "检查 data_provider.duckdb_path 文件是否存在且有读取权限。",
+                "若路径含中文或空格，建议改用绝对路径并重试。"
+            ]
+        },
+        {
+            "code": "DUCKDB_TABLE_MISSING",
+            "title": "DuckDB 表名配置不匹配",
+            "patterns": ["catalog error", "table", "does not exist"],
+            "steps": [
+                "核对 duckdb_table_day / duckdb_table_1min 等表名配置。",
+                "确认 DuckDB 文件内确实存在对应表。",
+                "保存配置后重新执行环境检查。"
+            ]
+        },
+        {
+            "code": "DUCKDB_LOCKED",
+            "title": "DuckDB 文件被占用",
+            "patterns": ["database is locked", "lock"],
+            "steps": [
+                "关闭占用 DuckDB 文件的其它进程或工具。",
+                "确认当前账号对 DuckDB 文件有读写权限。",
+                "稍后重试环境检查。"
+            ]
+        },
+    ]
+    for item in catalog:
+        patterns = item.get("patterns") or []
+        if any(p in txt for p in patterns):
+            return {
+                "code": str(item.get("code") or "UNKNOWN"),
+                "title": str(item.get("title") or "未知错误"),
+                "steps": list(item.get("steps") or []),
+                "source": src
+            }
+    # 兜底SOP：避免前端出现“只有报错，没有动作”。
+    return {
+        "code": "UNKNOWN",
+        "title": "未归类错误",
+        "steps": [
+            "先执行“网络诊断”获得 DNS/TCP/TLS 结论。",
+            "复制失败详情并发送给 AI/同事协助定位。",
+            "确认配置保存后，触发一次环境检查重试。"
+        ],
+        "source": src
+    }
+
+def _resolve_onboarding_network_target(source: str, cfg) -> Dict[str, Any]:
+    # 按数据源推导网络诊断目标地址，避免让新手手工输入 host/port。
+    src = str(source or "default").strip().lower()
+    raw_url = ""
+    if src == "default":
+        raw_url = str(cfg.get("data_provider.default_api_url", "") or "").strip()
+    elif src == "tushare":
+        # tushare_api_url 为空时使用公共默认地址兜底。
+        raw_url = str(cfg.get("data_provider.tushare_api_url", "https://api.tushare.pro") or "").strip()
+    else:
+        # 本地源默认不做外网诊断，返回空目标即可。
+        return {"source": src, "url": "", "host": "", "port": 0, "scheme": ""}
+    if not raw_url:
+        return {"source": src, "url": "", "host": "", "port": 0, "scheme": ""}
+    parsed = urlparse(raw_url)
+    scheme = str(parsed.scheme or "https").strip().lower()
+    host = str(parsed.hostname or "").strip()
+    if not host:
+        return {"source": src, "url": raw_url, "host": "", "port": 0, "scheme": scheme}
+    port = int(parsed.port or (443 if scheme == "https" else 80))
+    return {"source": src, "url": raw_url, "host": host, "port": port, "scheme": scheme}
+
+def _run_onboarding_network_diag_sync(source: str, cfg) -> Dict[str, Any]:
+    # 网络诊断主流程：顺序执行 DNS -> TCP -> TLS，并给出可解释结论。
+    target = _resolve_onboarding_network_target(source, cfg)
+    src = str(target.get("source") or "default")
+    host = str(target.get("host") or "")
+    port = int(target.get("port") or 0)
+    scheme = str(target.get("scheme") or "")
+    checks: List[Dict[str, Any]] = []
+    if not host or port <= 0:
+        return {
+            "source": src,
+            "target": target,
+            "ready": False,
+            "conclusion": "未检测到可诊断的目标地址，请先补齐数据源URL配置。",
+            "checks": [
+                {
+                    "id": "target_parse",
+                    "title": "目标地址解析",
+                    "ok": False,
+                    "detail": "数据源URL为空或无法解析 host/port"
+                }
+            ],
+        }
+    ip_list: List[str] = []
+    dns_ok = False
+    dns_detail = ""
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        ip_list = sorted({str(item[4][0]) for item in infos if item and item[4]})
+        dns_ok = len(ip_list) > 0
+        dns_detail = f"解析成功: {', '.join(ip_list[:4])}" if dns_ok else "未解析到IP地址"
+    except Exception as e:
+        dns_ok = False
+        dns_detail = f"DNS解析失败: {e}"
+    checks.append({"id": "dns", "title": "DNS解析", "ok": dns_ok, "detail": _normalize_onboarding_error_text(dns_detail)})
+
+    tcp_ok = False
+    tcp_detail = ""
+    if dns_ok:
+        try:
+            with socket.create_connection((host, port), timeout=4.0):
+                tcp_ok = True
+                tcp_detail = f"TCP连接成功: {host}:{port}"
+        except Exception as e:
+            tcp_ok = False
+            tcp_detail = f"TCP连接失败: {e}"
+    else:
+        tcp_detail = "DNS未通过，已跳过TCP连接检测"
+    checks.append({"id": "tcp", "title": "TCP连通性", "ok": tcp_ok, "detail": _normalize_onboarding_error_text(tcp_detail)})
+
+    tls_ok = False
+    tls_detail = ""
+    if scheme == "https":
+        if tcp_ok:
+            try:
+                context = ssl.create_default_context()
+                with socket.create_connection((host, port), timeout=4.0) as sock:
+                    with context.wrap_socket(sock, server_hostname=host) as tls_sock:
+                        tls_ok = True
+                        cert = tls_sock.getpeercert()
+                        subj = cert.get("subject", [])
+                        tls_detail = f"TLS握手成功: subject={subj[:1] if subj else 'unknown'}"
+            except Exception as e:
+                tls_ok = False
+                tls_detail = f"TLS握手失败: {e}"
+        else:
+            tls_detail = "TCP未通过，已跳过TLS握手检测"
+        checks.append({"id": "tls", "title": "TLS握手", "ok": tls_ok, "detail": _normalize_onboarding_error_text(tls_detail)})
+
+    failed_checks = [c for c in checks if not bool(c.get("ok"))]
+    ready = len(failed_checks) == 0
+    if ready:
+        conclusion = f"网络链路正常（source={src}，host={host}:{port}）"
+    else:
+        first_msg = str(failed_checks[0].get("detail") or "unknown")
+        sop = _match_onboarding_error_sop(first_msg, src)
+        conclusion = f"网络链路存在问题：{first_msg}；建议按SOP处理（{sop.get('code', 'UNKNOWN')}）"
+        # 为失败项补充知识库映射，前端可直接展示固定修复步骤。
+        for check in failed_checks:
+            check["sop"] = sop
+            check["error_code"] = str(sop.get("code") or "UNKNOWN")
+    return {
+        "source": src,
+        "target": target,
+        "ready": ready,
+        "conclusion": conclusion,
+        "checks": checks,
+    }
+
 async def _emit_backtest_precheck_progress(progress: int, phase_label: str, period_text: str, broadcast_ws: bool = True):
     await emit_event_to_ws("backtest_progress", {
         "progress": int(progress),
@@ -1834,6 +2054,103 @@ async def _run_backtest_provider_precheck(stock_code: str, start: Optional[str],
         "stage": "startup_precheck"
     }, stock_code=stock_code, broadcast_ws=broadcast_ws)
     return False, provider_source, str(reason or "")
+
+def _is_onboarding_value_present(val: Any) -> bool:
+    # 新手检查使用：统一判断配置项是否“已填写”。
+    if val is None:
+        return False
+    if isinstance(val, str):
+        return bool(val.strip())
+    return True
+
+def _required_config_keys_for_source(source: str) -> List[str]:
+    # 按数据源给出最小必填配置项，避免“点回测才知道缺配置”。
+    src = str(source or "default").strip().lower()
+    if src == "default":
+        return ["data_provider.default_api_url", "data_provider.default_api_key"]
+    if src == "tushare":
+        return ["data_provider.tushare_token"]
+    if src == "duckdb":
+        return ["data_provider.duckdb_path"]
+    if src == "mysql":
+        return [
+            "data_provider.mysql_host",
+            "data_provider.mysql_port",
+            "data_provider.mysql_user",
+            "data_provider.mysql_password",
+            "data_provider.mysql_database",
+        ]
+    if src == "postgresql":
+        return [
+            "data_provider.postgres_host",
+            "data_provider.postgres_port",
+            "data_provider.postgres_user",
+            "data_provider.postgres_password",
+            "data_provider.postgres_database",
+        ]
+    # akshare / duckdb / tdx 在默认形态下可以先不强制额外键。
+    return []
+
+def _build_onboarding_suggestions(source: str, missing_keys: List[str], private_exists: bool, provider_error_sop: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    # 生成可执行修复建议，供前端“新手引导”直接展示。
+    suggestions: List[Dict[str, Any]] = []
+    src = str(source or "default").strip().lower()
+    # 是否存在失败/告警上下文：仅在有问题时展示模式建议，避免“全通过仍提示”。
+    has_issue_context = (not bool(private_exists)) or bool(missing_keys)
+    # 将错误知识库映射结果沉淀为统一SOP建议，便于前端运营化展示。
+    sop = provider_error_sop if isinstance(provider_error_sop, dict) else {}
+    sop_steps = sop.get("steps") if isinstance(sop.get("steps"), list) else []
+    if sop_steps:
+        has_issue_context = True
+    if not private_exists:
+        suggestions.append({
+            "level": "warning",
+            "title": "创建私有配置文件",
+            "detail": "未检测到 config.private.json，建议先创建私有配置并保存密钥。",
+            "action": "open_config",
+            "example_command": "copy config.private.json.example config.private.json"
+        })
+    if missing_keys:
+        joined = ", ".join(missing_keys)
+        suggestions.append({
+            "level": "error",
+            "title": "补齐数据源关键配置",
+            "detail": f"当前数据源 {src} 缺少关键配置：{joined}",
+            "action": "open_config",
+            "locate_paths": missing_keys
+        })
+    if src == "default" and has_issue_context:
+        suggestions.append({
+            "level": "info",
+            "title": "默认API模式建议",
+            "detail": "请确认 default_api_url 可访问且 default_api_key 有效。",
+            "action": "open_config"
+        })
+    if src == "tushare" and has_issue_context:
+        suggestions.append({
+            "level": "info",
+            "title": "TuShare模式建议",
+            "detail": "建议先执行 TuShare 连通性测试，再开始回测。",
+            "action": "open_config"
+        })
+    if src == "duckdb" and has_issue_context:
+        suggestions.append({
+            "level": "info",
+            "title": "DuckDB模式建议",
+            "detail": "新手默认建议使用 duckdb；请确认 duckdb_path 与表名配置正确。",
+            "action": "open_config",
+            "locate_paths": ["data_provider.source", "data_provider.duckdb_path", "data_provider.duckdb_table_day", "data_provider.duckdb_table_1min"]
+        })
+    if sop_steps:
+        suggestions.append({
+            "level": "warning",
+            "title": f"错误SOP：{str(sop.get('title') or '标准修复流程')}",
+            "detail": f"错误编码={str(sop.get('code') or 'UNKNOWN')}，建议按固定步骤执行。",
+            "action": "open_config",
+            "error_code": str(sop.get("code") or "UNKNOWN"),
+            "sop_steps": sop_steps
+        })
+    return suggestions
 
 def _iter_report_file_paths():
     os.makedirs(REPORTS_DIR, exist_ok=True)
@@ -8608,6 +8925,127 @@ async def api_get_status():
 async def api_get_status_light():
     """Get lightweight system status for high-frequency polling"""
     return _build_status_payload(include_fund_pools=False)
+
+@app.get("/api/onboarding/health_check")
+async def api_onboarding_health_check(stock_code: str = "000001.SZ"):
+    # 新手模式健康检查：把“能不能直接跑”拆成可解释步骤返回给前端。
+    try:
+        cfg = ConfigLoader.reload()
+        raw_src = str(cfg.get("data_provider.source", "default") or "default").strip().lower()
+        # 新手引导默认数据源：当未显式配置或仍为 default 时，按 duckdb 路径检查。
+        src = "duckdb" if raw_src in {"", "default"} else raw_src
+        code = str(stock_code or "").strip().upper() or "000001.SZ"
+        private_path = _private_config_path()
+        private_exists = os.path.exists(private_path)
+
+        checks: List[Dict[str, Any]] = []
+        checks.append({
+            "id": "private_config",
+            "title": "私有配置文件",
+            "ok": bool(private_exists),
+            "severity": "warning",
+            "detail": f"{'已检测到' if private_exists else '未检测到'}: {private_path}"
+        })
+
+        required_keys = _required_config_keys_for_source(src)
+        missing_keys = [k for k in required_keys if not _is_onboarding_value_present(cfg.get(k, None))]
+        provider_config_ok = len(missing_keys) == 0
+        checks.append({
+            "id": "provider_config",
+            "title": "数据源关键配置",
+            "ok": provider_config_ok,
+            "severity": "error",
+            "detail": "配置完整" if provider_config_ok else f"缺失字段: {', '.join(missing_keys)}",
+            "missing_keys": missing_keys
+        })
+
+        provider_ok = False
+        provider_sop: Dict[str, Any] = {}
+        provider_msg = "已跳过连通性检测（需先补齐配置）"
+        if provider_config_ok:
+            provider = _build_provider_by_source(src, cfg=cfg)
+            try:
+                provider_ok, provider_msg = await asyncio.wait_for(
+                    asyncio.to_thread(_check_provider_connectivity_for_code, provider, src, code),
+                    timeout=12.0
+                )
+            except asyncio.TimeoutError:
+                provider_ok = False
+                provider_msg = "连通性检测超时（12s），请检查网络/数据源服务状态"
+        if not provider_ok:
+            # 连通性失败时返回错误知识库映射，便于前端直接展示固定SOP。
+            provider_sop = _match_onboarding_error_sop(provider_msg, src)
+        checks.append({
+            "id": "provider_connectivity",
+            "title": "数据源连通性",
+            "ok": bool(provider_ok),
+            "severity": "error",
+            "detail": str(provider_msg or "unknown"),
+            "error_code": str(provider_sop.get("code") or "") if (not provider_ok) else "",
+            "sop": provider_sop if (not provider_ok) else {}
+        })
+
+        try:
+            strategies = list_all_strategy_meta()
+        except Exception:
+            strategies = []
+        enabled_count = len([x for x in (strategies or []) if bool(x.get("enabled", True))])
+        checks.append({
+            "id": "strategy_catalog",
+            "title": "策略目录可用性",
+            "ok": enabled_count > 0,
+            "severity": "error",
+            "detail": f"已启用策略数量: {enabled_count}"
+        })
+
+        errors = [c for c in checks if (not c.get("ok")) and c.get("severity") == "error"]
+        warnings = [c for c in checks if (not c.get("ok")) and c.get("severity") != "error"]
+        overall_ready = len(errors) == 0
+        return {
+            "status": "success",
+            "ready": overall_ready,
+            "provider_source": src,
+            "sample_stock_code": code,
+            "checks": checks,
+            "errors": errors,
+            "warnings": warnings,
+            "suggestions": _build_onboarding_suggestions(src, missing_keys, private_exists, provider_error_sop=provider_sop),
+        }
+    except Exception as e:
+        logger.error(f"/api/onboarding/health_check failed: {e}", exc_info=True)
+        return {"status": "error", "ready": False, "msg": str(e), "checks": []}
+
+@app.get("/api/onboarding/network_diag")
+async def api_onboarding_network_diag(source: str = ""):
+    # 新手网络诊断接口：自动执行 DNS/TCP/TLS 探测并返回可解释结论。
+    try:
+        cfg = ConfigLoader.reload()
+        src = str(source or cfg.get("data_provider.source", "default") or "default").strip().lower()
+        diag = await asyncio.wait_for(
+            asyncio.to_thread(_run_onboarding_network_diag_sync, src, cfg),
+            timeout=10.0
+        )
+        return {
+            "status": "success",
+            "ready": bool(diag.get("ready")),
+            "source": src,
+            "diag": diag,
+        }
+    except asyncio.TimeoutError:
+        return {
+            "status": "error",
+            "ready": False,
+            "msg": "网络诊断超时（10s），请稍后重试",
+            "diag": {"ready": False, "checks": []}
+        }
+    except Exception as e:
+        logger.error(f"/api/onboarding/network_diag failed: {e}", exc_info=True)
+        return {
+            "status": "error",
+            "ready": False,
+            "msg": str(e),
+            "diag": {"ready": False, "checks": []}
+        }
 
 
 def _build_evolution_profile_payload(req: EvolutionStartRequest) -> Dict[str, Any]:

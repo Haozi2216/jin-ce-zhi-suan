@@ -226,6 +226,37 @@
             animation: metricPopDown 420ms cubic-bezier(0.22, 1, 0.36, 1);
         }
 
+        /* 新手引导入口高亮：仅在前3次点击前闪动，提升首次可见性。 */
+        @keyframes onboardingGuideBlink {
+            0% { box-shadow: 0 0 0 rgba(16, 185, 129, 0), 0 0 0 rgba(245, 158, 11, 0); transform: scale(1); filter: brightness(1); }
+            35% { box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.95), 0 0 20px rgba(16, 185, 129, 0.70), 0 0 34px rgba(245, 158, 11, 0.45); transform: scale(1.08); filter: brightness(1.18); }
+            100% { box-shadow: 0 0 0 rgba(16, 185, 129, 0), 0 0 0 rgba(245, 158, 11, 0); transform: scale(1); filter: brightness(1); }
+        }
+
+        @keyframes onboardingGuideShake {
+            0%, 100% { transform: translateX(0); }
+            20% { transform: translateX(-1px); }
+            40% { transform: translateX(1px); }
+            60% { transform: translateX(-1px); }
+            80% { transform: translateX(1px); }
+        }
+
+        @keyframes onboardingGuideBadgePulse {
+            0% { opacity: 0.85; transform: scale(1); }
+            50% { opacity: 1; transform: scale(1.12); }
+            100% { opacity: 0.85; transform: scale(1); }
+        }
+
+        .onboarding-guide-attention {
+            background: linear-gradient(90deg, #047857 0%, #0f766e 45%, #b45309 100%);
+            border-color: rgba(252, 211, 77, 0.95) !important;
+            animation: onboardingGuideBlink 1s ease-in-out infinite, onboardingGuideShake 0.45s ease-in-out infinite;
+        }
+
+        .onboarding-guide-badge-attention {
+            animation: onboardingGuideBadgePulse 0.9s ease-in-out infinite;
+        }
+
         @keyframes metricPopUp {
             0% { transform: translateY(0) scale(1); filter: brightness(1); }
             45% { transform: translateY(-3px) scale(1.06); filter: brightness(1.25); }
@@ -597,6 +628,30 @@
         </div>
     </div>
 
+    <!-- 新手引导弹层：通过环境检查与一步步建议，确保新用户“可直接跑通”。 -->
+    <div id="onboarding-modal" class="hidden fixed inset-0 bg-black/70 z-[175] items-center justify-center p-3">
+        <div class="w-[920px] max-w-[96vw] bg-slate-900 border border-slate-700 rounded-lg shadow-2xl flex flex-col max-h-[92vh]">
+            <div class="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
+                <div class="text-white font-bold"><i class="fa-solid fa-route mr-2 text-emerald-300"></i>新手引导（可直接跑通）</div>
+                <button onclick="closeOnboardingModal()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="px-4 py-2 border-b border-slate-700 text-xs text-slate-300">
+                主线步骤：1 检查环境 -> 2 按建议修复 -> 3 一键开始首单
+            </div>
+            <div class="p-4 space-y-3 overflow-y-auto">
+                <div id="onboarding-run-summary" class="text-xs text-slate-400">先点“开始环境检查”，通过后直接点“一键开始首单”。</div>
+                <div id="onboarding-check-list" class="space-y-2"></div>
+                <div id="onboarding-suggestion-list" class="space-y-2"></div>
+            </div>
+            <div class="px-4 py-3 border-t border-slate-700 flex items-center gap-2 flex-wrap">
+                <button id="onboarding-check-btn" onclick="runOnboardingHealthCheck()" class="bg-emerald-700 hover:bg-emerald-600 text-white px-3 py-1.5 rounded text-xs border border-emerald-500">开始环境检查</button>
+                <button onclick="openOnboardingConfigCenterForFix()" class="bg-purple-700 hover:bg-purple-600 text-white px-3 py-1.5 rounded text-xs border border-purple-500">打开配置中心</button>
+                <button onclick="startBacktestFromOnboarding()" class="bg-blue-700 hover:bg-blue-600 text-white px-3 py-1.5 rounded text-xs border border-blue-500">一键开始首单</button>
+                <button onclick="closeOnboardingModal()" class="ml-auto bg-slate-800 hover:bg-slate-700 text-slate-200 px-3 py-1.5 rounded text-xs border border-slate-600">关闭</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Top Navigation Bar -->
     <header class="h-16 border-b border-slate-700 bg-trading-bg flex items-center justify-between px-6 z-20 shadow-lg">
         <div class="flex items-center gap-4">
@@ -654,16 +709,55 @@
                     <button onclick="applyStrategySelection()" class="mt-3 w-full bg-trading-blue hover:bg-blue-600 text-white py-1.5 rounded text-xs">应用选择</button>
                 </div>
             </div>
-            <button onclick="openStrategyManager()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded text-xs transition-all border border-indigo-500">
+            <button id="top-strategy-manager-btn" onclick="openStrategyManager()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded text-xs transition-all border border-indigo-500">
                 <i class="fa-solid fa-chess-knight"></i> 策略管理器
             </button>
-            <a href="/report" class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded text-xs transition-all border border-indigo-500">
+            <a id="top-report-btn" href="/report" class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1.5 rounded text-xs transition-all border border-indigo-500">
                 <i class="fa-solid fa-file-lines"></i> 回测报告
             </a>
-            <button onclick="openConsistencyReportModal()" class="bg-emerald-700 hover:bg-emerald-600 text-white px-3 py-1.5 rounded text-xs transition-all border border-emerald-500">
+            <button id="top-consistency-btn" onclick="openConsistencyReportModal()" class="bg-emerald-700 hover:bg-emerald-600 text-white px-3 py-1.5 rounded text-xs transition-all border border-emerald-500">
                 <i class="fa-solid fa-scale-balanced"></i> 一致性校验            </button>
         </div>
     </header>
+
+    <!-- 主线流程条：把高频操作固定为 1-2-3 顺序，减少功能分散感 -->
+    <div id="workflow-mainline-bar" class="px-4 py-2 border-b border-slate-800 bg-trading-bg">
+        <div class="glass-panel rounded-lg px-3 py-2">
+            <!-- 操作主线横向栏：窄屏自动压缩为短文案与图标按钮，保证不换行。 -->
+            <div class="flex items-center justify-between gap-2 flex-nowrap overflow-x-auto">
+                <div class="text-[11px] text-slate-300 whitespace-nowrap">
+                    <span class="text-cyan-300 font-semibold">操作主线</span>
+                    <span class="hidden 2xl:inline">：1 选策略 -> 2 配参数 -> 3 单票回测 -> 进阶功能进入操作工作台</span>
+                    <span class="2xl:hidden">：1选 -> 2配 -> 3测</span>
+                </div>
+                <div id="workflow-mainline-right-wrap" class="flex items-center gap-2 shrink-0 whitespace-nowrap">
+                    <div class="flex items-center gap-2">
+                        <button id="onboarding-guide-entry-btn" type="button" onclick="openOnboardingModal()" class="ml-1 relative bg-emerald-700 hover:bg-emerald-600 text-white px-2 sm:pl-2.5 sm:pr-10 py-1 rounded text-[11px] border border-emerald-500" title="打开新手引导">
+                            <i class="fa-solid fa-route"></i>
+                            <span class="hidden sm:inline"> 新手引导</span>
+                            <span id="onboarding-guide-entry-badge" class="absolute -right-1.5 -top-1.5 bg-rose-500 text-white text-[10px] px-1.5 py-[1px] rounded border border-rose-300">必看</span>
+                        </button>
+                        <button id="onboarding-guide-attention-off-btn" type="button" onclick="disableOnboardingGuideAttentionPermanently()" class="text-[10px] text-amber-300 border border-amber-700/60 bg-amber-900/20 px-1.5 py-0.5 rounded" title="关闭新手引导闪动提醒">
+                            <i class="fa-solid fa-bell-slash"></i>
+                            <span class="hidden xl:inline"> 关闭闪动</span>
+                        </button>
+                    </div>
+                    <button id="workflow-mainline-toggle-btn" type="button" onclick="toggleWorkflowMainlineCollapsed()" class="text-[11px] text-slate-200 border border-slate-600 rounded px-2 py-1 bg-slate-800 hover:bg-slate-700" title="收起或展开操作主线">
+                        <i class="fa-solid fa-grip-lines-vertical"></i>
+                        <span id="workflow-mainline-toggle-label" class="hidden lg:inline">收起</span>
+                    </button>
+                    
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- 操作主线收起后的悬浮展开按钮：不占用整行布局空间。 -->
+    <div id="workflow-mainline-collapsed-dock" class="hidden fixed right-4 top-[76px] z-[160]">
+        <button id="workflow-mainline-collapsed-btn" type="button" onclick="toggleWorkflowMainlineCollapsed()" class="inline-flex items-center gap-1.5 text-[11px] text-cyan-200 border border-cyan-700/70 rounded px-2 py-1 bg-slate-900/90 hover:bg-slate-800 shadow-lg" title="展开新手引导">
+            <i class="fa-solid fa-bars-staggered"></i>
+            <span id="workflow-mainline-collapsed-btn-label">展开新手引导</span>
+        </button>
+    </div>
 
     <!-- Main Layout -->
     <main class="flex-1 flex overflow-hidden p-4 gap-4">
@@ -1190,7 +1284,7 @@
                     <i class="fa-solid fa-table-cells-large"></i>
                     <span>经典形态</span>
                 </button>
-                <button onclick="openConfigCenter()" class="bg-purple-700 hover:bg-purple-600 text-white px-4 py-2 rounded font-bold text-sm transition-all border border-purple-500 min-w-[92px] lg:min-w-[108px]">
+                <button id="inline-config-btn" onclick="openConfigCenter()" class="bg-purple-700 hover:bg-purple-600 text-white px-4 py-2 rounded font-bold text-sm transition-all border border-purple-500 min-w-[92px] lg:min-w-[108px]">
                     <i class="fa-solid fa-sliders"></i> 配置中心
                 </button>
                 <div id="llm-status-wrap" onclick="toggleLlmStatusPanel()" class="inline-flex items-center justify-center w-2 h-2 rounded-full bg-slate-700 cursor-pointer" title="点击查看LLM状态详情">
@@ -8451,6 +8545,629 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             });
         }
 
+        // 主线按钮埋点键：用于本地行为复盘，便于识别新手断点步骤。
+        const WORKFLOW_ACTION_LOG_KEY = 'jince-workflow-action-log-v1';
+        // 操作主线折叠状态键：用于记住用户收起/展开偏好。
+        const WORKFLOW_MAINLINE_COLLAPSED_KEY = 'jince-workflow-mainline-collapsed-v1';
+        // 新手引导点击计数键：前3次点击前保持按钮闪动提醒。
+        const ONBOARDING_GUIDE_CLICK_COUNT_KEY = 'jince-onboarding-guide-click-count-v1';
+        // 新手引导闪动永久关闭键：用户主动关闭后不再闪动。
+        const ONBOARDING_GUIDE_ATTENTION_DISABLED_KEY = 'jince-onboarding-guide-attention-disabled-v1';
+        // 新手引导闪动阈值：达到该次数后停止闪动。
+        const ONBOARDING_GUIDE_FLASH_LIMIT = 3;
+        // 操作主线是否处于折叠状态。
+        let workflowMainlineCollapsed = false;
+        // 新手引导点击次数（本地持久化）。
+        let onboardingGuideClickCount = 0;
+        // 是否永久关闭新手引导闪动提醒。
+        let onboardingGuideAttentionDisabled = false;
+        // 修复后自动重试队列状态：保存配置成功后自动触发环境检查。
+        let onboardingAutoRetryPending = false;
+        // 自动重试原因提示：用于日志展示当前队列触发来源。
+        let onboardingAutoRetryReason = '';
+        // 新手引导默认数据源切换状态：避免同一会话重复写配置。
+        let onboardingDuckdbDefaultEnsured = false;
+
+        // 记录主线操作埋点到 localStorage，保留最近 120 条，避免无限膨胀。
+        function trackWorkflowAction(action, meta = {}) {
+            try {
+                const item = {
+                    ts: Date.now(),
+                    action: String(action || '').trim(),
+                    meta: (meta && typeof meta === 'object') ? meta : {}
+                };
+                if (!item.action) return;
+                const raw = localStorage.getItem(WORKFLOW_ACTION_LOG_KEY);
+                const list = raw ? JSON.parse(raw) : [];
+                const next = Array.isArray(list) ? list : [];
+                next.push(item);
+                while (next.length > 120) next.shift();
+                localStorage.setItem(WORKFLOW_ACTION_LOG_KEY, JSON.stringify(next));
+            } catch (_) {}
+        }
+
+        // 打开新手引导弹层：首次进入可直接做环境检查。
+        function openOnboardingModal() {
+            // 记录点击次数：前3次点击前按钮需要持续闪动提醒。
+            markOnboardingGuideClicked();
+            const modal = document.getElementById('onboarding-modal');
+            if (!modal) return;
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            trackWorkflowAction('open_onboarding', { source: 'workflow_bar' });
+        }
+
+        // 关闭新手引导弹层。
+        function closeOnboardingModal() {
+            const modal = document.getElementById('onboarding-modal');
+            if (!modal) return;
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        // 根据状态更新“操作主线”展开/收起 UI：收起后整行隐藏，仅保留悬浮展开按钮。
+        function applyWorkflowMainlineCollapsedUI() {
+            const bar = document.getElementById('workflow-mainline-bar');
+            const dock = document.getElementById('workflow-mainline-collapsed-dock');
+            const label = document.getElementById('workflow-mainline-toggle-label');
+            const dockLabel = document.getElementById('workflow-mainline-collapsed-btn-label');
+            if (bar) bar.classList.toggle('hidden', !!workflowMainlineCollapsed);
+            if (dock) dock.classList.toggle('hidden', !workflowMainlineCollapsed);
+            // 行内按钮只在展开时可见，因此固定显示“收起”更符合动作语义。
+            if (label) label.innerText = '收起';
+            if (dockLabel) dockLabel.innerText = '展开新手引导';
+        }
+
+        // 设置操作主线折叠状态，并可选持久化。
+        function setWorkflowMainlineCollapsed(collapsed, persist = true) {
+            workflowMainlineCollapsed = !!collapsed;
+            applyWorkflowMainlineCollapsedUI();
+            if (persist) {
+                try {
+                    localStorage.setItem(WORKFLOW_MAINLINE_COLLAPSED_KEY, workflowMainlineCollapsed ? '1' : '0');
+                } catch (_) {}
+            }
+        }
+
+        // 点击切换操作主线折叠状态。
+        function toggleWorkflowMainlineCollapsed() {
+            setWorkflowMainlineCollapsed(!workflowMainlineCollapsed, true);
+            trackWorkflowAction('toggle_workflow_mainline_collapsed', { collapsed: workflowMainlineCollapsed });
+        }
+
+        // 恢复操作主线折叠偏好。
+        function loadWorkflowMainlineCollapsedPreference() {
+            try {
+                workflowMainlineCollapsed = String(localStorage.getItem(WORKFLOW_MAINLINE_COLLAPSED_KEY) || '') === '1';
+            } catch (_) {
+                workflowMainlineCollapsed = false;
+            }
+            applyWorkflowMainlineCollapsedUI();
+        }
+
+        // 根据点击次数更新“新手引导”入口闪动状态。
+        function updateOnboardingGuideEntryAttention() {
+            const btn = document.getElementById('onboarding-guide-entry-btn');
+            const badge = document.getElementById('onboarding-guide-entry-badge');
+            const offBtn = document.getElementById('onboarding-guide-attention-off-btn');
+            if (!btn) return;
+            const shouldAttention = !onboardingGuideAttentionDisabled && onboardingGuideClickCount < ONBOARDING_GUIDE_FLASH_LIMIT;
+            btn.classList.toggle('onboarding-guide-attention', shouldAttention);
+            if (badge) {
+                badge.classList.toggle('hidden', !shouldAttention);
+                badge.classList.toggle('onboarding-guide-badge-attention', shouldAttention);
+            }
+            if (offBtn) offBtn.classList.toggle('hidden', !shouldAttention);
+            // 提示可永久关闭闪动，避免用户感到干扰。
+            btn.title = shouldAttention ? '首次使用建议点击新手引导；可点右侧“关闭闪动”永久关闭提醒。' : '新手引导';
+        }
+
+        // 恢复本地点击计数，并决定是否继续闪动。
+        function loadOnboardingGuideClickCount() {
+            try {
+                const raw = Number(localStorage.getItem(ONBOARDING_GUIDE_CLICK_COUNT_KEY) || '0');
+                onboardingGuideClickCount = Number.isFinite(raw) ? Math.max(0, Math.floor(raw)) : 0;
+                onboardingGuideAttentionDisabled = String(localStorage.getItem(ONBOARDING_GUIDE_ATTENTION_DISABLED_KEY) || '') === '1';
+            } catch (_) {
+                onboardingGuideClickCount = 0;
+                onboardingGuideAttentionDisabled = false;
+            }
+            updateOnboardingGuideEntryAttention();
+        }
+
+        // 记录一次“新手引导”点击，并在达到阈值后停止闪动。
+        function markOnboardingGuideClicked() {
+            if (onboardingGuideClickCount < ONBOARDING_GUIDE_FLASH_LIMIT) {
+                onboardingGuideClickCount += 1;
+                try {
+                    localStorage.setItem(ONBOARDING_GUIDE_CLICK_COUNT_KEY, String(onboardingGuideClickCount));
+                } catch (_) {}
+            }
+            updateOnboardingGuideEntryAttention();
+        }
+
+        // 永久关闭新手引导闪动：保留功能入口但去掉强提醒动画。
+        function disableOnboardingGuideAttentionPermanently() {
+            onboardingGuideAttentionDisabled = true;
+            try {
+                localStorage.setItem(ONBOARDING_GUIDE_ATTENTION_DISABLED_KEY, '1');
+            } catch (_) {}
+            updateOnboardingGuideEntryAttention();
+            logMessage('SYSTEM', '已永久关闭新手引导闪动提醒（可清理浏览器本地存储后恢复）', 'system');
+            trackWorkflowAction('disable_onboarding_guide_attention_permanently', {});
+        }
+
+        // 套用新手首单参数：按钮移除后由“一键开始首单”自动调用。
+        function applyOnboardingDemoPreset() {
+            const stockInput = document.getElementById('stock-search-input');
+            if (stockInput) stockInput.value = '600036.SH';
+            // 新手首单固定回测周期：避免相对周期在不同时点产生认知偏差。
+            const rangeSel = document.getElementById('bt-range-select');
+            if (rangeSel) {
+                rangeSel.value = 'custom';
+                onBacktestRangeChange('custom');
+            }
+            const startInput = document.getElementById('bt-start-date');
+            const endInput = document.getElementById('bt-end-date');
+            if (startInput) startInput.value = '2025-12-01';
+            if (endInput) endInput.value = '2026-02-13';
+            const capInput = document.getElementById('bt-capital-input');
+            if (capInput) capInput.value = '1000000';
+            if (Array.isArray(selectedStrategyIds) && selectedStrategyIds.length === 0 && Array.isArray(strategyCatalog) && strategyCatalog.length > 0) {
+                // 默认优先策略 05；若不存在则回退到首个可用策略，避免首单失败。
+                const target = strategyCatalog.find((x) => String(x?.id || '').trim() === '05')
+                    || strategyCatalog.find((x) => Number(String(x?.id || '').trim()) === 5)
+                    || strategyCatalog[0];
+                selectedStrategyIds = [String(target?.id || strategyCatalog[0].id)];
+                strategyPanelTempSelectedIds = selectedStrategyIds.slice();
+                renderStrategySelectionSummary();
+                switchStrategy(selectedStrategyIds);
+            }
+            logMessage('SYSTEM', `已自动套用首单参数（600036.SH / 2025-08-01~2026-02-13 / 100万 / 策略${selectedStrategyIds?.[0] || '--'}）`, 'system');
+            trackWorkflowAction('apply_onboarding_preset', { stock: '600036.SH', start: '2025-08-01', end: '2026-02-13', strategy_id: String(selectedStrategyIds?.[0] || '') });
+        }
+
+        // 从新手引导里直接触发回测：先保障参数，再复用现有回测流程。
+        function startBacktestFromOnboarding() {
+            applyOnboardingDemoPreset();
+            closeOnboardingModal();
+            startBacktest();
+            trackWorkflowAction('start_backtest_from_onboarding_real', {});
+        }
+
+        // 新手检查结果缓存：用于“复制失败详情”按索引读取原始检查项。
+        let onboardingHealthChecksCache = [];
+
+        // 将文本安全转换为 HTML，避免报错内容包含特殊字符时破坏页面结构。
+        function escapeOnboardingHtml(raw) {
+            return String(raw || '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        // 从报错文案中提取可执行提示，帮助新手快速判断“先修哪里”。
+        function deriveOnboardingFailureHints(detailText) {
+            const txt = String(detailText || '').toLowerCase();
+            const hints = [];
+            // DuckDB 文件缺失或路径错误是新手最常见问题。
+            if (txt.includes('duckdb') && (txt.includes('no such file') || txt.includes('cannot open file') || txt.includes('io error'))) {
+                hints.push('疑似 DuckDB 文件路径不可用：请检查 data_provider.duckdb_path 是否存在且可读。');
+            }
+            // DuckDB 表缺失时通常是表名配置不一致。
+            if (txt.includes('catalog error') || txt.includes('table') && txt.includes('does not exist')) {
+                hints.push('疑似 DuckDB 表名不匹配：请核对 duckdb_table_day / duckdb_table_1min 等配置。');
+            }
+            // DuckDB 锁冲突常见于并发写入或文件被占用。
+            if (txt.includes('database is locked') || txt.includes('lock')) {
+                hints.push('疑似 DuckDB 文件被占用：请关闭占用进程后重试。');
+            }
+            // TLS/SSL EOF 通常是网络链路或代理导致的握手中断。
+            if (txt.includes('ssl') || txt.includes('eof occurred in violation of protocol') || txt.includes('unexpected eof while reading')) {
+                hints.push('疑似 HTTPS/TLS 握手中断：先检查网络代理/VPN，再重试。');
+            }
+            // Max retries 常见于域名不可达、DNS 失败或被公司网络策略拦截。
+            if (txt.includes('max retries exceeded') || txt.includes('name or service not known') || txt.includes('failed to establish a new connection')) {
+                hints.push('疑似网络不可达：请确认数据源域名可访问，必要时更换网络后重试。');
+            }
+            // 认证类错误优先检查 key 与权限。
+            if (txt.includes('401') || txt.includes('403') || txt.includes('unauthorized') || txt.includes('forbidden')) {
+                hints.push('疑似鉴权失败：请检查 default_api_key 是否有效、是否过期。');
+            }
+            // 超时通常是网络抖动或服务端负载问题。
+            if (txt.includes('timeout') || txt.includes('timed out')) {
+                hints.push('疑似请求超时：可先重试，仍失败请降低并发或更换数据源。');
+            }
+            // 若未命中已知规则，仍给出通用可执行建议。
+            if (!hints.length) {
+                hints.push('请先复制失败详情并执行“开始环境检查”重试，再根据建议项修复配置。');
+            }
+            return hints;
+        }
+
+        // 新手引导默认数据源为 DuckDB：首次检查前自动落盘，降低外网依赖导致的失败率。
+        async function ensureOnboardingDefaultDuckdb() {
+            if (onboardingDuckdbDefaultEnsured) return false;
+            try {
+                const cfgRes = await fetch('/api/config');
+                const cfgData = await cfgRes.json();
+                if (!cfgRes.ok || String(cfgData?.status || '') !== 'success') return false;
+                const parsed = cfgData?.config || {};
+                const currSource = String(getByPath(parsed, 'data_provider.source', '') || '').trim().toLowerCase();
+                // 只有未显式设置或仍为 default 时，才自动切换到 duckdb。
+                if (currSource && currSource !== 'default' && currSource !== 'duckdb') {
+                    onboardingDuckdbDefaultEnsured = true;
+                    return false;
+                }
+                if (currSource !== 'duckdb') {
+                    setByPath(parsed, 'data_provider.source', 'duckdb');
+                    const saveRes = await fetch('/api/config/save', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ config: parsed })
+                    });
+                    const saveData = await saveRes.json();
+                    if (!saveRes.ok || String(saveData?.status || '') !== 'success') {
+                        return false;
+                    }
+                    logMessage('SYSTEM', '新手引导已默认切换数据源为 duckdb（可在配置中心手动调整）', 'success');
+                    trackWorkflowAction('onboarding_auto_switch_source_duckdb', {});
+                    onboardingDuckdbDefaultEnsured = true;
+                    return true;
+                }
+                onboardingDuckdbDefaultEnsured = true;
+                return false;
+            } catch (_) {
+                return false;
+            }
+        }
+
+        // 标记“修复后自动重试”队列，等配置保存成功后自动触发环境检查。
+        function queueOnboardingAutoRetry(reason = '') {
+            onboardingAutoRetryPending = true;
+            onboardingAutoRetryReason = String(reason || '').trim();
+            trackWorkflowAction('onboarding_queue_auto_retry', { reason: onboardingAutoRetryReason });
+        }
+
+        // 统一渲染 SOP 步骤块：将错误知识库映射转为可执行步骤展示。
+        function renderOnboardingSopStepsBlock(sop, tone = 'amber') {
+            const code = escapeOnboardingHtml(String(sop?.code || 'UNKNOWN'));
+            const title = escapeOnboardingHtml(String(sop?.title || '固定修复流程'));
+            const steps = Array.isArray(sop?.steps) ? sop.steps : [];
+            if (!steps.length) return '';
+            const toneCls = tone === 'rose' ? 'border-rose-800/50 bg-rose-900/10 text-rose-200' : 'border-amber-800/50 bg-amber-900/10 text-amber-200';
+            return `<div class="mt-2 rounded border ${toneCls} px-2.5 py-2">
+                <div class="text-[11px] font-semibold">修复SOP（${code}）${title ? `：${title}` : ''}</div>
+                <div class="mt-1 text-[11px] space-y-1">${steps.map((s, i) => `<div>${i + 1}) ${escapeOnboardingHtml(String(s || ''))}</div>`).join('')}</div>
+            </div>`;
+        }
+
+        // 复制指定失败项详情：便于直接发给同事或 AI 获得精准修复步骤。
+        async function copyOnboardingFailureDetail(index) {
+            const idx = Number(index);
+            const checks = Array.isArray(onboardingHealthChecksCache) ? onboardingHealthChecksCache : [];
+            if (!Number.isInteger(idx) || idx < 0 || idx >= checks.length) {
+                logMessage('SYSTEM', '复制失败：未找到对应检查项', 'warning');
+                return;
+            }
+            const item = checks[idx] || {};
+            const payload = [
+                `检查项: ${String(item?.title || '--')}`,
+                `状态: ${item?.ok ? '通过' : '失败'}`,
+                `级别: ${String(item?.severity || '--')}`,
+                `详情: ${String(item?.detail || '--')}`
+            ].join('\n');
+            try {
+                // 优先使用现代剪贴板 API。
+                if (navigator?.clipboard?.writeText) {
+                    await navigator.clipboard.writeText(payload);
+                } else {
+                    // 兼容旧环境：使用 textarea + execCommand 兜底。
+                    const ta = document.createElement('textarea');
+                    ta.value = payload;
+                    ta.style.position = 'fixed';
+                    ta.style.opacity = '0';
+                    document.body.appendChild(ta);
+                    ta.focus();
+                    ta.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(ta);
+                }
+                logMessage('SYSTEM', '失败详情已复制，可直接粘贴给 AI 获取修复步骤', 'success');
+            } catch (_) {
+                logMessage('SYSTEM', '复制失败，请手动复制检查详情', 'warning');
+            }
+        }
+
+        // 快速打开配置中心并定位默认数据源字段，降低新手找配置的成本。
+        function openOnboardingDataSourceQuickFix() {
+            // 从“修复数据源配置”入口进入配置中心时，自动挂起重试队列。
+            queueOnboardingAutoRetry('数据源配置已修改，自动重试环境检查');
+            onboardingLocateConfigPaths('data_provider.source|data_provider.duckdb_path|data_provider.duckdb_table_day|data_provider.duckdb_table_1min');
+            trackWorkflowAction('onboarding_open_data_source_quick_fix', {});
+        }
+
+        // 从新手引导进入配置中心：默认认为用户在做修复，保存后自动回检。
+        function openOnboardingConfigCenterForFix() {
+            queueOnboardingAutoRetry('配置保存成功后自动重试环境检查');
+            closeOnboardingModal();
+            openConfigCenter();
+            trackWorkflowAction('onboarding_open_config_center_for_fix', {});
+        }
+
+        // 识别当前最主要失败项：用于给小白展示“先修哪一个”。
+        function getOnboardingPrimaryIssue(checks) {
+            const list = Array.isArray(checks) ? checks : [];
+            const err = list.find((x) => !x?.ok && String(x?.severity || '') === 'error');
+            const first = err || list.find((x) => !x?.ok) || null;
+            if (!first) return { key: 'none', title: '环境正常', detail: '' };
+            const title = String(first?.title || '');
+            if (title.includes('数据源关键配置')) return { key: 'provider_config', title: '配置缺失', detail: String(first?.detail || '') };
+            if (title.includes('数据源连通性')) return { key: 'provider_network', title: '网络连通失败', detail: String(first?.detail || '') };
+            if (title.includes('策略目录')) return { key: 'strategy_catalog', title: '策略不可用', detail: String(first?.detail || '') };
+            if (title.includes('私有配置文件')) return { key: 'private_config', title: '私有配置未就绪', detail: String(first?.detail || '') };
+            return { key: 'generic', title: title || '环境异常', detail: String(first?.detail || '') };
+        }
+
+        // 获取指定检查项（失败优先），供自动修复流程读取 missing_keys 等上下文。
+        function getOnboardingFailedCheckById(checkId) {
+            const list = Array.isArray(onboardingHealthChecksCache) ? onboardingHealthChecksCache : [];
+            return list.find((x) => !x?.ok && String(x?.id || '') === String(checkId || '')) || null;
+        }
+
+        // 一键自动修复并重试：小白只需要点一次，系统自动选择修复路径。
+        async function runOnboardingAutoFixAndRetry() {
+            const checks = Array.isArray(onboardingHealthChecksCache) ? onboardingHealthChecksCache : [];
+            const issue = getOnboardingPrimaryIssue(checks);
+            if (issue.key === 'none') {
+                // 已无失败项时直接回检一次，确保状态最新。
+                await runOnboardingHealthCheck();
+                return;
+            }
+            // 配置缺失：自动跳到配置中心并定位缺失键，保存后自动回检。
+            if (issue.key === 'provider_config' || issue.key === 'private_config') {
+                const cfgFail = getOnboardingFailedCheckById('provider_config');
+                const paths = Array.isArray(cfgFail?.missing_keys) ? cfgFail.missing_keys.filter(Boolean) : [];
+                queueOnboardingAutoRetry('自动修复流程：等待配置保存后自动重试环境检查');
+                if (paths.length) {
+                    onboardingLocateConfigPaths(paths.map((x) => String(x || '').replace(/\|/g, '')).join('|'));
+                } else {
+                    openOnboardingConfigCenterForFix();
+                }
+                return;
+            }
+            // 网络连通失败：直接引导到配置修复，保存后会自动回检。
+            if (issue.key === 'provider_network') {
+                openOnboardingDataSourceQuickFix();
+                return;
+            }
+            // 策略目录问题：直接打开策略管理器，避免用户在配置中心兜圈子。
+            if (issue.key === 'strategy_catalog') {
+                closeOnboardingModal();
+                openStrategyManager();
+                logMessage('SYSTEM', '已打开策略管理器，请先启用至少一个策略', 'warning');
+                return;
+            }
+            // 兜底：未知问题直接重试检查。
+            await runOnboardingHealthCheck();
+        }
+
+        // 生成“小白模式”操作卡：只给一句结论和下一步按钮，技术细节折叠展示。
+        function buildOnboardingNoviceCard(checks, ready) {
+            const issue = getOnboardingPrimaryIssue(checks);
+            if (ready) {
+                return `<div class="rounded border border-emerald-700/60 bg-emerald-900/10 px-3 py-3 text-xs">
+                    <div class="text-emerald-300 font-semibold">环境已就绪，可以直接开始</div>
+                    <div class="mt-1 text-slate-200">下一步：点击下方“一键开始首单”。</div>
+                </div>`;
+            }
+            const issueDetail = escapeOnboardingHtml(String(issue.detail || ''));
+            const detailRows = (Array.isArray(checks) ? checks : []).map((item) => {
+                const ok = !!item?.ok;
+                const flag = ok ? '通过' : '失败';
+                return `<div class="py-1 border-b border-slate-700/60 last:border-b-0">
+                    <span class="${ok ? 'text-emerald-300' : 'text-rose-300'}">${flag}</span>
+                    <span class="text-slate-200 ml-1">${escapeOnboardingHtml(String(item?.title || '--'))}</span>
+                    <div class="text-slate-400 break-all mt-0.5">${escapeOnboardingHtml(String(item?.detail || '--'))}</div>
+                </div>`;
+            }).join('');
+            return `<div class="rounded border border-amber-700/60 bg-amber-900/10 px-3 py-3 text-xs">
+                <div class="text-amber-300 font-semibold">先别管一堆报错，先处理这个：${escapeOnboardingHtml(issue.title)}</div>
+                <div class="mt-1 text-slate-200">建议动作：先点“自动修复并重试（推荐）”；通过后直接点“一键开始首单（默认策略05）”。</div>
+                <div class="mt-1 text-slate-400 break-all">${issueDetail}</div>
+                <div class="mt-2 flex items-center gap-2 flex-wrap">
+                    <button type="button" onclick="runOnboardingAutoFixAndRetry()" class="bg-emerald-700 hover:bg-emerald-600 text-white px-2.5 py-1 rounded text-[11px] border border-emerald-500">自动修复并重试（推荐）</button>
+                    <button type="button" onclick="openOnboardingDataSourceQuickFix()" class="bg-purple-700 hover:bg-purple-600 text-white px-2 py-1 rounded text-[11px] border border-purple-500">修复数据源配置</button>
+                    <button type="button" onclick="runOnboardingHealthCheck()" class="bg-cyan-700 hover:bg-cyan-600 text-white px-2 py-1 rounded text-[11px] border border-cyan-500">立即重试</button>
+                </div>
+                <details class="mt-2">
+                    <summary class="cursor-pointer text-slate-400">展开技术详情（给工程师/AI）</summary>
+                    <div class="mt-2 space-y-1">${detailRows || '<div class="text-slate-500">暂无详情</div>'}</div>
+                </details>
+            </div>`;
+        }
+
+        // 渲染健康检查结果：统一显示通过/失败和修复建议。
+        function renderOnboardingHealthCheckResult(data) {
+            const summary = document.getElementById('onboarding-run-summary');
+            const checkBox = document.getElementById('onboarding-check-list');
+            const suggestionBox = document.getElementById('onboarding-suggestion-list');
+            if (!summary || !checkBox || !suggestionBox) return;
+            const checks = Array.isArray(data?.checks) ? data.checks : [];
+            const suggestions = Array.isArray(data?.suggestions) ? data.suggestions : [];
+            const ready = !!data?.ready;
+            // 缓存检查结果，供“复制失败详情”按钮按索引读取。
+            onboardingHealthChecksCache = checks.slice();
+            summary.className = ready
+                ? 'text-xs text-emerald-300'
+                : 'text-xs text-amber-300';
+            summary.innerText = ready
+                ? '环境检查通过：可以直接点击“一键开始首单”'
+                : '环境检查未通过：请先按“修复数据源配置 -> 自动重试 -> 立即重试”处理';
+            // 小白模式：顶部先给一句结论和固定三步，不再先抛出大段技术报错。
+            checkBox.innerHTML = buildOnboardingNoviceCard(checks, ready) + checks.map((item, idx) => {
+                const ok = !!item?.ok;
+                const sev = String(item?.severity || 'info');
+                const dot = ok ? 'bg-emerald-400' : (sev === 'error' ? 'bg-rose-400' : 'bg-amber-400');
+                const badge = ok ? '通过' : (sev === 'error' ? '失败' : '告警');
+                const title = String(item?.title || '--');
+                const detail = String(item?.detail || '--');
+                const isDataSourceConnectivity = !ok && title.includes('数据源连通性');
+                const hints = !ok ? deriveOnboardingFailureHints(detail) : [];
+                const sop = (!ok && item?.sop && typeof item.sop === 'object') ? item.sop : null;
+                return `<details class="rounded border border-slate-700 bg-slate-950/40 px-3 py-2 text-xs">
+                    <summary class="cursor-pointer select-none">
+                        <div class="inline-flex items-center gap-2"><span class="w-2 h-2 rounded-full ${dot}"></span><span class="text-slate-100 font-semibold">${escapeOnboardingHtml(title)}</span><span class="ml-1 text-[10px] text-slate-400">${badge}</span></div>
+                    </summary>
+                    <div class="mt-2">
+                    <div class="flex items-center gap-2"><span class="w-2 h-2 rounded-full ${dot}"></span><span class="text-slate-100 font-semibold">${escapeOnboardingHtml(title)}</span><span class="ml-auto text-[10px] text-slate-400">${badge}</span></div>
+                    <div class="mt-1 text-slate-400 break-all">${escapeOnboardingHtml(detail)}</div>
+                    ${(!ok && hints.length)
+                        ? `<div class="mt-2 text-[11px] text-amber-200 space-y-1">${hints.map(h => `<div>• ${escapeOnboardingHtml(h)}</div>`).join('')}</div>`
+                        : ''}
+                    ${(!ok && sop) ? renderOnboardingSopStepsBlock(sop, 'amber') : ''}
+                    ${(!ok)
+                        ? `<div class="mt-2 flex items-center gap-2 flex-wrap">
+                            <button type="button" onclick="copyOnboardingFailureDetail(${idx})" class="bg-slate-700 hover:bg-slate-600 text-white px-2 py-1 rounded text-[11px] border border-slate-500">复制失败详情</button>
+                            <button type="button" onclick="runOnboardingHealthCheck()" class="bg-cyan-700 hover:bg-cyan-600 text-white px-2 py-1 rounded text-[11px] border border-cyan-500">立即重试</button>
+                            ${isDataSourceConnectivity ? '<button type="button" onclick="openOnboardingDataSourceQuickFix()" class="bg-purple-700 hover:bg-purple-600 text-white px-2 py-1 rounded text-[11px] border border-purple-500">修复数据源配置</button>' : ''}
+                        </div>`
+                        : ''}
+                    ${(!ok && Array.isArray(item?.missing_keys) && item.missing_keys.length)
+                        ? `<div class="mt-2"><button type="button" onclick="onboardingLocateConfigPaths('${item.missing_keys.map(x => String(x || '').replace(/'/g, '')).join('|')}')" class="bg-purple-700 hover:bg-purple-600 text-white px-2 py-1 rounded text-[11px] border border-purple-500">定位失败项</button></div>`
+                        : ''}
+                    </div>
+                </details>`;
+            }).join('');
+            const hasDataSourceFailure = checks.some((item) => !item?.ok && String(item?.title || '').includes('数据源连通性'));
+            suggestionBox.innerHTML = suggestions.map((item) => {
+                const level = String(item?.level || 'info');
+                const color = level === 'error' ? 'text-rose-300 border-rose-800/50' : (level === 'warning' ? 'text-amber-300 border-amber-800/50' : 'text-cyan-300 border-cyan-800/50');
+                const cmd = String(item?.example_command || '').trim();
+                const locatePaths = Array.isArray(item?.locate_paths) ? item.locate_paths.map(x => String(x || '').replace(/'/g, '')).join('|') : '';
+                const canLocate = String(item?.action || '') === 'open_config' && !!locatePaths;
+                const sopSteps = Array.isArray(item?.sop_steps) ? item.sop_steps : [];
+                return `<div class="rounded border ${color} bg-slate-950/30 px-3 py-2 text-xs">
+                    <div class="font-semibold">${item?.title || '建议'}</div>
+                    <div class="mt-1 text-slate-300">${item?.detail || ''}</div>
+                    ${cmd ? `<div class="mt-1 font-mono text-[11px] text-slate-200">${cmd}</div>` : ''}
+                    ${canLocate ? `<div class="mt-2"><button type="button" onclick="onboardingLocateConfigPaths('${locatePaths}')" class="bg-purple-700 hover:bg-purple-600 text-white px-2 py-1 rounded text-[11px] border border-purple-500">一键跳转定位</button></div>` : ''}
+                    ${sopSteps.length ? `<div class="mt-2 text-[11px] text-amber-200 space-y-1">${sopSteps.map((s, i) => `<div>${i + 1}) ${escapeOnboardingHtml(String(s || ''))}</div>`).join('')}</div>` : ''}
+                </div>`;
+            }).join('');
+            // 在“建议区”顶部追加新手导向卡片，告诉用户先做什么、后做什么。
+            if (!ready && hasDataSourceFailure) {
+                const quickFixCard = `<div class="rounded border border-amber-700/50 bg-amber-900/10 px-3 py-2 text-xs mb-2">
+                    <div class="font-semibold text-amber-300">数据源失败快速修复（推荐顺序）</div>
+                    <div class="mt-1 text-slate-200">1) 点击“修复数据源配置”确认 source=duckdb 且 duckdb_path 正确；2) 保存后系统自动重试环境检查；3) 通过后直接“一键开始首单（默认策略05）”。</div>
+                    <div class="mt-2 flex items-center gap-2 flex-wrap">
+                        <button type="button" onclick="openOnboardingDataSourceQuickFix()" class="bg-purple-700 hover:bg-purple-600 text-white px-2 py-1 rounded text-[11px] border border-purple-500">修复数据源配置</button>
+                        <button type="button" onclick="runOnboardingHealthCheck()" class="bg-cyan-700 hover:bg-cyan-600 text-white px-2 py-1 rounded text-[11px] border border-cyan-500">立即重试</button>
+                    </div>
+                </div>`;
+                suggestionBox.innerHTML = quickFixCard + suggestionBox.innerHTML;
+            }
+        }
+
+        // 打开配置中心并自动定位到失败字段，减少新手查找成本。
+        function onboardingLocateConfigPaths(rawPaths) {
+            const paths = String(rawPaths || '').split('|').map(x => String(x || '').trim()).filter(Boolean);
+            // 用户进入配置修复路径后挂起自动重试，保存成功后自动回检。
+            queueOnboardingAutoRetry('配置保存成功后自动重试环境检查');
+            closeOnboardingModal();
+            openConfigCenter();
+            const maxTry = 12;
+            let attempt = 0;
+            const locateOnce = () => {
+                attempt += 1;
+                if (currentConfigMode !== 'expert') {
+                    try { switchConfigMode('expert'); } catch (_) {}
+                }
+                let target = null;
+                for (const p of paths) {
+                    const el = document.querySelector(`#config-form-container [data-path="${p}"]`);
+                    if (el) {
+                        target = el;
+                        break;
+                    }
+                }
+                if (!target) {
+                    if (attempt < maxTry) {
+                        setTimeout(locateOnce, 220);
+                    } else {
+                        logMessage('SYSTEM', `未定位到字段：${paths.join(', ')}`, 'warning');
+                    }
+                    return;
+                }
+                const fieldWrap = target.closest('.grid') || target.closest('label') || target;
+                if (fieldWrap && typeof fieldWrap.scrollIntoView === 'function') {
+                    fieldWrap.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+                target.classList.add('ring-2', 'ring-rose-400');
+                setTimeout(() => target.classList.remove('ring-2', 'ring-rose-400'), 1600);
+                logMessage('SYSTEM', `已定位失败配置项：${paths.join(', ')}`, 'warning');
+                trackWorkflowAction('onboarding_locate_config_paths', { paths: paths });
+            };
+            setTimeout(locateOnce, 220);
+        }
+
+        // 执行新手环境检查：后端返回“可运行性”诊断与修复建议。
+        async function runOnboardingHealthCheck() {
+            const btn = document.getElementById('onboarding-check-btn');
+            const summary = document.getElementById('onboarding-run-summary');
+            if (btn) btn.disabled = true;
+            if (summary) summary.innerText = '检查中...';
+            try {
+                const switched = await ensureOnboardingDefaultDuckdb();
+                if (switched && summary) summary.innerText = '已切换默认数据源为 duckdb，继续检查中...';
+                const stock = normalizeCode(document.getElementById('stock-search-input')?.value || '600036.SH');
+                const { res, data } = await fetchJsonWithTimeout(`/api/onboarding/health_check?stock_code=${encodeURIComponent(stock)}`, {}, 15000);
+                if (!res.ok || String(data?.status || '') !== 'success') {
+                    throw new Error(data?.msg || `health_check failed (${res.status})`);
+                }
+                renderOnboardingHealthCheckResult(data);
+                logMessage('SYSTEM', data?.ready ? '新手环境检查通过，可直接回测' : '新手环境检查未通过，请按建议修复', data?.ready ? 'success' : 'warning');
+                trackWorkflowAction('run_onboarding_health_check', { ready: !!data?.ready, provider: data?.provider_source || '' });
+            } catch (e) {
+                if (summary) summary.className = 'text-xs text-rose-300';
+                if (summary) summary.innerText = `检查失败: ${e}`;
+                logMessage('SYSTEM', `新手环境检查失败: ${e}`, 'danger');
+            } finally {
+                if (btn) btn.disabled = false;
+            }
+        }
+
+        // 主线快捷动作：统一把“选策略/配参数/回测/进阶”串成低学习成本入口。
+        function handleWorkflowQuickAction(action) {
+            const a = String(action || '').trim().toLowerCase();
+            if (!a) return;
+            // 主线按钮统一埋点，后续可用于识别用户最常断点步骤。
+            trackWorkflowAction(a, { source: 'workflow_bar' });
+            if (a === 'strategy') {
+                const trigger = document.getElementById('strategy-multi-btn');
+                if (trigger && typeof trigger.focus === 'function') trigger.focus();
+                if (trigger) {
+                    trigger.classList.add('ring-2', 'ring-cyan-400');
+                    setTimeout(() => trigger.classList.remove('ring-2', 'ring-cyan-400'), 1200);
+                }
+                return;
+            }
+            if (a === 'config') {
+                openConfigCenter();
+                return;
+            }
+            if (a === 'backtest') {
+                startBacktest();
+                return;
+            }
+            if (a === 'ops') {
+                openOpsHubModal();
+                return;
+            }
+        }
+
         function openFeatureFromHub(target) {
             const t = String(target || '').trim().toLowerCase();
             if (!t) return;
@@ -10351,6 +11068,17 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 // 配置变更后强制刷新一次 LLM 状态灯，避免展示旧缓存。
                 await refreshLlmStatusLamp(true);
                 logMessage('SYSTEM', `配置保存成功并已生效（模式=${savedMode}，近似实时生效=${liveReady ? '是' : '否'}）`, 'success');
+                // 自动重试队列：若由新手修复路径进入，则保存成功后自动回到新手引导并触发检查。
+                if (onboardingAutoRetryPending) {
+                    const reason = String(onboardingAutoRetryReason || '配置已更新，自动重试环境检查').trim();
+                    onboardingAutoRetryPending = false;
+                    onboardingAutoRetryReason = '';
+                    logMessage('SYSTEM', reason, 'system');
+                    setTimeout(async () => {
+                        openOnboardingModal();
+                        await runOnboardingHealthCheck();
+                    }, 350);
+                }
 
                 // Reset compliance flag after successful save
                 tdxLiveComplianceAcknowledged = false;
@@ -16212,6 +16940,10 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
         loadEvolutionFamilyAlertPresetPreference();
         loadEvolutionFamilyAlertThresholdPreference();
         loadOpsHubPinState();
+        // 启动时恢复“操作主线”折叠偏好。
+        loadWorkflowMainlineCollapsedPreference();
+        // 启动时恢复新手引导点击计数，前3次点击前入口持续闪动提示。
+        loadOnboardingGuideClickCount();
         applyInitialDisclaimerState();
         // 同时监听 change/input/click，提升在不同浏览器与壳环境中的兼容性。
         document.getElementById('disclaimer-agree-checkbox')?.addEventListener('change', syncDisclaimerAccessState);
@@ -16225,6 +16957,10 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
         });
         document.getElementById('webhook-retry-modal')?.addEventListener('click', (e) => {
             if (e.target && e.target.id === 'webhook-retry-modal') closeWebhookRetryCenter();
+        });
+        document.getElementById('onboarding-modal')?.addEventListener('click', (e) => {
+            // 点击新手引导遮罩关闭弹层，保留与其它弹窗一致的交互体验。
+            if (e.target && e.target.id === 'onboarding-modal') closeOnboardingModal();
         });
         document.getElementById('fundamental-detail-modal')?.addEventListener('click', (e) => {
             if (e.target && e.target.id === 'fundamental-detail-modal') closeFundamentalDetailModal();
@@ -16292,6 +17028,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             } catch (_) {}
             if (e && e.key === 'Escape') {
                 closeOpsHubModal();
+                closeOnboardingModal();
                 closeFundamentalModuleDetailModal();
                 closeFundamentalDetailModal();
                 closeEvolutionTopDetail();
