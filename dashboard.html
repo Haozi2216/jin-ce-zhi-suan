@@ -1379,7 +1379,7 @@
                             <button onclick="openFeatureFromHub('webhook')" class="bg-amber-700 hover:bg-amber-600 text-white px-3 py-2 rounded text-xs border border-amber-500">推送补偿</button>
                             <button onclick="openFeatureFromHub('pattern')" class="bg-slate-700 hover:bg-slate-600 text-white px-3 py-2 rounded text-xs border border-slate-500">经典形态</button>
                             <button onclick="openFeatureFromHub('evolution')" class="bg-cyan-700 hover:bg-cyan-600 text-white px-3 py-2 rounded text-xs border border-cyan-500">策略进化</button>
-                            <button onclick="openFeatureFromHub('screener')" class="bg-emerald-700 hover:bg-emerald-600 text-white px-3 py-2 rounded text-xs border border-emerald-500">条件筛选</button>
+                            <!-- <button onclick="openFeatureFromHub('screener')" class="bg-emerald-700 hover:bg-emerald-600 text-white px-3 py-2 rounded text-xs border border-emerald-500">条件筛选</button> -->
                         </div>
                     </div>
                 </div>
@@ -1877,7 +1877,7 @@
                             <button onclick="nextScreenerPage()" class="bg-slate-700 hover:bg-slate-600 text-white px-2 py-1 rounded text-xs border border-slate-500">下一页</button>
                             <span class="w-px h-5 bg-slate-700 mx-1"></span>
                             <button onclick="addToStockPool()" class="bg-cyan-700 hover:bg-cyan-600 text-white px-2 py-1 rounded text-xs border border-cyan-500">加入标的池</button>
-                            <button onclick="sendToBacktest()" class="bg-indigo-700 hover:bg-indigo-600 text-white px-2 py-1 rounded text-xs border border-indigo-500">发送到回测</button>
+                            <button id="screener-send-backtest-btn" onclick="sendToBacktest()" class="bg-indigo-700 hover:bg-indigo-600 text-white px-2 py-1 rounded text-xs border border-indigo-500">发送到回测</button>
                             <button onclick="exportScreenerCSV()" class="bg-slate-700 hover:bg-slate-600 text-white px-2 py-1 rounded text-xs border border-slate-500">导出CSV</button>
                         </div>
                     </div>
@@ -1905,8 +1905,9 @@
                         <input id="screener-bt-capital" type="number" min="10000" step="10000" value="1000000" class="ml-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-white font-mono w-24" />
                     </label>
                     <span class="text-[11px] text-slate-500">计算以上策略模型在历史上的收益</span>
-                    <button onclick="startScreenerBacktest()" class="bg-emerald-700 hover:bg-emerald-600 text-white px-4 py-1.5 rounded text-xs border border-emerald-500 font-bold">开始回测</button>
+                    <button id="screener-start-backtest-btn" onclick="startScreenerBacktest()" class="bg-emerald-700 hover:bg-emerald-600 text-white px-4 py-1.5 rounded text-xs border border-emerald-500 font-bold">开始回测</button>
                 </div>
+                <div id="screener-backtest-compliance-tip" class="mt-2 text-[11px] text-amber-300"></div>
             </div>
         </div>
     </div>
@@ -1926,6 +1927,7 @@
             </div>
             <div class="px-4 py-2 text-xs text-slate-400 border-b border-slate-700">
                 输入你的策略描述，大模型会自动解析为筛选条件。高亮项为筛选器可直接执行，其余条件将进入回测引擎执行。
+                <div id="screener-ai-compliance-tip" class="mt-1 text-[11px] text-amber-300"></div>
             </div>
             <div class="px-4 py-3 space-y-3">
                 <textarea id="screener-ai-input" rows="6" class="w-full bg-slate-950 border border-slate-700 rounded p-3 text-sm text-slate-200 font-mono resize-none" placeholder="输入策略描述，例如：&#10;入场条件：五日内有涨停的主板股票，涨停后5日内当天成交量小于涨停那日成交量的一半，尾盘14:55分买入，买入次日涨幅到达四个点卖出一半八个点卖出全部，如果跌幅大于四个点止损一半，大于6个点全部止损。如果都没满足买卖条件，在下午择高点卖出。每日尾盘进行筛选股票池，选出3只股票分三成仓买。"></textarea>
@@ -3156,6 +3158,21 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
         const EVOLUTION_FAMILY_ALERT_PRESET_KEY = 'jince-evolution-family-alert-preset-v1';
         const DISCLAIMER_ACCEPT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
         let currentServerBootId = '';
+        // 条件筛选模块合规文案：统一维护，避免多处散落难以审计。
+        const SCREENER_COMPLIANCE_COPY = {
+            ai: 'AI解析仅用于策略研究与条件结构化，不构成买卖建议。',
+            backtest: '回测结果基于历史数据，不代表未来表现，不构成收益承诺。'
+        };
+        // 条件筛选相关高风险营销词：命中后前端直接拦截，降低对外文案风险。
+        const SCREENER_SENSITIVE_PHRASES = [
+            '稳赚不赔',
+            '保本保收益',
+            '保证收益',
+            '无风险',
+            '躺赚',
+            '必涨',
+            '精准买点'
+        ];
         const STRATEGY_GUIDE = {
             all: {
                 name: '全部策略总览',
@@ -8178,6 +8195,8 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
         }
 
         async function sendToBacktest() {
+            // 合规前置：未通过免责声明确认时禁止触发回测。
+            if (!disclaimerAccepted) { alert('请先勾选免责声明并进入系统后再执行回测'); return; }
             const codes = getSelectedCodes();
             if (!codes.length) { alert('请先勾选标的'); return; }
             // Use the first selected code for backtest, or let user know
@@ -8234,6 +8253,8 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
         }
 
         async function startScreenerBacktest() {
+            // 合规前置：未通过免责声明确认时禁止触发回测。
+            if (!disclaimerAccepted) { alert('请先勾选免责声明并进入系统后再执行回测'); return; }
             const codes = getSelectedCodes();
             if (!codes.length) { alert('请先筛选并勾选标的'); return; }
             const start = document.getElementById('screener-bt-start')?.value;
@@ -8304,6 +8325,62 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
 
         // ==================== AI 策略解析 ====================
         let aiParsedData = null;
+        // 兼容后端多形态返回：将规则统一转换为数组，避免 forEach 报错。
+        function normalizeRuleList(rawRules) {
+            if (Array.isArray(rawRules)) return rawRules;
+            if (rawRules && typeof rawRules === 'object') return Object.values(rawRules).filter(Boolean);
+            if (typeof rawRules === 'string') return rawRules.split('\n').map((x) => x.trim()).filter(Boolean);
+            return [];
+        }
+
+        // 兼容后端多形态返回：筛选条件统一转换为数组。
+        function normalizeConditionList(rawConditions) {
+            if (Array.isArray(rawConditions)) return rawConditions;
+            if (rawConditions && typeof rawConditions === 'object') return Object.values(rawConditions).filter(Boolean);
+            return [];
+        }
+
+        // 检测高风险词，用于 AI 描述输入拦截和后续文案复用。
+        function detectComplianceSensitivePhrases(text) {
+            const safeText = String(text || '');
+            return SCREENER_SENSITIVE_PHRASES.filter((phrase) => safeText.includes(phrase));
+        }
+
+        // 统一文案校验出口，返回结构化结果便于 UI 复用。
+        function validateComplianceSensitiveText(text, sceneLabel) {
+            const hits = detectComplianceSensitivePhrases(text);
+            if (!hits.length) return { ok: true, message: '' };
+            return {
+                ok: false,
+                message: `${sceneLabel || '文案'}包含高风险词：${hits.join('、')}，请调整后再继续。`
+            };
+        }
+
+        // 渲染条件筛选区的固定合规提示文案。
+        function renderScreenerComplianceCopy() {
+            const aiTip = document.getElementById('screener-ai-compliance-tip');
+            const btTip = document.getElementById('screener-backtest-compliance-tip');
+            if (aiTip) aiTip.textContent = SCREENER_COMPLIANCE_COPY.ai;
+            if (btTip) btTip.textContent = SCREENER_COMPLIANCE_COPY.backtest;
+        }
+
+        // 统一按钮可用状态，防止遗漏属性和样式同步。
+        function applyComplianceButtonState(btn, enabled) {
+            if (!btn) return;
+            btn.disabled = !enabled;
+            btn.classList.toggle('opacity-50', !enabled);
+            btn.classList.toggle('cursor-not-allowed', !enabled);
+        }
+
+        // 将免责声明状态联动到筛选区关键按钮。
+        function refreshScreenerComplianceButtonsState() {
+            const parseBtn = document.getElementById('screener-ai-parse-btn');
+            const sendBtn = document.getElementById('screener-send-backtest-btn');
+            const startBtn = document.getElementById('screener-start-backtest-btn');
+            applyComplianceButtonState(parseBtn, disclaimerAccepted);
+            applyComplianceButtonState(sendBtn, disclaimerAccepted);
+            applyComplianceButtonState(startBtn, disclaimerAccepted);
+        }
 
         function openScreenerAIParser() {
             const modal = document.getElementById('screener-ai-parser-modal');
@@ -8329,6 +8406,13 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             if (!text) { alert('请输入策略描述'); return; }
             const status = document.getElementById('screener-ai-status');
             const btn = document.getElementById('screener-ai-parse-btn');
+            // 先做敏感词拦截，避免高风险描述继续流入后续流程。
+            const complianceResult = validateComplianceSensitiveText(text, '策略描述');
+            if (!complianceResult.ok) {
+                status.textContent = complianceResult.message;
+                alert(complianceResult.message);
+                return;
+            }
             status.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-1"></i> 大模型解析中...';
             btn.disabled = true;
             btn.classList.add('opacity-50', 'cursor-not-allowed');
@@ -8362,7 +8446,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
 
             // 渲染筛选条件
             const screenDiv = document.getElementById('screener-ai-screen-conditions');
-            const conditions = parsedData.screen_conditions || [];
+            const conditions = normalizeConditionList(parsedData?.screen_conditions);
             if (conditions.length === 0) {
                 screenDiv.innerHTML = '<div class="text-slate-500">无可直接执行的筛选条件</div>';
             } else {
@@ -8379,7 +8463,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
 
             // 渲染执行规则
             const execDiv = document.getElementById('screener-ai-execution-rules');
-            const rules = parsedData.execution_rules || [];
+            const rules = normalizeRuleList(parsedData?.execution_rules);
             if (rules.length === 0) {
                 execDiv.innerHTML = '<div class="text-slate-500">无买卖执行规则</div>';
             } else {
@@ -16841,6 +16925,8 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 enterBtn.classList.add('cursor-not-allowed', 'opacity-60', 'bg-blue-600/50');
                 enterBtn.classList.remove('hover:bg-blue-500', 'bg-blue-600');
             }
+            // 同步筛选区按钮可用状态，保证“免责声明 -> 功能按钮”联动一致。
+            refreshScreenerComplianceButtonsState();
         }
 
         function updateDisclaimerAccess() {
@@ -16871,6 +16957,8 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 }
             } catch (_) {}
             overlay.classList.remove('active');
+            // 进入系统后刷新一次按钮状态，避免某些壳环境事件延迟。
+            refreshScreenerComplianceButtonsState();
         }
         // 强制暴露到 window：兼容内联事件、不同壳环境与脚本作用域差异。
         window.syncDisclaimerAccessState = syncDisclaimerAccessState;
@@ -16944,7 +17032,11 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
         loadWorkflowMainlineCollapsedPreference();
         // 启动时恢复新手引导点击计数，前3次点击前入口持续闪动提示。
         loadOnboardingGuideClickCount();
+        // 首屏渲染条件筛选区合规文案。
+        renderScreenerComplianceCopy();
         applyInitialDisclaimerState();
+        // 首屏先按当前免责声明状态初始化按钮状态。
+        refreshScreenerComplianceButtonsState();
         // 同时监听 change/input/click，提升在不同浏览器与壳环境中的兼容性。
         document.getElementById('disclaimer-agree-checkbox')?.addEventListener('change', syncDisclaimerAccessState);
         document.getElementById('disclaimer-agree-checkbox')?.addEventListener('input', syncDisclaimerAccessState);
