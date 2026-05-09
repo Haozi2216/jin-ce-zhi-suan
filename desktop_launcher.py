@@ -434,13 +434,21 @@ def _install_windows_socketpair_patch():
     - send()/close()/setblocking() 均为空操作。
     - 自唤醒在 Windows ProactorEventLoop 中本质是非必需的，
       因为信号机制在 Windows 上基本无效。
-    - 通过环境变量 JZ_PATCH_SOCKETPAIR 控制开关（默认开启）。
+    - 通过环境变量 JZ_PATCH_SOCKETPAIR 控制开关（默认关闭）。
     """
     if sys.platform != "win32" or (not getattr(sys, "frozen", False)):
         return
-    enabled = str(os.environ.get("JZ_PATCH_SOCKETPAIR", "1") or "").strip()
+    # 默认关闭该补丁：在 ProactorEventLoop 下假 socket 会导致 IOCP 注册失败（WinError 87）。
+    # 若确需启用，请显式设置 JZ_PATCH_SOCKETPAIR=1（仅建议用于特定机器的 selector 兼容排障）。
+    enabled = str(os.environ.get("JZ_PATCH_SOCKETPAIR", "0") or "").strip()
     if enabled != "1":
-        print("[desktop] Skip socketpair patch (JZ_PATCH_SOCKETPAIR!=1)")
+        print("[desktop] Skip socketpair patch (JZ_PATCH_SOCKETPAIR!=1, default disabled)")
+        return
+
+    # Proactor 模式下禁止应用假 socketpair 补丁，否则会触发 event loop self-pipe 注册错误。
+    loop_policy = str(os.environ.get("JZ_EVENT_LOOP_POLICY", "proactor") or "").strip().lower()
+    if loop_policy == "proactor":
+        print("[desktop] Skip socketpair patch for ProactorEventLoop")
         return
 
     try:
@@ -646,6 +654,8 @@ def _server_thread_target(port):
         # 记录服务线程 ID，供 watchdog 定位当前执行栈。
         server_tid = threading.get_ident()
         _ensure_deps_in_path()
+        # 在设置事件循环策略前读取策略配置，供 socketpair 补丁做安全分流判断。
+        loop_policy = str(os.environ.get("JZ_EVENT_LOOP_POLICY", "proactor") or "").strip().lower()
         _install_windows_socketpair_patch()
 
         server_dir = _bundle_path("")
@@ -685,7 +695,6 @@ def _server_thread_target(port):
         # 可通过环境变量 JZ_EVENT_LOOP_POLICY 覆盖：
         #   proactor / selector / auto
         if sys.platform == "win32" and getattr(sys, "frozen", False):
-            loop_policy = str(os.environ.get("JZ_EVENT_LOOP_POLICY", "proactor") or "").strip().lower()
             if loop_policy == "selector":
                 try:
                     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
