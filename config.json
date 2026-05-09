@@ -65,7 +65,7 @@
     "postgres_table_30min": "dat_30mins",
     "postgres_table_60min": "dat_60mins",
     "postgres_table_day": "dat_day",
-    "duckdb_path": "G:\\duckdb\\quantifydata.duckdb",
+    "duckdb_path": "databases/duckdb/quantifydata.duckdb",
     "duckdb_query_page_size": 20000,
     "duckdb_table_1min": "dat_1mins",
     "duckdb_table_5min": "dat_5mins",

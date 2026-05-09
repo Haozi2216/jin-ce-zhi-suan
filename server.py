@@ -1836,7 +1836,7 @@ def _match_onboarding_error_sop(detail: str, source: str) -> Dict[str, Any]:
             "patterns": ["401", "403", "unauthorized", "forbidden", "invalid token", "token invalid", "api key"],
             "steps": [
                 "打开配置中心检查 default_api_key / tushare_token 是否为空或过期。",
-                "确认私有配置文件已保存（private_config_path）。",
+                "确认密钥字段已填写并成功保存。",
                 "保存配置后等待自动重试，或手动点击“开始环境检查”。"
             ]
         },
@@ -2091,25 +2091,113 @@ def _required_config_keys_for_source(source: str) -> List[str]:
     # akshare / duckdb / tdx 在默认形态下可以先不强制额外键。
     return []
 
-def _build_onboarding_suggestions(source: str, missing_keys: List[str], private_exists: bool, provider_error_sop: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+def _build_onboarding_data_source_guide(source: str, missing_keys: List[str], provider_error_sop: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    # 按数据源类型生成“自备数据源”引导，避免新手只看到抽象报错而不知道下一步动作。
+    src = str(source or "default").strip().lower()
+    sop = provider_error_sop if isinstance(provider_error_sop, dict) else {}
+    sop_code = str(sop.get("code") or "").strip().upper()
+    # 触发条件：缺少关键配置，或连通性检测已有失败上下文（存在错误编码）。
+    should_show = bool(missing_keys) or bool(sop_code)
+    if not should_show:
+        return None
+
+    if src == "duckdb":
+        return {
+            "level": "warning",
+            "title": "自备数据源引导（DuckDB）",
+            "detail": "请自备 DuckDB 行情库文件，并确保 duckdb_path 指向可读文件，且表名与配置一致。",
+            "action": "open_config",
+            "locate_paths": ["data_provider.source", "data_provider.duckdb_path", "data_provider.duckdb_table_day", "data_provider.duckdb_table_1min"],
+            "sop_steps": [
+                "准备本地 DuckDB 文件（建议先验证能打开）。",
+                "在配置中心设置 source=duckdb，并填写 duckdb_path。",
+                "核对 duckdb_table_day / duckdb_table_1min 表名后重试检查。",
+            ],
+        }
+    if src == "mysql":
+        return {
+            "level": "warning",
+            "title": "自备数据源引导（MySQL）",
+            "detail": "请自备 MySQL 行情库并确认账号可读；主机、端口、库名和分钟/日线表名需与配置一致。",
+            "action": "open_config",
+            "locate_paths": ["data_provider.source", "data_provider.mysql_host", "data_provider.mysql_port", "data_provider.mysql_user", "data_provider.mysql_password", "data_provider.mysql_database", "data_provider.mysql_table_day", "data_provider.mysql_table_1min"],
+            "sop_steps": [
+                "确认 MySQL 服务可访问且账号具备查询权限。",
+                "配置 mysql_host/mysql_port/mysql_user/mysql_password/mysql_database。",
+                "核对 mysql_table_day / mysql_table_1min 表存在后重试检查。",
+            ],
+        }
+    if src == "postgresql":
+        return {
+            "level": "warning",
+            "title": "自备数据源引导（PostgreSQL）",
+            "detail": "请自备 PostgreSQL 行情库并确认连接可用；schema、库名与分钟/日线表名需匹配。",
+            "action": "open_config",
+            "locate_paths": ["data_provider.source", "data_provider.postgres_host", "data_provider.postgres_port", "data_provider.postgres_user", "data_provider.postgres_password", "data_provider.postgres_database", "data_provider.postgres_schema", "data_provider.postgres_table_day", "data_provider.postgres_table_1min"],
+            "sop_steps": [
+                "确认 PostgreSQL 服务可连接且账号具备查询权限。",
+                "配置 postgres_host/postgres_port/postgres_user/postgres_password/postgres_database。",
+                "核对 schema 与 postgres_table_day / postgres_table_1min 后重试检查。",
+            ],
+        }
+    if src == "tdx":
+        return {
+            "level": "warning",
+            "title": "自备数据源引导（TDX）",
+            "detail": "请准备本地 TDX 数据目录（vipdoc 上级）或可用节点；目录/节点配置错误会导致连通失败。",
+            "action": "open_config",
+            "locate_paths": ["data_provider.source", "data_provider.tdxdir", "data_provider.tdx_host", "data_provider.tdx_port", "data_provider.tdx_node_list"],
+            "sop_steps": [
+                "Windows 建议优先配置本地 tdxdir（vipdoc 上级目录）。",
+                "若走网络节点，核对 tdx_host/tdx_port 或 tdx_node_list。",
+                "保存后执行环境检查确认可拉取行情。",
+            ],
+        }
+    if src == "tushare":
+        return {
+            "level": "warning",
+            "title": "自备数据源引导（TuShare）",
+            "detail": "请准备可用的 TuShare 账号 Token；Token 无效或网络不可达会导致检测失败。",
+            "action": "open_config",
+            "locate_paths": ["data_provider.source", "data_provider.tushare_token"],
+            "sop_steps": [
+                "在 tushare.pro 获取可用 token。",
+                "配置 source=tushare 并填写 tushare_token。",
+                "重试环境检查并确认基础行情可读取。",
+            ],
+        }
+    if src == "default":
+        return {
+            "level": "warning",
+            "title": "自备数据源引导（默认API）",
+            "detail": "请自备可访问的 HTTP 数据服务（默认API模式），并确认 URL 与 API Key 可用。",
+            "action": "open_config",
+            "locate_paths": ["data_provider.source", "data_provider.default_api_url", "data_provider.default_api_key"],
+            "sop_steps": [
+                "准备可访问的行情 API 服务地址。",
+                "配置 default_api_url 与 default_api_key。",
+                "重试环境检查确认接口返回正常。",
+            ],
+        }
+    return {
+        "level": "warning",
+        "title": f"自备数据源引导（{src or 'unknown'}）",
+        "detail": "当前数据源连通异常，请先准备可用数据源并在配置中心补齐连接参数。",
+        "action": "open_config",
+        "locate_paths": ["data_provider.source"],
+    }
+
+def _build_onboarding_suggestions(source: str, missing_keys: List[str], provider_error_sop: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     # 生成可执行修复建议，供前端“新手引导”直接展示。
     suggestions: List[Dict[str, Any]] = []
     src = str(source or "default").strip().lower()
     # 是否存在失败/告警上下文：仅在有问题时展示模式建议，避免“全通过仍提示”。
-    has_issue_context = (not bool(private_exists)) or bool(missing_keys)
+    has_issue_context = bool(missing_keys)
     # 将错误知识库映射结果沉淀为统一SOP建议，便于前端运营化展示。
     sop = provider_error_sop if isinstance(provider_error_sop, dict) else {}
     sop_steps = sop.get("steps") if isinstance(sop.get("steps"), list) else []
     if sop_steps:
         has_issue_context = True
-    if not private_exists:
-        suggestions.append({
-            "level": "warning",
-            "title": "创建私有配置文件",
-            "detail": "未检测到 config.private.json，建议先创建私有配置并保存密钥。",
-            "action": "open_config",
-            "example_command": "copy config.private.json.example config.private.json"
-        })
     if missing_keys:
         joined = ", ".join(missing_keys)
         suggestions.append({
@@ -2119,6 +2207,10 @@ def _build_onboarding_suggestions(source: str, missing_keys: List[str], private_
             "action": "open_config",
             "locate_paths": missing_keys
         })
+    # 按数据源类型补充“自备数据源”引导，解决“知道失败但不知道如何准备数据源”的问题。
+    source_guide = _build_onboarding_data_source_guide(src, missing_keys, provider_error_sop=sop)
+    if isinstance(source_guide, dict) and source_guide:
+        suggestions.append(source_guide)
     if src == "default" and has_issue_context:
         suggestions.append({
             "level": "info",
@@ -8935,17 +9027,7 @@ async def api_onboarding_health_check(stock_code: str = "000001.SZ"):
         # 新手引导默认数据源：当未显式配置或仍为 default 时，按 duckdb 路径检查。
         src = "duckdb" if raw_src in {"", "default"} else raw_src
         code = str(stock_code or "").strip().upper() or "000001.SZ"
-        private_path = _private_config_path()
-        private_exists = os.path.exists(private_path)
-
         checks: List[Dict[str, Any]] = []
-        checks.append({
-            "id": "private_config",
-            "title": "私有配置文件",
-            "ok": bool(private_exists),
-            "severity": "warning",
-            "detail": f"{'已检测到' if private_exists else '未检测到'}: {private_path}"
-        })
 
         required_keys = _required_config_keys_for_source(src)
         missing_keys = [k for k in required_keys if not _is_onboarding_value_present(cfg.get(k, None))]
@@ -9009,7 +9091,8 @@ async def api_onboarding_health_check(stock_code: str = "000001.SZ"):
             "checks": checks,
             "errors": errors,
             "warnings": warnings,
-            "suggestions": _build_onboarding_suggestions(src, missing_keys, private_exists, provider_error_sop=provider_sop),
+            # 新手引导仅聚焦“可运行性”，不再输出私有路径相关检查建议。
+            "suggestions": _build_onboarding_suggestions(src, missing_keys, provider_error_sop=provider_sop),
         }
     except Exception as e:
         logger.error(f"/api/onboarding/health_check failed: {e}", exc_info=True)

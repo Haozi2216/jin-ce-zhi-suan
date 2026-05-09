@@ -35,6 +35,20 @@ class DuckDbProvider:
 
     def _resolve_db_path(self):
         raw = str(self.db_path or "").strip()
+        # 打包运行时强制使用内置 DuckDB 相对路径（忽略前台配置项），保证部署后路径稳定。
+        if getattr(sys, "frozen", False):
+            packaged_rel = os.path.join("databases", "duckdb", "quantifydata.duckdb")
+            meipass = getattr(sys, "_MEIPASS", None)
+            if meipass:
+                packaged_in_meipass = os.path.join(meipass, packaged_rel)
+                if os.path.exists(packaged_in_meipass):
+                    return packaged_in_meipass
+            exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+            packaged_in_exe_dir = os.path.join(exe_dir, packaged_rel)
+            if os.path.exists(packaged_in_exe_dir):
+                return packaged_in_exe_dir
+            # 兜底返回相对路径，便于日志中明确展示期望路径。
+            return packaged_rel
         if not raw:
             return ""
         if raw == ":memory:" or os.path.isabs(raw) and os.path.exists(raw):
