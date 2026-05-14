@@ -63,8 +63,18 @@ from src.utils.tdx_provider import TdxProvider
 from src.utils.history_sync_service import HistoryDiffSyncService, TABLE_INTERVAL_MAP, DEFAULT_SYNC_TABLES
 from src.utils.backtest_baseline import apply_backtest_baseline
 from src.utils.webhook_notifier import WebhookNotifier
-from src.utils.screener_data_provider import get_filter_options, get_catalog, apply_filters
-from src.strategy_intent.screener_parser import parse_strategy_to_conditions
+from src.utils.screener_data_provider import (
+    get_filter_options,
+    get_catalog,
+    apply_filters,
+    get_data_source_documentation,
+)
+from src.strategy_intent.screener_parser import parse_strategy_to_conditions, SYSTEM_PROMPT as SCREENER_PARSE_SYSTEM_PROMPT
+from src.evolution.adapters.nl_screener_skill import run_nl_screener_skill, SYSTEM_PROMPT_V1 as SCREENER_AI_FILTER_SYSTEM_PROMPT
+from src.evolution.adapters.screener_strategy_demo_adapter import (
+    list_screener_prompt_examples,
+)
+from src.evolution.adapters.tdx_formula_batch_adapter import TdxFormulaBatchAdapter, TdxFormulaBatchRunConfig
 from src.tdx.formula_compiler import compile_tdx_formula, get_tdx_compile_capabilities
 from src.tdx.terminal_bridge import TdxTerminalBridge
 from src.utils.blk_loader import parse_blk_file, parse_blk_text
@@ -73,6 +83,7 @@ from src.evolution.adapters.fundamental_adapter import FundamentalAdapterManager
 from src.evolution.memory.gene_run_store import PostgresGeneRunRepository
 from src.evolution.memory.profile_update_store import PostgresProfileUpdateRepository
 from src.evolution.memory.analysis_store import AnalysisStore
+from src.evolution.memory.screener_history_store import ScreenerHistoryStore
 from src.evolution.adapters.gene_strategy_adapter import GeneStrategyAdapter
 from src.evolution.adapters.llm_gateway_adapter import build_unified_llm_client
 from src.evolution.platform.platform_hub import EvolutionPlatformHub
@@ -256,22 +267,6 @@ backtest_kline_payload_cache = {}
 BACKTEST_KLINE_PAYLOAD_CACHE_TTL_SECONDS = 8
 BACKTEST_KLINE_PAYLOAD_CACHE_MAX_ITEMS = 120
 report_strategy_kline_cache = {}
-# LLM 健康状态缓存：用于 /api/llm/status，避免频繁探活导致额外开销。
-LLM_STATUS_CACHE_TTL_SECONDS = 30
-LLM_STATUS_DEGRADED_SECONDS = 600
-llm_status_cache_lock = threading.Lock()
-llm_status_cache: Dict[str, Any] = {
-    "cached_at": 0.0,
-    "provider": "",
-    "model": "",
-    "health": "red",
-    "ok": False,
-    "msg": "未探活",
-    "latency_ms": None,
-    "preview": "",
-    "last_success_at": 0.0,
-    "error": "",
-}
 report_ai_review_cache = {}
 report_buffett_review_cache = {}
 fundamental_adapter_manager = FundamentalAdapterManager()
@@ -296,9 +291,11 @@ consistency_report_builder = ConsistencyReportBuilder()
 consistency_backtest_report_adapter = BacktestReportAdapter(REPORTS_DIR, REPORT_FILE_PREFIX, REPORT_FILE_SUFFIX)
 EVOLUTION_STORAGE_DIR = os.path.join("data", "evolution")
 EVOLUTION_ANALYSIS_DIR = os.path.join(EVOLUTION_STORAGE_DIR, "analysis")
+EVOLUTION_SCREENER_HISTORY_DIR = os.path.join(EVOLUTION_STORAGE_DIR, "screener_history")
 EVOLUTION_RUNS_DIR = os.path.join(EVOLUTION_STORAGE_DIR, "runs")
 EVOLUTION_FAMILY_DIR = os.path.join(EVOLUTION_STORAGE_DIR, "family")
 EVOLUTION_ANALYSIS_STORE = AnalysisStore(EVOLUTION_ANALYSIS_DIR)
+EVOLUTION_SCREENER_HISTORY_STORE = ScreenerHistoryStore(EVOLUTION_SCREENER_HISTORY_DIR)
 EVOLUTION_RUN_FILE_PREFIX = "evolution_run_"
 EVOLUTION_FAMILY_FILE_PREFIX = "evolution_family_"
 EVOLUTION_FILE_SUFFIX = ".json"
@@ -1273,11 +1270,15 @@ WEBHOOK_CATEGORY_OPTIONS = [
     {"value": "I", "label": "I 持仓手数", "desc": "持仓手数明细（live_position_lots）"},
     {"value": "J", "label": "J 回测进度", "desc": "回测进度与流程（backtest_progress/backtest_flow）"},
     {"value": "K", "label": "K 回测结果", "desc": "回测结果/失败/策略报告"},
-    {"value": "L", "label": "L 数据链路调试", "desc": "拉取K线/rt_min/stk_mins 等调试消息"}
+    {"value": "L", "label": "L 数据链路调试", "desc": "拉取K线/rt_min/stk_mins 等调试消息"},
+    {"value": "M", "label": "M 增量同步完成", "desc": "历史增量同步执行完成/结束通知"}
 ]
 
 def _webhook_system_category_by_msg(msg):
     text = str(msg or "")
+    # 增量同步收口通知需要可独立勾选，因此优先归类到单独的 M 类。
+    if ("增量同步执行完成" in text) or ("增量同步执行结束" in text):
+        return "M"
     if (
         ("正在拉取K线数据" in text)
         or ("实盘实时拉取: rt_min" in text)
@@ -3550,6 +3551,28 @@ class TdxImportPackRequest(BaseModel):
     skip_existing: bool = True
 
 
+class TdxFormulaBatchRunRequest(BaseModel):
+    # 公式包输入，字段与 /api/tdx/import_pack 的 item 保持一致。
+    formula_items: list[TdxImportPackItem]
+    # BLK 输入支持文件路径或直接文本（二选一或都传）。
+    blk_file_path: Optional[str] = None
+    blk_content: Optional[str] = None
+    # 任务与结果输出路径（任务路径会受 data/batch_tasks 安全限制）。
+    tasks_csv: Optional[str] = "data/batch_tasks/tdx_formula_batch_tasks.csv"
+    results_csv: Optional[str] = "data/批量回测结果.csv"
+    summary_csv: Optional[str] = "data/策略汇总评分.csv"
+    # 编排策略：均支持 append / replace。
+    strategy_pool_mode: Optional[str] = "append"
+    blk_import_mode: Optional[str] = "append"
+    generate_mode: Optional[str] = "append"
+    # 是否阻塞等待批量任务结束。
+    wait_until_done: bool = False
+    poll_seconds: int = 5
+    max_wait_seconds: int = 7200
+    # 回测服务地址，默认回环地址。
+    base_url: Optional[str] = "http://127.0.0.1:8000"
+
+
 class TdxGenerateFormulaRequest(BaseModel):
     prompt: str
     kline_type: Optional[str] = None
@@ -4171,11 +4194,36 @@ async def api_strategies():
 
 
 @app.get("/api/strategy_manager/list")
-async def api_strategy_manager_list(page: Optional[int] = None, page_size: Optional[int] = None, all: Optional[bool] = None):
+async def api_strategy_manager_list(
+    page: Optional[int] = None,
+    page_size: Optional[int] = None,
+    all: Optional[bool] = None,
+    category: Optional[str] = None,
+    keyword: Optional[str] = None,
+):
     try:
         rows = list_all_strategy_meta()
         out = []
+        # 支持按策略分类过滤，便于前端策略管理器快速定位。
+        category_filter = str(category or "").strip()
+        # 支持按关键词过滤（策略ID/名称/说明/原始需求）。
+        keyword_filter = str(keyword or "").strip().lower()
         for row in rows:
+            if category_filter:
+                row_cat = str(row.get("strategy_category", "")).strip()
+                if row_cat != category_filter:
+                    continue
+            if keyword_filter:
+                haystack = " ".join(
+                    [
+                        str(row.get("id", "")).strip(),
+                        str(row.get("name", "")).strip(),
+                        str(row.get("analysis_text", "")).strip(),
+                        str(row.get("raw_requirement", "")).strip(),
+                    ]
+                ).lower()
+                if keyword_filter not in haystack:
+                    continue
             sid = str(row.get("id", "")).strip()
             item = dict(row)
             sc = strategy_score_cache.get(sid, {})
@@ -4260,6 +4308,50 @@ async def api_strategy_manager_detail(strategy_id: str):
     except Exception as e:
         logger.error(f"/api/strategy_manager/detail failed: {e}", exc_info=True)
         return {"status": "error", "msg": str(e), "strategy": None}
+
+
+@app.get("/api/strategy_manager/prompt_from_strategy")
+async def api_strategy_manager_prompt_from_strategy(strategy_id: str):
+    """根据策略详情构造可编辑的AI解析提示词。"""
+    try:
+        sid = str(strategy_id or "").strip()
+        if not sid:
+            return {"status": "error", "msg": "strategy_id is required", "prompt": ""}
+        rows = list_all_strategy_meta()
+        target = None
+        for row in rows:
+            if str(row.get("id", "")).strip() == sid:
+                target = dict(row)
+                break
+        if target is None:
+            return {"status": "not_found", "msg": f"strategy {sid} not found", "prompt": ""}
+        # 统一提取可读字段，拼接为“可修改”的自然语言提示词初稿。
+        name = str(target.get("name", sid)).strip() or sid
+        kline_type = str(target.get("kline_type", "D")).strip() or "D"
+        category = str(target.get("strategy_category", "")).strip() or "策略"
+        analysis_text = str(target.get("analysis_text", "")).strip()
+        raw_text = str(target.get("raw_requirement", "")).strip()
+        prompt_parts = [
+            f"请基于策略[{sid}] {name} 生成可执行的选股条件。",
+            f"策略分类：{category}，周期：{kline_type}。",
+            "要求：输出可用于条件筛选的规则，并明确无法筛选器直接执行的部分。",
+            "A股约束：T+1、涨停不可买、跌停不可卖。",
+        ]
+        if raw_text:
+            prompt_parts.append(f"原始需求参考：{raw_text}")
+        if analysis_text:
+            prompt_parts.append(f"策略说明参考：{analysis_text}")
+        prompt_parts.append("请给出筛选逻辑、风险提示、以及建议的回测参数。")
+        prompt_text = "\n".join(prompt_parts)
+        return {
+            "status": "success",
+            "strategy_id": sid,
+            "strategy_name": name,
+            "prompt": prompt_text,
+        }
+    except Exception as e:
+        logger.error(f"/api/strategy_manager/prompt_from_strategy failed: {e}", exc_info=True)
+        return {"status": "error", "msg": str(e), "prompt": ""}
 
 
 @app.post("/api/strategy_manager/toggle")
@@ -4550,6 +4642,56 @@ async def api_tdx_import_pack(req: TdxImportPackRequest):
     except Exception as e:
         logger.error(f"/api/tdx/import_pack failed: {e}", exc_info=True)
         return _tdx_error(str(e), "TDX_IMPORT_PACK_FAILED")
+
+
+@app.post("/api/tdx/pipeline/run")
+async def api_tdx_pipeline_run(req: TdxFormulaBatchRunRequest):
+    """通达信公式 + BLK + 批量回测一键编排入口。"""
+    try:
+        # 参数基础校验：至少提供一个公式项。
+        items = list(req.formula_items or [])
+        if not items:
+            return _tdx_error("formula_items is required", "TDX_PIPELINE_FORMULA_ITEMS_REQUIRED")
+        # 任务 CSV 统一经过既有安全路径解析，防止越界写入。
+        tasks_csv_abs = _resolve_batch_tasks_path(
+            raw_path=str(req.tasks_csv or "data/batch_tasks/tdx_formula_batch_tasks.csv").strip(),
+            default_path=DEFAULT_BATCH_TASKS_CSV,
+            ensure_parent=True,
+        )
+        tasks_csv_rel = _project_rel_path(tasks_csv_abs)
+        # 运行配置由请求参数驱动，保持可复现。
+        cfg = TdxFormulaBatchRunConfig(
+            base_url=str(req.base_url or "http://127.0.0.1:8000").strip() or "http://127.0.0.1:8000",
+            tasks_csv=tasks_csv_rel,
+            results_csv=str(req.results_csv or "data/批量回测结果.csv").strip() or "data/批量回测结果.csv",
+            summary_csv=str(req.summary_csv or "data/策略汇总评分.csv").strip() or "data/策略汇总评分.csv",
+            poll_seconds=max(1, int(req.poll_seconds or 5)),
+            max_wait_seconds=max(30, int(req.max_wait_seconds or 7200)),
+        )
+        adapter = TdxFormulaBatchAdapter(cfg=cfg)
+        # 将 Pydantic 模型转换成普通 dict，直接喂给编排适配器。
+        formula_rows = []
+        for x in items:
+            # 兼容 pydantic v2 与 v1 的导出方法。
+            if hasattr(x, "model_dump"):
+                formula_rows.append(x.model_dump())
+            elif hasattr(x, "dict"):
+                formula_rows.append(x.dict())
+            else:
+                formula_rows.append(dict(x))
+        result = adapter.run_pipeline(
+            formula_items=formula_rows,
+            blk_file_path=str(req.blk_file_path or "").strip(),
+            blk_content=str(req.blk_content or ""),
+            strategy_pool_mode=str(req.strategy_pool_mode or "append").strip().lower() or "append",
+            blk_import_mode=str(req.blk_import_mode or "append").strip().lower() or "append",
+            generate_mode=str(req.generate_mode or "append").strip().lower() or "append",
+            wait_until_done=bool(req.wait_until_done),
+        )
+        return result
+    except Exception as e:
+        logger.error(f"/api/tdx/pipeline/run failed: {e}", exc_info=True)
+        return _tdx_error(str(e), "TDX_PIPELINE_RUN_FAILED")
 
 
 @app.get("/api/tdx/capabilities")
@@ -4880,6 +5022,39 @@ async def api_screener_catalog():
         return {"status": "error", "msg": str(e)}
 
 
+@app.get("/api/screener/data_sources")
+async def api_screener_data_sources():
+    """返回条件筛选的数据来源、路径与执行逻辑说明。"""
+    try:
+        # 由后端统一维护口径，前端只负责展示。
+        return {"status": "success", "data": get_data_source_documentation()}
+    except Exception as e:
+        logger.error(f"/api/screener/data_sources failed: {e}", exc_info=True)
+        return {"status": "error", "msg": str(e)}
+
+
+@app.get("/api/screener/prompt_templates")
+async def api_screener_prompt_templates():
+    """返回条件筛选AI相关的默认提示词模板，供前端预加载展示。"""
+    try:
+        return {
+            "status": "success",
+            "data": {
+                "ai_filter": {
+                    "system_prompt": str(SCREENER_AI_FILTER_SYSTEM_PROMPT or ""),
+                    "description": "用于一步筛选（/api/screener/ai_filter）的系统提示词模板。",
+                },
+                "parse_strategy": {
+                    "system_prompt": str(SCREENER_PARSE_SYSTEM_PROMPT or ""),
+                    "description": "用于策略解析（/api/screener/parse_strategy）的系统提示词模板。",
+                },
+            },
+        }
+    except Exception as e:
+        logger.error(f"/api/screener/prompt_templates failed: {e}", exc_info=True)
+        return {"status": "error", "msg": str(e)}
+
+
 @app.post("/api/screener/filter")
 async def api_screener_filter(req: ScreenerFilterRequest):
     try:
@@ -4937,14 +5112,416 @@ class ScreenerParseRequest(BaseModel):
     description: str
 
 
+class ScreenerAiFilterRequest(BaseModel):
+    """AI 一步筛选请求体。"""
+
+    prompt: str
+    # 示例ID：用于后端识别“内置示例”并强制应用排序参数。
+    example_id: Optional[str] = ""
+    page: Optional[int] = 1
+    page_size: Optional[int] = 50
+    logic_mode: Optional[str] = "AND"
+
+
+class ScreenerBatchBacktestRequest(BaseModel):
+    """条件筛选批量回测请求体。"""
+
+    codes: List[str]
+    strategy_ids: Optional[List[str]] = None
+    start_date: str
+    end_date: str
+    capital: Optional[float] = 1000000.0
+    tasks_csv: Optional[str] = ""
+    max_tasks: Optional[int] = 0
+    parallel_workers: Optional[int] = 1
+    batch_no: Optional[str] = ""
+    scenario_tag: Optional[str] = "条件筛选批量回测"
+    kline_type: Optional[str] = "1day"
+    data_source: Optional[str] = ""
+    top_n: Optional[int] = 0
+    strategy_mode: Optional[str] = "selected"
+
+
+class ScreenerHistoryListRequest(BaseModel):
+    """条件筛选AI历史查询请求体。"""
+
+    page: Optional[int] = 1
+    page_size: Optional[int] = 20
+    event_type: Optional[str] = ""
+
+
+class ScreenerCreateStrategyRequest(BaseModel):
+    """由AI筛选结果生成并落库策略的请求体。"""
+
+    prompt: str
+    strategy_name: Optional[str] = None
+    kline_type: Optional[str] = "1day"
+    parsed: Optional[Dict[str, Any]] = None
+
+
 @app.post("/api/screener/parse_strategy")
 async def api_screener_parse_strategy(req: ScreenerParseRequest):
     """接收自然语言策略描述，调用大模型解析为结构化筛选条件 + 执行规则。"""
     try:
         result = parse_strategy_to_conditions(req.description)
+        # 记录AI解析交互历史，便于页面追踪用户每次对话与产出。
+        try:
+            payload = {
+                "prompt": str(req.description or ""),
+                "status": str(result.get("status", "") or "unknown"),
+                "screen_conditions_count": len(((result.get("data") or {}).get("screen_conditions") or [])),
+                "execution_rules_count": len(((result.get("data") or {}).get("execution_rules") or [])),
+                "warnings_count": len(((result.get("data") or {}).get("warnings") or [])),
+            }
+            hist = EVOLUTION_SCREENER_HISTORY_STORE.append_event("ai_parse", payload)
+            if isinstance(result, dict):
+                result["history_id"] = str(hist.get("history_id", "") or "")
+        except Exception as hist_err:
+            logger.warning("persist screener ai_parse history failed: %s", hist_err)
         return result
     except Exception as e:
         logger.error(f"/api/screener/parse_strategy failed: {e}", exc_info=True)
+        return {"status": "error", "msg": str(e)}
+
+
+@app.post("/api/screener/ai_filter")
+async def api_screener_ai_filter(req: ScreenerAiFilterRequest):
+    """一步执行 AI 条件筛选：提示词解析 + 条件筛选 + 结果返回。"""
+    try:
+        result = run_nl_screener_skill(
+            user_prompt=req.prompt,
+            page=req.page or 1,
+            page_size=req.page_size or 50,
+            logic_mode=req.logic_mode or "AND",
+            example_id=req.example_id or "",
+        )
+        if result.status != "success":
+            # 失败也入历史，便于排查用户感知问题。
+            try:
+                EVOLUTION_SCREENER_HISTORY_STORE.append_event(
+                    "ai_filter",
+                    {
+                        "prompt": str(req.prompt or ""),
+                        "status": "error",
+                        "error_msg": str(result.msg or ""),
+                        "selected_codes": [],
+                        "selected_count": 0,
+                    },
+                )
+            except Exception as hist_err:
+                logger.warning("persist screener ai_filter error history failed: %s", hist_err)
+            return {"status": "error", "msg": result.msg, "data": result.data}
+        # 成功记录“选股结果快照”，用于历史记录表回显。
+        history_id = ""
+        try:
+            rows = (((result.data or {}).get("filter_result") or {}).get("data") or [])
+            selected_codes = []
+            selected_stocks = []
+            for row in rows[:50]:
+                # 历史记录补全代码提取兜底，兼容不同数据源字段命名。
+                code = str(
+                    row.get("code", "")
+                    or row.get("stock_code", "")
+                    or row.get("ts_code", "")
+                    or row.get("symbol", "")
+                    or row.get("trade_code", "")
+                ).strip().upper()
+                if code:
+                    selected_codes.append(code)
+                selected_stocks.append(
+                    {
+                        "code": code,
+                        "name": str(row.get("name", "") or row.get("stock_name", "") or ""),
+                        "price": row.get("price"),
+                        "change_pct": row.get("change_pct"),
+                    }
+                )
+            hist = EVOLUTION_SCREENER_HISTORY_STORE.append_event(
+                "ai_filter",
+                {
+                    "prompt": str(req.prompt or ""),
+                    "status": "success",
+                    "selected_codes": selected_codes,
+                    "selected_stocks": selected_stocks,
+                    "selected_count": int(len(rows)),
+                    "logic_mode": str(req.logic_mode or "AND"),
+                },
+            )
+            history_id = str(hist.get("history_id", "") or "")
+        except Exception as hist_err:
+            logger.warning("persist screener ai_filter history failed: %s", hist_err)
+        return {"status": "success", "history_id": history_id, **result.data}
+    except Exception as e:
+        logger.error(f"/api/screener/ai_filter failed: {e}", exc_info=True)
+        return {"status": "error", "msg": str(e)}
+
+
+@app.post("/api/screener/history/list")
+async def api_screener_history_list(req: ScreenerHistoryListRequest):
+    """返回AI解析/筛选历史记录，供前端列表展示。"""
+    try:
+        payload = EVOLUTION_SCREENER_HISTORY_STORE.list_events(
+            page=req.page or 1,
+            page_size=req.page_size or 20,
+            event_type=req.event_type or "",
+        )
+        return {"status": "success", **payload}
+    except Exception as e:
+        logger.error(f"/api/screener/history/list failed: {e}", exc_info=True)
+        return {"status": "error", "msg": str(e)}
+
+
+@app.post("/api/screener/strategy/create_from_ai")
+async def api_screener_create_strategy_from_ai(req: ScreenerCreateStrategyRequest):
+    """根据AI筛选提示词生成策略代码并写入策略管理器。"""
+    try:
+        prompt = str(req.prompt or "").strip()
+        if not prompt:
+            return {"status": "error", "msg": "prompt is required"}
+        strategy_id = next_custom_strategy_id()
+        strategy_name = str(req.strategy_name or f"AI筛选策略{strategy_id}").strip()
+        kline_type = _normalize_kline_type(req.kline_type)
+        # 复用策略生成链路：先构建意图，再调用既有AI代码生成器。
+        strategy_intent = intent_engine.from_human_input(prompt).to_dict()
+        generated = _build_ai_analysis(strategy_intent, strategy_id, strategy_name, None)
+        code_text = _apply_kline_type_to_code(str(generated.get("code", "") or ""), kline_type)
+        class_name = str(generated.get("class_name", "") or _extract_first_class_name(code_text) or "").strip()
+        if not code_text.strip():
+            return {"status": "error", "msg": "未生成可执行策略代码"}
+        # 将筛选结构化结果写入分析文本，方便策略管理器后续追溯来源。
+        parsed_json_text = ""
+        if isinstance(req.parsed, dict):
+            parsed_json_text = json.dumps(req.parsed, ensure_ascii=False)
+        analysis_text = str(generated.get("analysis_text", "") or "由AI筛选提示词生成").strip()
+        if parsed_json_text:
+            analysis_text = f"{analysis_text}\n\n[筛选解析快照]\n{parsed_json_text}"
+        add_custom_strategy(
+            {
+                "id": strategy_id,
+                "name": strategy_name,
+                "class_name": class_name,
+                "code": code_text,
+                "template_text": prompt,
+                "analysis_text": analysis_text,
+                "strategy_intent": strategy_intent,
+                "source": "screener_ai",
+                "kline_type": kline_type,
+                "depends_on": [],
+                "protect_level": "custom",
+                "immutable": False,
+                "raw_requirement_title": "AI策略解析生成",
+                "raw_requirement": prompt,
+            }
+        )
+        # 记录“策略落库”历史，便于和解析/筛选过程串联。
+        try:
+            EVOLUTION_SCREENER_HISTORY_STORE.append_event(
+                "strategy_created",
+                {
+                    "prompt": prompt,
+                    "strategy_id": strategy_id,
+                    "strategy_name": strategy_name,
+                    "kline_type": kline_type,
+                },
+            )
+        except Exception as hist_err:
+            logger.warning("persist screener strategy_created history failed: %s", hist_err)
+        return {
+            "status": "success",
+            "strategy_id": strategy_id,
+            "strategy_name": strategy_name,
+            "class_name": class_name,
+            "kline_type": kline_type,
+        }
+    except Exception as e:
+        logger.error(f"/api/screener/strategy/create_from_ai failed: {e}", exc_info=True)
+        return {"status": "error", "msg": str(e)}
+
+
+@app.post("/api/screener/batch_backtest/start")
+async def api_screener_batch_backtest_start(req: ScreenerBatchBacktestRequest):
+    """由条件筛选结果直接生成批量任务并启动批量回测。"""
+    try:
+        # 规范化代码列表并去重，保持输入顺序。
+        codes: List[str] = []
+        seen_codes = set()
+        for raw in (req.codes or []):
+            code = str(raw or "").strip().upper()
+            if not code or code in seen_codes:
+                continue
+            seen_codes.add(code)
+            codes.append(code)
+        # 后端再做一次TopN保护，防止前端参数缺失导致任务规模失控。
+        top_n = max(0, int(req.top_n or 0))
+        if top_n > 0:
+            codes = codes[:top_n]
+        if not codes:
+            return {"status": "error", "msg": "codes is required"}
+
+        # 规范化策略列表；若前端未传则回退到启用策略首个ID。
+        strategy_ids: List[str] = []
+        seen_sids = set()
+        for raw in (req.strategy_ids or []):
+            sid = str(raw or "").strip()
+            if not sid or sid in seen_sids:
+                continue
+            seen_sids.add(sid)
+            strategy_ids.append(sid)
+        if not strategy_ids:
+            for meta in list_all_strategy_meta():
+                if not isinstance(meta, dict):
+                    continue
+                if not bool(meta.get("enabled", True)):
+                    continue
+                sid = str(meta.get("id", "")).strip()
+                if sid:
+                    strategy_ids = [sid]
+                    break
+        if not strategy_ids:
+            return {"status": "error", "msg": "未找到可用策略ID，请先在策略管理中启用策略"}
+
+        # 自动生成任务文件路径，避免覆盖默认任务文件。
+        raw_tasks_csv = str(req.tasks_csv or "").strip()
+        if not raw_tasks_csv:
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+            raw_tasks_csv = os.path.join(BATCH_TASKS_DIR, f"条件筛选批量任务_{stamp}.csv").replace("\\", "/")
+        tasks_csv_abs = _resolve_batch_tasks_path(raw_tasks_csv, DEFAULT_BATCH_TASKS_CSV, ensure_parent=True)
+        tasks_csv_rel = _project_rel_path(tasks_csv_abs)
+
+        # 统一任务维度：代码 * 策略；支持 max_tasks 截断。
+        max_tasks = max(0, int(req.max_tasks or 0))
+        now_ts = datetime.now().isoformat(timespec="seconds")
+        batch_no = str(req.batch_no or "").strip() or datetime.now().strftime("SCR%Y%m%d%H%M%S")
+        rows: List[Dict[str, Any]] = []
+        seq = 1
+        for code in codes:
+            for sid in strategy_ids:
+                rows.append(
+                    {
+                        "任务ID": f"SCR_{batch_no}_{seq:04d}",
+                        "批次号": batch_no,
+                        "优先级": "1",
+                        "是否启用": "1",
+                        "股票代码": code,
+                        "策略ID": sid,
+                        "开始日期": str(req.start_date or "").strip(),
+                        "结束日期": str(req.end_date or "").strip(),
+                        "初始资金": str(float(req.capital or 1000000.0)),
+                        "K线周期": str(req.kline_type or "1day").strip(),
+                        "数据源": str(req.data_source or "").strip(),
+                        "场景标签": str(req.scenario_tag or "条件筛选批量回测").strip(),
+                        "成本档位": "default",
+                        "滑点BP": "0",
+                        "佣金费率": "",
+                        "印花税率": "",
+                        "最小手数": "100",
+                        "是否T1": "1",
+                        "最大重试": "1",
+                        "任务状态": "pending",
+                        "报告ID": "",
+                        "错误信息": "",
+                        "创建时间": now_ts,
+                        "更新时间": now_ts,
+                    }
+                )
+                seq += 1
+                if max_tasks > 0 and len(rows) >= max_tasks:
+                    break
+            if max_tasks > 0 and len(rows) >= max_tasks:
+                break
+        if not rows:
+            return {"status": "error", "msg": "未生成批量任务，请检查输入参数"}
+
+        # 按模板表头写入CSV，确保和批量执行器兼容。
+        with open(tasks_csv_abs, "w", encoding="utf-8-sig", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=BATCH_TASK_TEMPLATE_HEADERS, extrasaction="ignore")
+            writer.writeheader()
+            for row in rows:
+                writer.writerow(row)
+
+        # 复用批量执行入口，避免重复维护进程管理逻辑。
+        start_req = BatchRunControlRequest(
+            tasks_csv=tasks_csv_rel,
+            results_csv="data/批量回测结果.csv",
+            summary_csv="data/策略汇总评分.csv",
+            batch_no_filter=batch_no,
+            archive_completed=False,
+            archive_tasks_csv=DEFAULT_BATCH_ARCHIVE_CSV,
+            max_tasks=max_tasks,
+            parallel_workers=max(1, int(req.parallel_workers or 1)),
+            base_url="http://127.0.0.1:8000",
+            base_urls="",
+            rate_limit_interval_seconds=0.0,
+            poll_seconds=3,
+            status_log_seconds=90,
+            max_wait_seconds=7200,
+            retry_sleep_seconds=3,
+            ai_analyze=False,
+            ai_analyze_only=False,
+            ai_analysis_output_md="data/批量回测AI分析.md",
+            ai_analysis_system_prompt="",
+            ai_analysis_prompt="",
+            ai_analysis_max_results=200,
+            ai_analysis_max_strategies=80,
+            ai_analysis_temperature=-1.0,
+            ai_analysis_max_tokens=1400,
+            ai_analysis_timeout_sec=60,
+        )
+        start_resp = await api_batch_run_start(start_req)
+        if str(start_resp.get("status", "")).lower() != "success":
+            return {
+                "status": "error",
+                "msg": start_resp.get("msg", "batch run start failed"),
+                "tasks_csv": tasks_csv_rel,
+                "task_count": len(rows),
+                "batch_no": batch_no,
+            }
+        # 将批量启动摘要写入 evolution memory，便于后续在看板追踪与复盘。
+        try:
+            EVOLUTION_ANALYSIS_STORE.save_analysis(
+                {
+                    "run_id": f"screener_batch_{batch_no}",
+                    "analysis_version": "screener_batch_launch_v1",
+                    "analysis_status": "success",
+                    "analysis_source": "screener_batch_launch",
+                    "created_at": now_ts,
+                    "analysis_summary": {
+                        "batch_no": batch_no,
+                        "tasks_csv": tasks_csv_rel,
+                        "task_count": len(rows),
+                        "pid": start_resp.get("pid"),
+                        "start_date": str(req.start_date or "").strip(),
+                        "end_date": str(req.end_date or "").strip(),
+                        "capital": float(req.capital or 1000000.0),
+                        "top_n": int(req.top_n or 0),
+                        "strategy_mode": str(req.strategy_mode or "selected").strip(),
+                        "used_strategy_ids": strategy_ids,
+                        "used_codes_count": len(codes),
+                    },
+                    "feedback_tags": ["screener", "batch_backtest", "ai_orchestrated"],
+                    "improvement_suggestions": [],
+                    "prompt_context_patch": {},
+                    "llm_provider": "",
+                    "llm_model": "",
+                }
+            )
+        except Exception as memory_err:
+            logger.warning("persist screener batch launch summary failed: %s", memory_err)
+        return {
+            "status": "success",
+            "msg": "筛选批量回测已启动",
+            "tasks_csv": tasks_csv_rel,
+            "task_count": len(rows),
+            "batch_no": batch_no,
+            "pid": start_resp.get("pid"),
+            "started_at": start_resp.get("started_at"),
+            "used_strategy_ids": strategy_ids,
+            "used_codes_count": len(codes),
+            "top_n": int(req.top_n or 0),
+            "strategy_mode": str(req.strategy_mode or "selected").strip(),
+        }
+    except Exception as e:
+        logger.error(f"/api/screener/batch_backtest/start failed: {e}", exc_info=True)
         return {"status": "error", "msg": str(e)}
 
 
@@ -6615,6 +7192,16 @@ async def api_strategy_manager_delete(req: StrategyDeleteRequest):
         logger.error(f"/api/strategy_manager/delete failed: {e}", exc_info=True)
         return {"status": "error", "msg": str(e)}
 
+
+@app.get("/api/strategy_manager/screener_examples")
+async def api_strategy_manager_screener_examples():
+    """返回选股策略示例提示词，供 AI 解析界面预填。"""
+    try:
+        return {"status": "success", "examples": list_screener_prompt_examples()}
+    except Exception as e:
+        logger.error(f"/api/strategy_manager/screener_examples failed: {e}", exc_info=True)
+        return {"status": "error", "msg": str(e), "examples": []}
+
 @app.get("/api/config")
 async def api_get_config():
     try:
@@ -6943,60 +7530,16 @@ def _probe_llm_connectivity(
 
 
 def _update_llm_status_cache(ok: bool, payload: Dict[str, Any], now_ts: Optional[float] = None) -> None:
-    """更新 LLM 健康缓存，供 /api/llm/status 快速读取。"""
-    ts = float(now_ts if now_ts is not None else time.time())
-    provider = str(payload.get("provider", "") or "")
-    model = str(payload.get("model", "") or "")
-    latency = payload.get("latency_ms")
-    preview = str(payload.get("preview", "") or "")
-    msg = str(payload.get("msg", "") or "")
-    error = "" if ok else msg
-    with llm_status_cache_lock:
-        last_success_at = float(llm_status_cache.get("last_success_at", 0.0) or 0.0)
-        if ok:
-            last_success_at = ts
-        # 健康等级规则：
-        # green: 本次成功。
-        # yellow: 本次失败但近期有成功（降级状态）。
-        # red: 本次失败且近期无成功（不可用状态）。
-        if ok:
-            health = "green"
-        else:
-            health = "yellow" if (last_success_at > 0 and (ts - last_success_at) <= LLM_STATUS_DEGRADED_SECONDS) else "red"
-        llm_status_cache.update({
-            "cached_at": ts,
-            "provider": provider,
-            "model": model,
-            "health": health,
-            "ok": bool(ok),
-            "msg": msg if msg else ("可用" if ok else "不可用"),
-            "latency_ms": latency,
-            "preview": preview,
-            "last_success_at": last_success_at,
-            "error": error,
-        })
+    """兼容保留函数：状态监控已停用，不再维护探活缓存。"""
+    # 按最小侵入原则保留函数签名，避免影响既有调用路径。
+    return None
 
 
 def _collect_llm_model_candidates(scope: str = "unified") -> Dict[str, Any]:
-    """收集配置中的模型候选，便于前端说明当前生效模型与候选池。"""
-    cfg = ConfigLoader.reload()
-    candidates: Dict[str, str] = {}
-    scope_norm = str(scope or "unified").strip().lower()
-    paths = ["evolution.llm.model", "data_provider.strategy_llm_model", "data_provider.llm_model"]
-    if scope_norm == "evolution":
-        paths = ["evolution.llm.model"]
-    elif scope_norm == "strategy_manager":
-        paths = ["data_provider.strategy_llm_model"]
-    elif scope_norm == "data_provider":
-        paths = ["data_provider.llm_model"]
-    for path in paths:
-        val = str(cfg.get(path, "") or "").strip()
-        if val:
-            candidates[path] = val
-    return {
-        "count": len(candidates),
-        "items": candidates,
-    }
+    """兼容保留函数：状态监控已停用，返回空候选。"""
+    # 该函数仅为兼容历史代码，避免删除后引发导入或调用错误。
+    _ = scope
+    return {"count": 0, "items": {}}
 
 
 def _collect_llm_active_sources(scope: str = "unified") -> Dict[str, str]:
@@ -7014,75 +7557,25 @@ def _collect_llm_active_sources(scope: str = "unified") -> Dict[str, str]:
 
 @app.get("/api/llm/status")
 async def api_llm_status(force_refresh: bool = False):
-    """LLM 状态接口（缓存版）：支持快速读取，并可按需强制刷新。"""
-    now_ts = time.time()
-    try:
-        with llm_status_cache_lock:
-            cached_at = float(llm_status_cache.get("cached_at", 0.0) or 0.0)
-            cache_snapshot = dict(llm_status_cache)
-        cache_age = max(0.0, now_ts - cached_at) if cached_at > 0 else 10**9
-        cache_valid = (cache_age <= LLM_STATUS_CACHE_TTL_SECONDS)
-        if (not force_refresh) and cache_valid:
-            candidates = _collect_llm_model_candidates(scope="unified")
-            active_sources = _collect_llm_active_sources(scope="unified")
-            return {
-                "status": "success",
-                "cached": True,
-                "cache_age_seconds": round(cache_age, 3),
-                "health": str(cache_snapshot.get("health", "red") or "red"),
-                "ok": bool(cache_snapshot.get("ok", False)),
-                "msg": str(cache_snapshot.get("msg", "") or ""),
-                "provider": str(cache_snapshot.get("provider", "") or ""),
-                "model": str(cache_snapshot.get("model", "") or ""),
-                "latency_ms": cache_snapshot.get("latency_ms"),
-                "preview": str(cache_snapshot.get("preview", "") or ""),
-                "last_success_at": cache_snapshot.get("last_success_at", 0.0),
-                "updated_at": cache_snapshot.get("cached_at", 0.0),
-                "model_candidates": candidates,
-                "active_sources": active_sources,
-            }
-        # 缓存失效或强制刷新时，主动探活并写回缓存。
-        # 探活失败时返回 red/yellow 状态，而不是让接口直接抛错。
-        probe_ok = False
-        try:
-            probe = _probe_llm_connectivity(prompt="", scenario="status_probe", scope="unified", update_cache=True)
-            probe_ok = bool(probe.get("ok", False))
-        except Exception as probe_exc:
-            cfg_client = build_unified_llm_client(ConfigLoader.reload())
-            _update_llm_status_cache(
-                ok=False,
-                payload={
-                    "provider": str(cfg_client.cfg.provider or ""),
-                    "model": str(cfg_client.cfg.model or ""),
-                    "msg": str(probe_exc),
-                    "preview": "",
-                    "latency_ms": None,
-                },
-                now_ts=now_ts,
-            )
-        with llm_status_cache_lock:
-            snapshot = dict(llm_status_cache)
-        candidates = _collect_llm_model_candidates(scope="unified")
-        active_sources = _collect_llm_active_sources(scope="unified")
-        return {
-            "status": "success" if probe_ok else "error",
-            "cached": False,
-            "cache_age_seconds": 0.0,
-            "health": str(snapshot.get("health", "red") or "red"),
-            "ok": bool(snapshot.get("ok", False)),
-            "msg": str(snapshot.get("msg", "") or ""),
-            "provider": str(snapshot.get("provider", "") or ""),
-            "model": str(snapshot.get("model", "") or ""),
-            "latency_ms": snapshot.get("latency_ms"),
-            "preview": str(snapshot.get("preview", "") or ""),
-            "last_success_at": snapshot.get("last_success_at", 0.0),
-            "updated_at": snapshot.get("cached_at", 0.0),
-            "model_candidates": candidates,
-            "active_sources": active_sources,
-        }
-    except Exception as e:
-        logger.error(f"/api/llm/status failed: {e}", exc_info=True)
-        return {"status": "error", "health": "red", "ok": False, "msg": str(e)}
+    """LLM 状态接口：已停用实时监控，避免额外 token 消耗。"""
+    # 该接口保留为兼容返回，前端即使误调用也不会触发真实 LLM 探活。
+    _ = force_refresh
+    return {
+        "status": "success",
+        "cached": True,
+        "cache_age_seconds": 0.0,
+        "health": "disabled",
+        "ok": True,
+        "msg": "LLM状态监控已关闭，避免额外token消耗",
+        "provider": "",
+        "model": "",
+        "latency_ms": None,
+        "preview": "",
+        "last_success_at": 0.0,
+        "updated_at": time.time(),
+        "model_candidates": {"count": 0, "items": {}},
+        "active_sources": {"provider": "", "model": "", "base_url": "", "api_key": ""},
+    }
 
 
 @app.get("/api/fundamental/catalog")
@@ -9579,11 +10072,109 @@ def _history_sync_payload_from_request(req: HistorySyncRunRequest):
         "on_duplicate": str(req.on_duplicate or "ignore"),
         "write_mode": str(req.write_mode or cfg.get("history_sync.write_mode", "api") or "api"),
         "direct_db_source": str(req.direct_db_source or cfg.get("history_sync.direct_db_source", "mysql") or "mysql"),
+        "trigger_mode": "manual",
     }
+
+def _parse_history_sync_datetime(value):
+    # 统一解析同步报告中的时间字段，避免通知层重复处理各种空值/异常值。
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return datetime.fromisoformat(text.replace("Z", ""))
+    except Exception:
+        return None
+
+def _format_history_sync_duration(total_seconds):
+    # 将耗时格式化为易读文本，优先展示小时/分钟/秒。
+    try:
+        seconds = max(0, int(round(float(total_seconds or 0.0))))
+    except Exception:
+        return "--"
+    hours, remain = divmod(seconds, 3600)
+    minutes, secs = divmod(remain, 60)
+    if hours > 0:
+        return f"{hours}小时{minutes}分{secs}秒"
+    if minutes > 0:
+        return f"{minutes}分{secs}秒"
+    return f"{secs}秒"
+
+def _history_sync_period_label(payload: dict):
+    # 手动执行与定时执行使用不同文案，便于通知中快速区分来源。
+    data = payload if isinstance(payload, dict) else {}
+    trigger_mode = str(data.get("trigger_mode", "manual") or "manual").strip().lower()
+    interval_minutes = data.get("sync_interval_minutes", None)
+    if trigger_mode == "scheduler":
+        try:
+            interval_value = max(1, int(interval_minutes or 0))
+        except Exception:
+            interval_value = 0
+        if interval_value > 0:
+            return f"每{interval_value}分钟"
+        return "定时执行"
+    return "手动执行"
+
+def _history_sync_data_source_label(payload: dict):
+    # 当前增量同步统一从 Tushare 拉取，目标端根据写入模式动态展示。
+    data = payload if isinstance(payload, dict) else {}
+    write_mode = str(data.get("write_mode", "api") or "api").strip().lower()
+    if write_mode == "direct_db":
+        source_map = {
+            "mysql": "MySQL",
+            "postgresql": "PostgreSQL",
+            "duckdb": "DuckDB",
+        }
+        direct_db_source = str(data.get("direct_db_source", "mysql") or "mysql").strip().lower()
+        return f"Tushare -> {source_map.get(direct_db_source, direct_db_source or 'DirectDB')}"
+    return "Tushare -> API"
+
+def _build_history_sync_completion_notice(payload: dict, result: dict):
+    # 统一构建增量同步收口通知，保证手动执行与定时任务展示一致。
+    data = payload if isinstance(payload, dict) else {}
+    output = result if isinstance(result, dict) else {}
+    report = output.get("report", {}) if isinstance(output.get("report", {}), dict) else {}
+    status = str(output.get("status", "") or "").strip().lower()
+    status_map = {
+        "success": "成功",
+        "stopped": "已停止",
+        "error": "失败",
+    }
+    title = "增量同步执行完成" if status == "success" else "增量同步执行结束"
+    started_at = str(report.get("started_at", "") or "").strip()
+    finished_at = str(report.get("finished_at", "") or "").strip()
+    started_dt = _parse_history_sync_datetime(started_at)
+    finished_dt = _parse_history_sync_datetime(finished_at)
+    duration_text = "--"
+    if started_dt is not None and finished_dt is not None:
+        duration_text = _format_history_sync_duration((finished_dt - started_dt).total_seconds())
+    lines = [
+        title,
+        f"状态: {status_map.get(status, status or '--')}",
+        f"数据源: {_history_sync_data_source_label(data)}",
+        f"开始时间: {started_at or '--'}",
+        f"结束时间: {finished_at or '--'}",
+        f"总耗时: {duration_text}",
+        f"同步周期: {_history_sync_period_label(data)}",
+    ]
+    if report.get("total_written_rows") is not None:
+        lines.append(f"写入条数: {int(report.get('total_written_rows', 0) or 0)}")
+    if report.get("codes_total") is not None:
+        lines.append(f"同步标的数: {int(report.get('codes_total', 0) or 0)}")
+    if status != "success":
+        error_text = str(output.get("msg", "") or report.get("error", "") or "").strip()
+        if error_text:
+            lines.append(f"原因: {error_text}")
+    return "\n".join(lines)
 
 async def _run_history_sync_once(payload: dict):
     result = await asyncio.to_thread(history_sync_service.run_sync, payload)
     logger.info(f"history sync finished: {result.get('status')}")
+    # 同步收口后统一发送通知，覆盖手动执行与定时执行两条入口。
+    if str(result.get("status", "") or "").strip().lower() in {"success", "stopped", "error"}:
+        try:
+            await _broadcast_system_and_notify(_build_history_sync_completion_notice(payload, result))
+        except Exception as e:
+            logger.error("history sync completion notify failed: %s", e, exc_info=True)
     return result
 
 def _resolve_history_sync_scheduler_start(cfg=None):
@@ -9633,6 +10224,8 @@ async def _history_sync_scheduler_loop():
             "on_duplicate": str(cfg.get("history_sync.on_duplicate", "ignore") or "ignore"),
             "write_mode": str(cfg.get("history_sync.write_mode", "api") or "api"),
             "direct_db_source": str(cfg.get("history_sync.direct_db_source", "mysql") or "mysql"),
+            "trigger_mode": "scheduler",
+            "sync_interval_minutes": interval,
         }
         try:
             await _run_history_sync_once(payload)
@@ -9650,8 +10243,9 @@ async def _auto_start_live_from_config(cfg=None):
         codes = _normalize_live_codes(cfg=c)
     # 从配置读取自动启动策略范围，确保重启后自动启动时策略配置一致。
     auto_strategy_ids = c.get("system.live_auto_start_strategy_ids", [])
-    if isinstance(auto_strategy_ids, list) and auto_strategy_ids:
-        selection = {"strategy_ids": [str(x) for x in auto_strategy_ids if str(x).strip()]}
+    # 自动启动沿用手动启动的策略选择格式，避免把 dict 误写进 profile 导致策略过滤失效。
+    selection = _normalize_strategy_selection(strategy_ids=auto_strategy_ids if isinstance(auto_strategy_ids, list) else None)
+    if selection is not None:
         for code in codes:
             live_strategy_profiles[code] = selection
     total_capital = float(c.get("system.initial_capital", 1000000.0) or 1000000.0)
@@ -9710,14 +10304,18 @@ async def _live_auto_start_scheduler_loop():
                     live_auto_start_last_invalid_time = raw_time
             else:
                 live_auto_start_last_invalid_time = ""
-            # 每日在配置时刻触发一次自动开启（仅 live 模式且启用自动启动时生效）。
+            # 每日在配置时刻触发一次自动开启。
+            # 这里与手动启动接口保持同一判断口径，只以 system.mode=live 作为近似实时可用条件，
+            # 避免隐藏的 system.enable_live 让“手动可启动、自动不启动”。
+            # 同时放宽到目标时间后的短暂窗口内触发一次，避免服务刚启动或轮询抖动时错过整分钟。
+            target_dt = now.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
+            delta_seconds = (now - target_dt).total_seconds()
             if (
                 enabled
-                and now.hour == target_hour
-                and now.minute == target_minute
+                and delta_seconds >= 0
+                and delta_seconds < 70
                 and live_auto_start_last_trigger_date != today
                 and _system_mode(cfg) == "live"
-                and bool(cfg.get("system.enable_live", True))
             ):
                 started, already_running = await _auto_start_live_from_config(cfg)
                 live_auto_start_last_trigger_date = today

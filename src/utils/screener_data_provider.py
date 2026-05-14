@@ -6,12 +6,18 @@
 
 import json
 import os
+import re
 import time
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import numpy as np
+try:
+    # AkShare 作为 DuckDB 缺失时的行情兜底来源；若环境未安装则安全降级。
+    import akshare as ak
+except Exception:
+    ak = None
 
 from src.utils.stock_manager import stock_manager
 
@@ -44,6 +50,102 @@ def _write_cache(key: str, data: Any):
         json.dump(data, f, ensure_ascii=False, default=str)
 
 
+def _to_float_or_none(value: Any) -> Optional[float]:
+    """将输入尽量转为 float；失败返回 None，避免中断筛选主流程。"""
+    try:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            value = value.strip().replace(",", "")
+            if value == "":
+                return None
+        f = float(value)
+        if f != f:  # noqa: E711
+            return None
+        return f
+    except Exception:
+        return None
+
+
+def _first_value(row: Dict[str, Any], candidates: List[str]) -> Any:
+    """按候选列名顺序获取第一条可用值，兼容不同 AkShare 版本列名。"""
+    for col in candidates:
+        if col in row:
+            val = row.get(col)
+            if val is not None and str(val).strip() != "":
+                return val
+    return None
+
+
+def _fetch_akshare_spot_map() -> Dict[str, Dict[str, Any]]:
+    """拉取 AkShare 全市场快照并标准化为 code->metrics 映射。"""
+    # 使用独立缓存键，避免每次筛选都打网络请求。
+    cached = _read_cache("akshare_spot_map_v1", ttl=180)
+    if isinstance(cached, dict) and cached:
+        return cached
+    if ak is None:
+        return {}
+    try:
+        # 采用一次全量快照，再按代码映射，减少逐票请求开销。
+        df = ak.stock_zh_a_spot_em()
+        if df is None or df.empty:
+            return {}
+        rows = df.to_dict("records")
+        out: Dict[str, Dict[str, Any]] = {}
+        for row in rows:
+            # 兼容不同列名版本（代码/名称/现价等）。
+            code_raw = _first_value(row, ["代码", "code", "symbol", "证券代码"])
+            code = _normalize_stock_code(code_raw)
+            if not code:
+                continue
+            price = _to_float_or_none(_first_value(row, ["最新价", "close", "最新", "price"]))
+            pre_close = _to_float_or_none(_first_value(row, ["昨收", "pre_close", "昨收价"]))
+            open_val = _to_float_or_none(_first_value(row, ["今开", "open", "开盘"]))
+            high_val = _to_float_or_none(_first_value(row, ["最高", "high"]))
+            low_val = _to_float_or_none(_first_value(row, ["最低", "low"]))
+            change_pct = _to_float_or_none(_first_value(row, ["涨跌幅", "pct_chg", "change_pct"]))
+            turnover = _to_float_or_none(_first_value(row, ["换手率", "turnover_rate", "turnover"]))
+            amount_raw = _to_float_or_none(_first_value(row, ["成交额", "amount", "成交金额"]))
+            volume_raw = _to_float_or_none(_first_value(row, ["成交量", "volume", "vol"]))
+            amp = _to_float_or_none(_first_value(row, ["振幅", "amplitude"]))
+            total_mv_raw = _to_float_or_none(_first_value(row, ["总市值", "total_mv"]))
+            float_mv_raw = _to_float_or_none(_first_value(row, ["流通市值", "float_mv", "circ_mv"]))
+
+            # 行情金额口径统一：筛选器内部 amount 使用“万元”。
+            amount_wan = round(amount_raw / 10000.0, 2) if amount_raw is not None else None
+            # 市值统一：筛选器目录是“亿元”。
+            total_mv_yi = round(total_mv_raw / 100000000.0, 2) if total_mv_raw is not None else None
+            float_mv_yi = round(float_mv_raw / 100000000.0, 2) if float_mv_raw is not None else None
+            # 开高低涨幅优先使用昨收推导，缺失时返回 None。
+            open_pct = None
+            high_pct = None
+            low_pct = None
+            if pre_close is not None and pre_close > 0:
+                if open_val is not None:
+                    open_pct = round((open_val - pre_close) / pre_close * 100, 2)
+                if high_val is not None:
+                    high_pct = round((high_val - pre_close) / pre_close * 100, 2)
+                if low_val is not None:
+                    low_pct = round((low_val - pre_close) / pre_close * 100, 2)
+            out[code] = {
+                "price": round(price, 2) if price is not None else None,
+                "change_pct": round(change_pct, 2) if change_pct is not None else None,
+                "open_pct": open_pct,
+                "high_pct": high_pct,
+                "low_pct": low_pct,
+                "volume": int(volume_raw) if volume_raw is not None else None,
+                "amount": amount_wan,
+                "turnover": round(turnover, 2) if turnover is not None else None,
+                "amplitude": round(amp, 2) if amp is not None else None,
+                "total_mv": total_mv_yi,
+                "float_mv": float_mv_yi,
+            }
+        _write_cache("akshare_spot_map_v1", out)
+        return out
+    except Exception:
+        return {}
+
+
 # ---------------------------------------------------------------------------
 # 交易所派生（基于代码前缀，无需外部依赖）
 # ---------------------------------------------------------------------------
@@ -57,6 +159,45 @@ def _infer_exchange(code: str) -> str:
     if c.startswith("8") or c.startswith("4"):
         return "北交所"
     return "未知"
+
+
+def _is_main_board_code(code: str) -> bool:
+    """判断是否为A股主板代码（用于筛选层主板限定，不影响交易引擎）。"""
+    c = str(code or "").strip().upper()
+    # 兼容带后缀代码写法。
+    if "." in c:
+        c = c.split(".", 1)[0]
+    # 上交所主板常见前缀：600/601/603/605。
+    if c.startswith(("600", "601", "603", "605")):
+        return True
+    # 深交所主板常见前缀：000/001/002（并板后仍视作主板）。
+    if c.startswith(("000", "001", "002")):
+        return True
+    # 明确排除：创业板300、科创板688、北交所8/4。
+    return False
+
+
+def _normalize_stock_code(raw_code: Any) -> str:
+    """标准化股票代码为6位数字（无后缀），用于筛选展示与查询对齐。"""
+    text = str(raw_code or "").strip().upper()
+    if not text:
+        return ""
+    # 兼容 SH600000 / SZ000001 / BJ430001 形态。
+    m_prefixed = re.match(r"^(SH|SZ|BJ)(\d{1,6})$", text)
+    if m_prefixed:
+        return m_prefixed.group(2).zfill(6)
+    # 兼容 600000.SH / 000001.SZ / 430001.BJ 形态。
+    m_suffixed = re.match(r"^(\d{1,6})\.(SH|SZ|BJ|XSHG|XSHE|XBJ)$", text)
+    if m_suffixed:
+        return m_suffixed.group(1).zfill(6)
+    # 纯数字场景：补齐到6位，修复“1/2/6”这类被去零代码。
+    if text.isdigit():
+        return text.zfill(6)
+    # 兜底：提取数字部分，最多取后6位，避免异常字符导致空值。
+    digits = "".join(ch for ch in text if ch.isdigit())
+    if digits:
+        return digits[-6:].zfill(6)
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -108,6 +249,7 @@ def get_catalog() -> Dict[str, List[Dict[str, Any]]]:
                 "fields": [
                     {"key": "limit_up", "label": "涨停", "type": "toggle"},
                     {"key": "limit_down", "label": "跌停", "type": "toggle"},
+                    {"key": "is_main_board", "label": "主板股票", "type": "toggle"},
                 ],
             },
             {
@@ -386,18 +528,21 @@ def _compute_technical_indicators(df: pd.DataFrame) -> Dict[str, float]:
 
 def fetch_latest_metrics() -> List[Dict[str, Any]]:
     """获取所有标的最新行情指标，带文件缓存。"""
-    cached = _read_cache("latest_metrics")
+    # 升级缓存key，确保旧缓存中的“去零代码”不会继续污染结果。
+    cached = _read_cache("latest_metrics_v2")
     if cached is not None:
         return cached
 
     stock_manager.ensure_loaded()
     stocks = stock_manager.stocks
     conn = get_duckdb_conn()
+    # 先准备 AkShare 快照映射，作为 DuckDB 缺失字段兜底。
+    ak_spot_map = _fetch_akshare_spot_map()
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     results = []
     for s in stocks:
-        code = str(s.get("code", "")).strip()
+        code = _normalize_stock_code(s.get("code", ""))
         name = str(s.get("name", "")).strip()
         if not code:
             continue
@@ -414,6 +559,11 @@ def fetch_latest_metrics() -> List[Dict[str, Any]]:
                 db_code = f"{db_code}.BJ"
 
         row = {"code": code, "name": name, "exchange": exchange, "screener_time": now_str}
+        # 标记是否主板，供“主板限定”策略直接执行筛选。
+        row["is_main_board"] = _is_main_board_code(code)
+        # 记录数据来源主标签，便于前端展示“来源占比”。
+        row["_source_main"] = "basic"
+        duckdb_hit = False
 
         if conn:
             try:
@@ -422,6 +572,7 @@ def fetch_latest_metrics() -> List[Dict[str, Any]]:
                     [db_code]
                 ).fetchdf()
                 if df is not None and not df.empty and len(df) > 0:
+                    duckdb_hit = True
                     latest = df.iloc[0]
                     close_val = float(latest.get("close", 0) or 0)
                     open_val = float(latest.get("open", 0) or 0)
@@ -467,10 +618,73 @@ def fetch_latest_metrics() -> List[Dict[str, Any]]:
             except Exception:
                 pass
 
+        # AkShare 兜底：当 DuckDB 不可用或字段缺失时补齐核心行情字段。
+        # 注：技术指标与复杂时序逻辑仍优先依赖本地历史库保障稳定复现。
+        ak_row = ak_spot_map.get(code, {})
+        ak_fill_count = 0
+        if isinstance(ak_row, dict) and ak_row:
+            for k in [
+                "price", "change_pct", "open_pct", "high_pct", "low_pct",
+                "volume", "amount", "turnover", "amplitude", "total_mv", "float_mv",
+            ]:
+                if row.get(k) is None:
+                    v = ak_row.get(k)
+                    if v is not None:
+                        row[k] = v
+                        ak_fill_count += 1
+            # 涨跌停标记兜底：若 DuckDB 未产出，使用 AkShare 涨跌幅估算。
+            if row.get("limit_up") is None and row.get("change_pct") is not None:
+                cp = float(row.get("change_pct") or 0.0)
+                row["limit_up"] = abs(cp - 10.0) < 0.1 or abs(cp - 20.0) < 0.1
+            if row.get("limit_down") is None and row.get("change_pct") is not None:
+                cp = float(row.get("change_pct") or 0.0)
+                row["limit_down"] = abs(cp + 10.0) < 0.1 or abs(cp + 20.0) < 0.1
+
+        # 统一标记主来源：duckdb / mixed / akshare / basic。
+        if duckdb_hit and ak_fill_count > 0:
+            row["_source_main"] = "mixed"
+        elif duckdb_hit:
+            row["_source_main"] = "duckdb"
+        elif ak_fill_count > 0:
+            row["_source_main"] = "akshare"
+        else:
+            row["_source_main"] = "basic"
+
         results.append(row)
 
-    _write_cache("latest_metrics", results)
+    _write_cache("latest_metrics_v2", results)
     return results
+
+
+def get_data_source_documentation() -> Dict[str, Any]:
+    """返回条件筛选的数据来源、落地路径与执行逻辑说明（用于前端展示）。"""
+    # 说明文案由后端统一输出，避免前后端多处复制导致口径不一致。
+    return {
+        "title": "条件筛选数据说明",
+        "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "source_priority": [
+            "1) DuckDB(日线dat_day)优先：提供历史可复现数据、技术指标、时序事件条件",
+            "2) AkShare实时快照兜底：补齐最新价/涨跌幅/成交量/成交额/换手率/市值等核心行情字段",
+            "3) 本地股票清单兜底：code/name 基础标的来自 data/stock_list.csv（无文件时尝试 AkShare 拉取）",
+        ],
+        "data_paths": [
+            "本地股票列表: data/stock_list.csv",
+            "筛选缓存目录: data/screener_cache/*.json",
+            "DuckDB日线表: dat_day（路径由 data_provider.duckdb_path 配置）",
+            "AkShare兜底快照缓存: data/screener_cache/akshare_spot_map_v1.json",
+        ],
+        "usage_logic": [
+            "步骤1：先加载股票池(code/name/交易所)并标准化代码",
+            "步骤2：优先从DuckDB读取最新日线并计算涨跌幅、振幅、近N日涨幅、技术指标",
+            "步骤3：若DuckDB缺字段或不可用，自动使用AkShare快照补齐核心行情字段",
+            "步骤4：先执行简单条件，再按需执行时序条件（limit_up_5d、volume_shrink等）",
+            "步骤5：输出分页结果并写入5分钟缓存，减少重复查询开销",
+        ],
+        "limitations": [
+            "技术指标/复杂时序条件仍建议依赖DuckDB历史数据以保证复现一致性",
+            "region/enterprise_type/margin_trading当前为占位字段，尚未接入稳定数据源",
+        ],
+    }
 
 
 def apply_filters(
@@ -490,15 +704,36 @@ def apply_filters(
     """应用筛选条件，返回分页结果。"""
     metrics = fetch_latest_metrics()
 
+    def _summarize_sources(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """统计来源占比，便于前端展示数据透明度。"""
+        total_rows = len(rows)
+        raw_counts = {
+            "duckdb": 0,
+            "akshare": 0,
+            "mixed": 0,
+            "basic": 0,
+            "unknown": 0,
+        }
+        for r in rows:
+            s = str(r.get("_source_main", "unknown")).strip().lower()
+            if s not in raw_counts:
+                s = "unknown"
+            raw_counts[s] += 1
+        ratio = {}
+        for k, v in raw_counts.items():
+            ratio[k] = round((v / total_rows) * 100, 2) if total_rows > 0 else 0.0
+        return {"total": total_rows, "counts": raw_counts, "ratio_pct": ratio}
+
     # 前置过滤
     filtered = metrics
     if exchange and exchange != "全部":
         filtered = [r for r in filtered if r.get("exchange") == exchange]
 
-    # Phase 1: region/enterprise/margin 无数据源，直接跳过或按标记过滤
+    # Phase 1: region/enterprise/margin 当前为占位字段。
+    # 两融数据尚未接入稳定来源时，必须忽略该筛选项，避免“误清空结果”。
     if margin_trading and margin_trading != "全部":
-        # Phase 1 无两融数据，返回空
-        filtered = []
+        # no-op: 仅记录占位语义，不参与实际过滤。
+        pass
 
     # 合并所有条件
     all_conditions = []
@@ -521,6 +756,53 @@ def apply_filters(
 
     simple_conditions = [c for c in all_conditions if c.get("key") not in time_series_keys and c.get("operator") not in ("has_event", "formula")]
     ts_conditions = [c for c in all_conditions if c.get("key") in time_series_keys or c.get("operator") in ("has_event", "formula")]
+
+    # 条件去噪：当某字段当前全量为 None 时，像 "volume >= 0" 这类基线条件不应把结果误清空。
+    # 典型场景：上游字段暂未接入（全 None），AI 又给出“>=0”类宽松条件。
+    ignored_conditions: List[Dict[str, Any]] = []
+
+    def _safe_float(v: Any) -> Optional[float]:
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    def _is_non_restrictive_baseline(cond: Dict[str, Any]) -> bool:
+        key = str(cond.get("key", "")).strip()
+        op = str(cond.get("operator", "")).strip().lower()
+        val = _safe_float(cond.get("value"))
+        val2 = _safe_float(cond.get("value2"))
+        # 仅对常见“非负指标”做兜底，避免误伤本应允许负值的字段。
+        non_negative_keys = {
+            "price", "volume", "amount", "turnover", "amplitude",
+            "float_mv", "total_mv", "listing_days",
+        }
+        if key not in non_negative_keys:
+            return False
+        if op == "gte" and val is not None and val <= 0:
+            return True
+        if op == "gt" and val is not None and val < 0:
+            return True
+        if op == "between":
+            # between [<=0, +inf) 也等价于非限制条件。
+            if val is not None and val2 is None and val <= 0:
+                return True
+            if val is not None and val2 is not None and val <= 0 and val2 >= 1e12:
+                return True
+        return False
+
+    refined_simple_conditions: List[Dict[str, Any]] = []
+    for cond in simple_conditions:
+        key = str(cond.get("key", "")).strip()
+        if not key:
+            continue
+        # 仅在“字段全缺失 + 条件本身是基线约束”时忽略。
+        has_any_value = any(r.get(key) is not None for r in filtered)
+        if (not has_any_value) and _is_non_restrictive_baseline(cond):
+            ignored_conditions.append(cond)
+            continue
+        refined_simple_conditions.append(cond)
+    simple_conditions = refined_simple_conditions
 
     # 先过滤简单条件
     def _match_field(row: Dict, cond: Dict) -> bool:
@@ -595,6 +877,15 @@ def apply_filters(
         "page_size": page_size,
         "total_pages": max(1, (total + page_size - 1) // page_size),
         "data": page_data,
+        # 返回被自动忽略的条件，便于前端排障与提示。
+        "ignored_conditions": ignored_conditions,
+        # 同时返回“筛选前”和“筛选后”的来源占比，便于看板统计与可视化解释。
+        "source_stats": {
+            "pool": _summarize_sources(metrics),
+            "filtered": _summarize_sources(filtered),
+            # 新增“当前页”口径，方便前端分页场景展示更直观的来源占比。
+            "filtered_page": _summarize_sources(page_data),
+        },
     }
 
 
@@ -615,7 +906,7 @@ def _apply_time_series_conditions(
     """对候选标的执行时序条件（基于 DuckDB dat_day 历史数据）。"""
     results = []
     for row in rows:
-        code = str(row.get("code", "")).strip()
+        code = _normalize_stock_code(row.get("code", ""))
         if not code:
             continue
         db_code = code
@@ -699,29 +990,57 @@ def _evaluate_time_series(
 
     # --- volume_shrink: 涨停后N日内成交量 < 涨停日成交量 * 比例 ---
     if key == "volume_shrink":
-        n_days = int(value or 5)
-        # 找到最近一次涨停日
+        # 统一参数语义：
+        # - value 为 0~1 浮点时，视为缩量阈值（默认 0.5）
+        # - value 为整数>1 时，视为回看天数（阈值仍 0.5）
+        # - value 为 dict 时支持 {"days": 5, "ratio": 0.5}
+        lookback_days = 5
+        threshold = 0.5
+        if isinstance(value, dict):
+            try:
+                lookback_days = max(1, int(value.get("days", 5) or 5))
+            except Exception:
+                lookback_days = 5
+            try:
+                threshold = float(value.get("ratio", 0.5) or 0.5)
+            except Exception:
+                threshold = 0.5
+        elif isinstance(value, (int, float)):
+            v = float(value)
+            if 0 < v <= 1:
+                threshold = v
+            elif v > 1:
+                lookback_days = int(v)
+        elif isinstance(value, str) and value.strip():
+            try:
+                v = float(value.strip())
+                if 0 < v <= 1:
+                    threshold = v
+                elif v > 1:
+                    lookback_days = int(v)
+            except ValueError:
+                pass
+
+        # dat_day 按 trade_date DESC 查询：iloc[0] 为“今天”，iloc[1] 为“昨天”。
+        # 这里的业务语义是“最近一次涨停后的N日内，当前日缩量到阈值以下”：
+        # - 在最近 lookback_days 天内寻找最近涨停日（不含今天）
+        # - 判断今天成交量 < 涨停日成交量 * threshold
+        current_volume = float(volume.iloc[0]) if len(volume) > 0 else 0.0
+        if current_volume <= 0:
+            return False
+
         limit_up_idx = None
-        for i in range(min(20, len(change_pct))):
-            if _is_limit_up(change_pct.iloc[i]):
+        for i in range(1, min(lookback_days + 1, len(change_pct))):
+            if _is_limit_up(float(change_pct.iloc[i])):
                 limit_up_idx = i
                 break
         if limit_up_idx is None:
             return False
-        # 涨停日成交量
-        lu_volume = volume.iloc[limit_up_idx]
+
+        lu_volume = float(volume.iloc[limit_up_idx])
         if lu_volume <= 0:
             return False
-        # 检查涨停后N日内是否有某日成交量 < 涨停日的一半
-        formula = str(value or "0.5")  # 默认一半
-        try:
-            threshold = float(formula)
-        except ValueError:
-            threshold = 0.5
-        for i in range(1, min(n_days + 1, len(volume) - limit_up_idx)):
-            if volume.iloc[limit_up_idx + i] < lu_volume * threshold:
-                return True
-        return False
+        return current_volume < lu_volume * threshold
 
     # --- volume_expand: 近N日成交量放大 ---
     if key == "volume_expand":

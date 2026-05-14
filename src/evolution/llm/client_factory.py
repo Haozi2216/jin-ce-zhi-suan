@@ -8,6 +8,7 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Protocol
 
+from src.evolution.adapters.llm_ollama_adapter import OllamaStrategyLLM
 from src.evolution.adapters.llm_zhipu_adapter import ZhipuStrategyLLM
 from src.utils.config_loader import ConfigLoader
 
@@ -69,10 +70,13 @@ class EvolutionLLMConfig:
         )
 
     def is_ready(self) -> bool:
-        # zhipu SDK 不依赖 base_url；openai_compatible 仍要求 base_url。
+        # zhipu SDK 不依赖 base_url；ollama 支持默认本地地址；openai_compatible 仍要求 base_url。
         provider = str(self.provider or "openai_compatible").strip().lower()
         if not self.enabled or not bool(self.model):
             return False
+        if provider in {"ollama", "local_ollama"}:
+            # Ollama 允许不配 api_key/base_url（默认回落到本地 11434）。
+            return True
         if provider in {"zhipu", "zhipuai", "glm"}:
             return bool(self.api_key)
         return bool(self.base_url)
@@ -176,6 +180,17 @@ def build_primary_llm_client(cfg: EvolutionLLMConfig) -> StrategyLLMClient:
     """按 provider 构建主 LLM 客户端，保持对旧配置兼容。"""
     provider = str(cfg.provider or "openai_compatible").strip().lower()
     # 兼容常见别名，减少配置迁移成本。
+    if provider in {"ollama", "local_ollama"}:
+        return OllamaStrategyLLM(
+            model=cfg.model,
+            base_url=cfg.base_url,
+            api_key=cfg.api_key,
+            temperature=cfg.temperature,
+            max_tokens=cfg.max_tokens,
+            timeout_seconds=cfg.timeout_seconds,
+            retry_times=cfg.retry_times,
+            system_prompt=cfg.system_prompt,
+        )
     if provider in {"zhipu", "zhipuai", "glm"}:
         return ZhipuStrategyLLM(
             api_key=cfg.api_key,

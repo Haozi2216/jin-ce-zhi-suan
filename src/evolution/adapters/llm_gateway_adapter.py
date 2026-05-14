@@ -141,7 +141,9 @@ class UnifiedLLMConfig:
         provider_norm = str(provider or "openai_compatible").strip().lower()
         if provider_norm in {"zhipuai", "glm"}:
             provider_norm = "zhipu"
-        if provider_norm not in {"openai_compatible", "zhipu"}:
+        if provider_norm in {"local_ollama"}:
+            provider_norm = "ollama"
+        if provider_norm not in {"openai_compatible", "zhipu", "ollama"}:
             provider_norm = "openai_compatible"
         return cls(
             provider=provider_norm,
@@ -159,8 +161,13 @@ class UnifiedLLMConfig:
         )
 
     def is_ready(self) -> bool:
-        # zhipu 使用官方 SDK，不依赖 base_url；openai_compatible 需要 base_url。
-        if not self.api_key or not self.model:
+        # zhipu 使用官方 SDK，不依赖 base_url；ollama 默认走本地地址；openai_compatible 需要 base_url。
+        if not self.model:
+            return False
+        if self.provider == "ollama":
+            # Ollama 本地部署默认无需 api_key/base_url。
+            return True
+        if not self.api_key:
             return False
         if self.provider == "zhipu":
             return True
@@ -168,7 +175,7 @@ class UnifiedLLMConfig:
 
 
 class UnifiedLLMClient:
-    """统一的聊天调用适配器，支持 openai_compatible 与 zhipu。"""
+    """统一的聊天调用适配器，支持 openai_compatible / zhipu / ollama。"""
 
     def __init__(self, cfg: UnifiedLLMConfig):
         self.cfg = cfg
@@ -214,6 +221,8 @@ class UnifiedLLMClient:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
     ) -> str:
+        if self.cfg.provider == "ollama":
+            return self._complete_ollama(messages, temperature=temperature, max_tokens=max_tokens)
         if self.cfg.provider == "zhipu":
             return self._complete_zhipu(messages, temperature=temperature, max_tokens=max_tokens)
         return self._complete_openai_compatible(messages, temperature=temperature, max_tokens=max_tokens)
@@ -281,6 +290,50 @@ class UnifiedLLMClient:
         content = str(getattr(message, "content", "") or "").strip()
         if not content:
             raise RuntimeError("zhipu 响应内容为空")
+        return content
+
+    def _complete_ollama(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+    ) -> str:
+        # 兼容未配置 base_url 的本地开发场景，默认回落到 Ollama 本地端口。
+        base = str(self.cfg.base_url or "").strip().rstrip("/") or "http://127.0.0.1:11434"
+        url = base if base.endswith("/api/chat") else f"{base}/api/chat"
+        payload = {
+            "model": self.cfg.model,
+            "messages": messages,
+            "stream": False,
+            "options": {
+                "temperature": float(self.cfg.default_temperature if temperature is None else temperature),
+                "num_predict": int(self.cfg.default_max_tokens if max_tokens is None else max_tokens),
+            },
+        }
+        headers = {"Content-Type": "application/json"}
+        # Ollama 默认不要求鉴权，但在反代场景可选携带 Bearer。
+        if str(self.cfg.api_key or "").strip():
+            headers["Authorization"] = f"Bearer {self.cfg.api_key}"
+        req = urllib.request.Request(
+            url=url,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self.cfg.timeout_seconds) as resp:
+                raw = resp.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="ignore") if exc.fp else str(exc)
+            raise RuntimeError(f"HTTP {int(exc.code)}: {detail[:300]}") from exc
+        data = json.loads(raw)
+        message = data.get("message", {}) if isinstance(data.get("message"), dict) else {}
+        content = str(message.get("content", "") or "").strip()
+        if not content:
+            # 兼容 OpenAI 代理风格响应。
+            content = str((((data.get("choices") or [{}])[0].get("message") or {}).get("content", "") or "")).strip()
+        if not content:
+            raise RuntimeError("ollama 响应内容为空")
         return content
 
 

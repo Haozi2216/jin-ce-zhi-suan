@@ -23,8 +23,11 @@
       "evolution.llm.api_key"
     ],
     "live_auto_start_enabled": false,
-    "live_auto_start_time": "09:20",
-    "live_auto_start_strategy_ids": []
+    "live_auto_start_time": "00:04",
+    "live_auto_start_strategy_ids": [
+      "01",
+      "02"
+    ]
   },
   "data_provider": {
     "source": "duckdb",
@@ -90,7 +93,9 @@
     "tdx_node_list": "",
     "tdx_timeout_sec": 0,
     "tdx_retry_count": 0,
-    "tdx_max_bars": 0
+    "tdx_max_bars": 0,
+    "llm_provider": "",
+    "strategy_llm_provider": "openai_compatible"
   },
   "history_sync": {
     "scheduler_enabled": false,
@@ -131,7 +136,7 @@
   },
   "trading_cost": {
     "commission_rate": 0.00025,
-    "min_commission": 5.0,
+    "min_commission": 5,
     "stamp_duty": 0.001,
     "transfer_fee": 0
   },
@@ -350,7 +355,8 @@
       "D",
       "E",
       "F",
-      "I"
+      "I",
+      "M"
     ]
   },
   "strategy_params": {
@@ -415,7 +421,7 @@
     "llm": {
       "enabled": true,
       "provider": "openai_compatible",
-      "model": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+      "model": "Qwen/Qwen3.6-35B-A3B",
       "base_url": "https://api.siliconflow.cn/v1",
       "timeout_seconds": 120,
       "retry_times": 1,

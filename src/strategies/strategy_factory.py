@@ -1,13 +1,14 @@
 # src/strategies/strategy_factory.py
 from src.strategies.implemented_strategies import (
     Strategy00, Strategy01, Strategy02, Strategy03, Strategy04, Strategy05,
-    Strategy06, Strategy07, Strategy08, Strategy09
+    Strategy06, Strategy07, Strategy08, Strategy09, Strategy10
 )
 from src.strategies.strategy_manager_repo import (
     load_custom_strategies,
     load_disabled_ids,
     load_deleted_ids,
-    instantiate_custom_strategy
+    instantiate_custom_strategy,
+    is_builtin_screener_demo_available
 )
 from src.utils.config_loader import ConfigLoader
 
@@ -15,6 +16,8 @@ def create_strategies(apply_active_filter=True):
     """
     Generate the active stock strategies.
     """
+    # 仅在可筛出股票时加载内置选股示例策略，避免“空筛选示例”干扰策略池。
+    include_screener_demo = is_builtin_screener_demo_available()
     strategies = [
         Strategy00(),
         Strategy01(),
@@ -25,7 +28,9 @@ def create_strategies(apply_active_filter=True):
         Strategy06(),
         Strategy07(),
         Strategy08(),
-        Strategy09()
+        Strategy09(),
+        # 内置“选股示例策略”（按可筛选性动态启用）。
+        *( [Strategy10()] if include_screener_demo else [] )
     ]
     builtin_ids = {str(s.id).strip() for s in strategies}
     disabled_ids = load_disabled_ids()

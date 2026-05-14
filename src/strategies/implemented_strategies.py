@@ -564,3 +564,128 @@ class Strategy09(BaseImplementedStrategy):
             if sell_qty > 0:
                 return self.create_exit_signal(kline, sell_qty, "Box Dynamic Rebalance")
         return None
+
+
+class Strategy10(BaseImplementedStrategy):
+    """内置选股示例策略：主板强势回撤（日线）。"""
+
+    def __init__(self):
+        # 固定为内置策略ID=10，便于策略管理器稳定展示。
+        super().__init__("10", "选股示例-主板强势回撤", trigger_timeframe="D")
+        # 为每个股票维护历史K线与买入日，支持 T+1 校验。
+        self.history = {}
+        self.last_buy_day = {}
+        self.entry_price_local = {}
+
+    def _is_main_board(self, code):
+        # 仅做A股主板，避免创业板/科创板涨跌幅规则差异影响演示口径。
+        c = str(code or "").split(".", 1)[0].strip().upper()
+        return c.startswith(("600", "601", "603", "605", "000", "001", "002"))
+
+    def _limit_pct(self, kline):
+        # 统一涨跌幅计算，供涨跌停近似判断复用。
+        pre_close = float(kline.get("pre_close", 0.0) or 0.0)
+        close = float(kline.get("close", 0.0) or 0.0)
+        if pre_close <= 0:
+            return 0.0
+        return (close - pre_close) / pre_close * 100.0
+
+    def _is_limit_up(self, kline):
+        # A股约束：涨停不追。
+        pct = self._limit_pct(kline)
+        return abs(pct - 10.0) < 0.1 or abs(pct - 20.0) < 0.1
+
+    def _is_limit_down(self, kline):
+        # A股约束：跌停不卖。
+        pct = self._limit_pct(kline)
+        return abs(pct + 10.0) < 0.1 or abs(pct + 20.0) < 0.1
+
+    def _same_day(self, code, dt_value):
+        # 标准化日期字符串用于 T+1 判断。
+        day_text = str(pd.to_datetime(dt_value, errors="coerce").strftime("%Y-%m-%d"))
+        return self.last_buy_day.get(code) == day_text, day_text
+
+    def on_bar(self, kline):
+        # 读取并校验标的代码。
+        code = str(kline.get("code", "") or "").strip()
+        if not code:
+            return None
+        if not self._is_main_board(code):
+            return None
+
+        # 维护历史窗口，900根足够支撑均线与性能。
+        if code not in self.history:
+            self.history[code] = pd.DataFrame()
+        self.history[code] = pd.concat([self.history[code], pd.DataFrame([kline])], ignore_index=True).tail(900)
+        df = self.history[code]
+        if len(df) < 30:
+            return None
+
+        # 计算核心特征：MA5/MA20/近5日涨幅。
+        close = df["close"].astype(float)
+        ma5 = Indicators.MA(close, 5)
+        ma20 = Indicators.MA(close, 20)
+        if len(ma5) < 2 or len(ma20) < 2:
+            return None
+        curr_close = float(kline.get("close", 0.0) or 0.0)
+        if curr_close <= 0:
+            return None
+        old_close = float(close.iloc[-6]) if len(close) >= 6 else curr_close
+        change_5d = ((curr_close - old_close) / old_close * 100.0) if old_close > 0 else 0.0
+        qty = int(self.positions.get(code, 0) or 0)
+
+        # 可由运行参数覆盖的风控参数。
+        stop_loss_pct = float(self._cfg("stop_loss_pct", 0.03))
+        take_profit_pct = float(self._cfg("take_profit_pct", 0.08))
+        max_hold_bars = int(self._cfg("max_hold_bars", 15))
+
+        # 入场：空仓 + 趋势成立 + 近5日动量区间 + 非涨停。
+        if qty <= 0:
+            trend_ok = float(ma5.iloc[-1]) > float(ma20.iloc[-1]) and curr_close > float(ma20.iloc[-1])
+            momentum_ok = 2.0 <= change_5d <= 25.0
+            if trend_ok and momentum_ok and (not self._is_limit_up(kline)):
+                buy_qty = int(self._qty())
+                if buy_qty <= 0:
+                    buy_qty = 100
+                _same, day_text = self._same_day(code, kline.get("dt"))
+                self.last_buy_day[code] = day_text
+                self.entry_price_local[code] = curr_close
+                return {
+                    "strategy_id": self.id,
+                    "code": code,
+                    "dt": kline["dt"],
+                    "direction": "BUY",
+                    "price": curr_close,
+                    "qty": buy_qty,
+                    "stop_loss": curr_close * (1 - stop_loss_pct),
+                    "take_profit": curr_close * (1 + take_profit_pct),
+                }
+            return None
+
+        # T+1：当日买入不可卖。
+        same_day, _day_text = self._same_day(code, kline.get("dt"))
+        if same_day:
+            return None
+        # 跌停日不可卖，等待下一交易日。
+        if self._is_limit_down(kline):
+            return None
+
+        # 出场：死叉 / 止损 / 止盈 / 持仓超时。
+        death_cross = float(ma5.iloc[-2]) >= float(ma20.iloc[-2]) and float(ma5.iloc[-1]) < float(ma20.iloc[-1])
+        entry_price = float(self.entry_price_local.get(code, curr_close) or curr_close)
+        stop_loss_hit = curr_close <= entry_price * (1 - stop_loss_pct)
+        take_profit_hit = curr_close >= entry_price * (1 + take_profit_pct)
+        self.update_holding_time(code)
+        timeout_exit = self.check_max_holding_time(code, max_hold_bars)
+        if death_cross or stop_loss_hit or take_profit_hit or timeout_exit:
+            reason = []
+            if death_cross:
+                reason.append("MA Death Cross")
+            if stop_loss_hit:
+                reason.append("Stop Loss")
+            if take_profit_hit:
+                reason.append("Take Profit")
+            if timeout_exit:
+                reason.append("Time Exit")
+            return self.create_exit_signal(kline, qty, " | ".join(reason) if reason else "Rule Exit")
+        return None

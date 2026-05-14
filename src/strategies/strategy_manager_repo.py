@@ -2,10 +2,11 @@ import json
 import inspect
 import os
 import re
+import logging
 from datetime import datetime
 from src.strategies.implemented_strategies import (
     Strategy00, Strategy01, Strategy02, Strategy03, Strategy04, Strategy05,
-    Strategy06, Strategy07, Strategy08, Strategy09, BaseImplementedStrategy
+    Strategy06, Strategy07, Strategy08, Strategy09, Strategy10, BaseImplementedStrategy
 )
 from src.utils.indicators import Indicators
 import pandas as pd
@@ -24,9 +25,12 @@ _BUILTIN_STRATEGY_CLASSES = {
     "07": Strategy07,
     "08": Strategy08,
     "09": Strategy09,
+    "10": Strategy10,
 }
 _BUILTIN_META_CACHE = None
+_BUILTIN_SCREENER_DEMO_AVAILABLE_CACHE = None
 _BUILTIN_USAGE_NOTICE = "当前为内置策略，仅供测试研究使用，非投资建议，不构成买卖依据。"
+logger = logging.getLogger("StrategyManagerRepo")
 
 
 def _project_root():
@@ -159,9 +163,13 @@ def list_builtin_strategy_meta():
     global _BUILTIN_META_CACHE
     if isinstance(_BUILTIN_META_CACHE, list) and _BUILTIN_META_CACHE:
         return [dict(x) for x in _BUILTIN_META_CACHE]
+    # 仅在“当前能筛出股票”时才内置示例策略10，避免无效示例误导用户。
+    include_screener_demo = is_builtin_screener_demo_available()
     items = [
         Strategy00(), Strategy01(), Strategy02(), Strategy03(), Strategy04(),
-        Strategy05(), Strategy06(), Strategy07(), Strategy08(), Strategy09()
+        Strategy05(), Strategy06(), Strategy07(), Strategy08(), Strategy09(),
+        # 追加内置选股示例策略（仅在可筛出股票时开启）。
+        *( [Strategy10()] if include_screener_demo else [] )
     ]
     out = []
     for s in items:
@@ -181,6 +189,33 @@ def list_builtin_strategy_meta():
         out.append(item)
     _BUILTIN_META_CACHE = [dict(x) for x in out]
     return out
+
+
+def is_builtin_screener_demo_available():
+    """检查内置选股示例策略是否具备“可筛出股票”的基础条件。"""
+    global _BUILTIN_SCREENER_DEMO_AVAILABLE_CACHE
+    if _BUILTIN_SCREENER_DEMO_AVAILABLE_CACHE is not None:
+        return bool(_BUILTIN_SCREENER_DEMO_AVAILABLE_CACHE)
+    try:
+        # 使用“主板开关”做高稳定性探测，确保内置示例策略可稳定筛出股票。
+        from src.utils.screener_data_provider import apply_filters
+        probe_result = apply_filters(
+            market_conditions=[
+                {"key": "is_main_board", "operator": "toggle", "value": True},
+            ],
+            technical_conditions=[],
+            financial_conditions=[],
+            logic_mode="AND",
+            page=1,
+            page_size=1,
+        )
+        total = int((probe_result or {}).get("total", 0) or 0)
+        _BUILTIN_SCREENER_DEMO_AVAILABLE_CACHE = total > 0
+        return bool(_BUILTIN_SCREENER_DEMO_AVAILABLE_CACHE)
+    except Exception:
+        # 兜底策略：探测失败时按“不可筛出”处理，避免内置无效示例。
+        _BUILTIN_SCREENER_DEMO_AVAILABLE_CACHE = False
+        return False
 
 
 def infer_kline_type_from_code(code_text):
@@ -452,10 +487,14 @@ def list_all_strategy_meta():
         sid = str(b["id"])
         if sid in deleted:
             continue
+        # 内置ID=10 固定作为“选股策略示例”分类，其余仍归入“内置策略”。
+        builtin_category = "选股策略示例" if sid == "10" else "内置策略"
         out.append({
             "id": sid,
             "name": str(b["name"]),
             "builtin": True,
+            # 策略分类字段：供前端“按类别筛选”使用。
+            "strategy_category": builtin_category,
             "kline_type": str(b.get("kline_type", "1min")),
             "enabled": sid not in disabled,
             "deletable": True,
@@ -485,6 +524,14 @@ def list_all_strategy_meta():
         if source not in {"human", "market"}:
             source = "human"
         source_label = "用户输入" if source == "human" else "行情驱动"
+        # 约定：raw_requirement_title 为“选股策略示例”时归入示例分类。
+        raw_title_for_category = str(c.get("raw_requirement_title", "")).strip()
+        if raw_title_for_category == "选股策略示例":
+            strategy_category = "选股策略示例"
+        elif source == "market":
+            strategy_category = "行情驱动策略"
+        else:
+            strategy_category = "用户策略"
         raw_requirement_title = str(c.get("raw_requirement_title", "")).strip()
         if not raw_requirement_title:
             raw_requirement_title = "策略模板" if source == "human" else "行情状态"
@@ -495,6 +542,7 @@ def list_all_strategy_meta():
             "id": sid,
             "name": str(c.get("name", sid)),
             "builtin": False,
+            "strategy_category": strategy_category,
             "kline_type": str(c.get("kline_type", "")).strip() or infer_kline_type_from_code(c.get("code", "")),
             "enabled": sid not in disabled,
             "deletable": True,
@@ -763,6 +811,10 @@ def instantiate_custom_strategy(entry):
     code = str(entry.get("code", "") or "")
     if not code.strip():
         return None
+    # 兼容修复：Indicators.MACD 当前返回 (dif, dea, macd_hist) 三元组，
+    # 历史AI策略里存在 "a, b = Indicators.MACD(...)" 的双变量解包，会触发 unpack 异常。
+    # 这里在运行前做最小侵入转换，避免历史策略直接崩溃。
+    code = _patch_macd_two_value_unpack(code, entry.get("id"))
     class_name = str(entry.get("class_name", "")).strip()
     ns = {
         "BaseImplementedStrategy": BaseImplementedStrategy,
@@ -791,3 +843,38 @@ def instantiate_custom_strategy(entry):
     if sname:
         inst.name = sname
     return inst
+
+
+def _patch_macd_two_value_unpack(code: str, strategy_id: object = None) -> str:
+    """将 `a, b = Indicators.MACD(...)` 自动修正为三变量解包兼容写法。"""
+    text = str(code or "")
+    if not text:
+        return text
+    lines = text.splitlines()
+    changed = 0
+    fixed_lines = []
+    for line in lines:
+        # 仅处理单行赋值：lhs = rhs，且 rhs 调用 Indicators.MACD/macd。
+        if "=" not in line:
+            fixed_lines.append(line)
+            continue
+        lhs, rhs = line.split("=", 1)
+        rhs_stripped = rhs.strip()
+        lhs_stripped = lhs.strip()
+        if ("Indicators.MACD(" not in rhs_stripped and "Indicators.macd(" not in rhs_stripped):
+            fixed_lines.append(line)
+            continue
+        # 只修复双变量解包（左侧仅一个逗号），三变量及其它写法保持不动。
+        if lhs_stripped.count(",") != 1:
+            fixed_lines.append(line)
+            continue
+        left_a, left_b = [part.strip() for part in lhs_stripped.split(",", 1)]
+        if not left_a or not left_b:
+            fixed_lines.append(line)
+            continue
+        indent = line[: len(line) - len(line.lstrip(" "))]
+        fixed_lines.append(f"{indent}{left_a}, {left_b}, _macd_hist = {rhs_stripped}")
+        changed += 1
+    if changed > 0:
+        logger.warning("patched_macd_unpack strategy_id=%s changed_lines=%s", strategy_id, changed)
+    return "\n".join(fixed_lines)

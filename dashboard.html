@@ -298,6 +298,54 @@
             --flash-shadow: 0 0 0 1px rgba(239, 68, 68, 0.95), 0 0 20px rgba(239, 68, 68, 0.45);
             --flash-shadow-soft: 0 0 0 1px rgba(239, 68, 68, 0.35), 0 0 10px rgba(239, 68, 68, 0.2);
         }
+
+        /* AI策略解析状态栏：运行中呼吸高亮，成功/失败状态强对比。 */
+        @keyframes screenerAiStatusBreath {
+            0% { transform: scale(1); box-shadow: 0 0 0 rgba(45, 212, 191, 0); }
+            50% { transform: scale(1.01); box-shadow: 0 0 0 1px rgba(45, 212, 191, 0.65), 0 0 16px rgba(45, 212, 191, 0.35); }
+            100% { transform: scale(1); box-shadow: 0 0 0 rgba(45, 212, 191, 0); }
+        }
+
+        .screener-ai-status-bar {
+            border-radius: 0.375rem;
+            border: 1px solid rgba(71, 85, 105, 0.6);
+            background: rgba(15, 23, 42, 0.62);
+            min-height: 1.9rem;
+            line-height: 1.2rem;
+            padding: 0.3rem 0.5rem;
+            transition: all 160ms ease;
+        }
+
+        .screener-ai-status-idle {
+            color: #94a3b8;
+            border-color: rgba(71, 85, 105, 0.6);
+            background: rgba(15, 23, 42, 0.62);
+        }
+
+        .screener-ai-status-running {
+            color: #ccfbf1;
+            border-color: rgba(45, 212, 191, 0.75);
+            background: rgba(13, 54, 59, 0.55);
+            animation: screenerAiStatusBreath 1.25s ease-in-out infinite;
+        }
+
+        .screener-ai-status-success {
+            color: #bbf7d0;
+            border-color: rgba(34, 197, 94, 0.75);
+            background: rgba(6, 52, 34, 0.55);
+        }
+
+        .screener-ai-status-warning {
+            color: #fde68a;
+            border-color: rgba(245, 158, 11, 0.78);
+            background: rgba(74, 34, 7, 0.55);
+        }
+
+        .screener-ai-status-error {
+            color: #fecaca;
+            border-color: rgba(239, 68, 68, 0.78);
+            background: rgba(77, 19, 19, 0.58);
+        }
         
         .code-font {
             font-family: 'JetBrains Mono', monospace;
@@ -1287,9 +1335,6 @@
                 <button id="inline-config-btn" onclick="openConfigCenter()" class="bg-purple-700 hover:bg-purple-600 text-white px-4 py-2 rounded font-bold text-sm transition-all border border-purple-500 min-w-[92px] lg:min-w-[108px]">
                     <i class="fa-solid fa-sliders"></i> 配置中心
                 </button>
-                <div id="llm-status-wrap" onclick="toggleLlmStatusPanel()" class="inline-flex items-center justify-center w-2 h-2 rounded-full bg-slate-700 cursor-pointer" title="点击查看LLM状态详情">
-                    <span id="llm-status-dot" class="w-2 h-2 rounded-full bg-rose-500 shadow-[0_0_10px_rgba(244,63,94,0.45)]"></span>
-                </div>
             </div>
             <div id="action-more-wrap" class="relative hidden">
                 <button id="action-more-btn" onclick="toggleActionMoreMenu()" class="bg-slate-700 hover:bg-slate-600 text-white px-3 py-2 rounded font-bold text-sm transition-all border border-slate-500 min-w-[88px]">
@@ -1304,13 +1349,6 @@
             </div>
         </div>
     </footer>
-    <div id="llm-status-panel" class="hidden fixed top-16 right-4 z-[170] w-[440px] max-w-[92vw] bg-slate-900 border border-slate-600 rounded shadow-2xl p-3 text-[11px] text-slate-200">
-        <div class="flex items-center justify-between mb-2">
-            <div class="text-cyan-300 font-bold">统一模型层状态详情</div>
-            <button onclick="closeLlmStatusPanel()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
-        </div>
-        <div id="llm-status-panel-body" class="space-y-1 font-mono text-[10px] text-slate-300">加载中...</div>
-    </div>
     <div class="px-4 pb-2 text-[11px] text-slate-500 border-t border-slate-800 bg-trading-bg">
         模式说明：底部“单票回测”=当前股票/策略/时间即时回测；批量任务相关功能统一在“操作工作台”中。
     </div>
@@ -1379,7 +1417,7 @@
                             <button onclick="openFeatureFromHub('webhook')" class="bg-amber-700 hover:bg-amber-600 text-white px-3 py-2 rounded text-xs border border-amber-500">推送补偿</button>
                             <button onclick="openFeatureFromHub('pattern')" class="bg-slate-700 hover:bg-slate-600 text-white px-3 py-2 rounded text-xs border border-slate-500">经典形态</button>
                             <button onclick="openFeatureFromHub('evolution')" class="bg-cyan-700 hover:bg-cyan-600 text-white px-3 py-2 rounded text-xs border border-cyan-500">策略进化</button>
-                            <!-- <button onclick="openFeatureFromHub('screener')" class="bg-emerald-700 hover:bg-emerald-600 text-white px-3 py-2 rounded text-xs border border-emerald-500">条件筛选</button> -->
+                            <button onclick="openFeatureFromHub('screener')" class="bg-emerald-700 hover:bg-emerald-600 text-white px-3 py-2 rounded text-xs border border-emerald-500">条件筛选</button>
                         </div>
                     </div>
                 </div>
@@ -1783,15 +1821,38 @@
                 <div class="text-white font-bold"><i class="fa-solid fa-filter mr-2 text-emerald-300"></i>条件筛选</div>
                 <button onclick="closeScreenerModal()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
             </div>
-            <div class="px-4 py-2 text-xs text-slate-400 border-b border-slate-700">基于公开历史数据进行多条件标的筛选与数据查询。</div>
+            <div class="px-4 py-2 text-xs text-slate-400 border-b border-slate-700 flex items-center justify-between gap-2">
+                <span>基于公开历史数据进行多条件标的筛选与数据查询。</span>
+                <div class="flex items-center gap-2">
+                    <button id="screener-mode-smart-btn" onclick="setScreenerAdvancedMode(false)" class="px-2 py-1 rounded border border-emerald-500 bg-emerald-700 text-white text-[11px]">智能模式</button>
+                    <button id="screener-mode-advanced-btn" onclick="setScreenerAdvancedMode(true)" class="px-2 py-1 rounded border border-slate-600 bg-slate-800 text-slate-200 text-[11px]">高级筛选</button>
+                </div>
+            </div>
 
             <!-- 免责声明条 -->
             <div class="px-4 py-1.5 bg-slate-700/50 text-center text-xs text-slate-300 shrink-0">
                 本工具仅用于历史数据筛选与量化研究，不构成任何投资建议。不推荐股票、不预测走势、不提供买卖依据。投资有风险，决策需独立审慎判断。
             </div>
+            <!-- 数据来源说明卡：用于明确“数据来自哪里、落在哪、如何使用”。 -->
+            <div id="screener-data-source-panel" class="px-4 py-2 border-b border-slate-700 bg-slate-950/50 text-[11px] text-slate-300 shrink-0">
+                <div class="flex items-center justify-between gap-2">
+                    <div class="font-semibold text-cyan-300">筛选数据来源说明</div>
+                    <div class="flex items-center gap-2">
+                        <button onclick="toggleScreenerDataSourcePanel()" id="screener-data-source-toggle-btn" class="px-2 py-0.5 rounded border border-slate-600 bg-slate-800 text-slate-200 text-[10px]">展开</button>
+                        <button onclick="copyScreenerDataSourceDoc()" class="px-2 py-0.5 rounded border border-slate-600 bg-slate-800 text-slate-200 text-[10px]">复制说明</button>
+                        <div id="screener-data-source-updated" class="text-slate-500 font-mono">加载中...</div>
+                    </div>
+                </div>
+                <div id="screener-data-source-content" class="mt-1 text-slate-400 leading-5 hidden">
+                    正在加载数据来源、路径与使用逻辑...
+                </div>
+                <div id="screener-data-source-runtime" class="mt-1 text-slate-500 hidden">
+                    本次筛选来源占比：尚未执行筛选
+                </div>
+            </div>
 
             <!-- 顶部前置过滤区 -->
-            <div class="px-4 py-2 border-b border-slate-700 bg-slate-950/40 flex items-center gap-3 shrink-0">
+            <div id="screener-manual-prefilters" class="hidden px-4 py-2 border-b border-slate-700 bg-slate-950/40 flex items-center gap-3 shrink-0">
                 <select id="screener-exchange" onchange="onScreenerFilterChange()" class="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-white">
                     <option value="">全部交易所</option>
                     <option value="上交所">上交所</option>
@@ -1814,7 +1875,7 @@
             </div>
 
             <!-- 指标标签导航区 -->
-            <div class="px-4 py-2 border-b border-slate-700 bg-slate-950/40 shrink-0">
+            <div id="screener-manual-tabs" class="hidden px-4 py-2 border-b border-slate-700 bg-slate-950/40 shrink-0">
                 <div class="flex flex-wrap items-center gap-2 text-[11px] font-mono">
                     <button type="button" id="screener-tab-market" onclick="switchScreenerTab('market')" class="px-3 py-1 rounded border border-emerald-500 bg-emerald-700 text-white">行情</button>
                     <button type="button" id="screener-tab-technical" onclick="switchScreenerTab('technical')" class="px-3 py-1 rounded border border-slate-600 bg-slate-800 text-slate-200">技术指标</button>
@@ -1834,8 +1895,10 @@
                     <button onclick="openScreenerAIParser()" class="w-full bg-gradient-to-r from-violet-700 to-indigo-700 hover:from-violet-600 hover:to-indigo-600 text-white py-1.5 rounded text-xs border border-violet-500 font-semibold">
                         <i class="fa-solid fa-wand-magic-sparkles mr-1"></i> AI 策略解析
                     </button>
-                    <div id="screener-conditions-container"></div>
-                    <div class="pt-2 border-t border-slate-700">
+                    <div id="screener-manual-conditions-wrap" class="hidden">
+                        <div id="screener-conditions-container"></div>
+                    </div>
+                    <div id="screener-manual-actions-wrap" class="hidden pt-2 border-t border-slate-700">
                         <select id="screener-logic-mode" class="w-full mb-2 bg-slate-800 border border-slate-600 text-white py-1 px-2 rounded text-xs">
                             <option value="AND">全部满足（AND）</option>
                             <option value="OR">任一满足（OR）</option>
@@ -1854,12 +1917,12 @@
                             <thead class="text-slate-400 bg-slate-800 uppercase sticky top-0 z-10">
                                 <tr>
                                     <th class="px-3 py-2 w-10"><input type="checkbox" id="screener-select-all" onchange="toggleScreenerSelectAll(this.checked)" /></th>
-                                    <th class="px-3 py-2 cursor-pointer select-none" onclick="sortScreenerResults('code')">标的代码 <i class="fa-solid fa-sort text-slate-500"></i></th>
+                                    <th id="screener-col-code" class="px-3 py-2 cursor-pointer select-none" onclick="sortScreenerResults('code')">股票代码 <i class="fa-solid fa-sort text-slate-500"></i></th>
                                     <th class="px-3 py-2 cursor-pointer select-none" onclick="sortScreenerResults('name')">标的名称</th>
-                                    <th class="px-3 py-2 cursor-pointer select-none" onclick="sortScreenerResults('price')">最新价 <i class="fa-solid fa-sort text-slate-500"></i></th>
-                                    <th class="px-3 py-2 cursor-pointer select-none" onclick="sortScreenerResults('change_pct')">涨跌幅 <i class="fa-solid fa-sort text-slate-500"></i></th>
-                                    <th class="px-3 py-2 cursor-pointer select-none" onclick="sortScreenerResults('turnover')">换手率 <i class="fa-solid fa-sort text-slate-500"></i></th>
-                                    <th class="px-3 py-2 cursor-pointer select-none" onclick="sortScreenerResults('float_mv')">流通市值 <i class="fa-solid fa-sort text-slate-500"></i></th>
+                                    <th id="screener-col-price" class="px-3 py-2 cursor-pointer select-none" onclick="sortScreenerResults('price')">最新价 <i class="fa-solid fa-sort text-slate-500"></i></th>
+                                    <th id="screener-col-change" class="px-3 py-2 cursor-pointer select-none" onclick="sortScreenerResults('change_pct')">涨跌幅 <i class="fa-solid fa-sort text-slate-500"></i></th>
+                                    <th id="screener-col-turnover" class="px-3 py-2 cursor-pointer select-none" onclick="sortScreenerResults('turnover')">换手率 <i class="fa-solid fa-sort text-slate-500"></i></th>
+                                    <th id="screener-col-floatmv" class="px-3 py-2 cursor-pointer select-none" onclick="sortScreenerResults('float_mv')">流通市值 <i class="fa-solid fa-sort text-slate-500"></i></th>
                                     <th class="px-3 py-2">筛选时间</th>
                                 </tr>
                             </thead>
@@ -1870,11 +1933,11 @@
                     </div>
                     <!-- 分页 + 操作栏 -->
                     <div class="border-t border-slate-700 bg-slate-900/60 px-4 py-2 flex items-center justify-between shrink-0">
-                        <div class="text-[11px] text-slate-400" id="screener-pagination-info">共 0 条</div>
+                        <div class="text-[11px] text-slate-400" id="screener-pagination-info">当前页 0 条 / 共 0 条</div>
                         <div class="flex items-center gap-2">
-                            <button onclick="prevScreenerPage()" class="bg-slate-700 hover:bg-slate-600 text-white px-2 py-1 rounded text-xs border border-slate-500">上一页</button>
+                            <button id="screener-prev-page-btn" onclick="prevScreenerPage()" class="bg-slate-700 hover:bg-slate-600 text-white px-2 py-1 rounded text-xs border border-slate-500">上一页</button>
                             <span class="text-xs text-slate-300 font-mono" id="screener-page-num">1 / 1</span>
-                            <button onclick="nextScreenerPage()" class="bg-slate-700 hover:bg-slate-600 text-white px-2 py-1 rounded text-xs border border-slate-500">下一页</button>
+                            <button id="screener-next-page-btn" onclick="nextScreenerPage()" class="bg-slate-700 hover:bg-slate-600 text-white px-2 py-1 rounded text-xs border border-slate-500">下一页</button>
                             <span class="w-px h-5 bg-slate-700 mx-1"></span>
                             <button onclick="addToStockPool()" class="bg-cyan-700 hover:bg-cyan-600 text-white px-2 py-1 rounded text-xs border border-cyan-500">加入标的池</button>
                             <button id="screener-send-backtest-btn" onclick="sendToBacktest()" class="bg-indigo-700 hover:bg-indigo-600 text-white px-2 py-1 rounded text-xs border border-indigo-500">发送到回测</button>
@@ -1919,8 +1982,8 @@
         <button onclick="ctxMenuAction('detail')" class="w-full text-left px-3 py-1.5 text-slate-200 hover:bg-slate-700"><i class="fa-solid fa-info-circle mr-2"></i>查看明细</button>
 </div>
     <!-- AI 策略解析弹窗 -->
-    <div id="screener-ai-parser-modal" class="hidden fixed inset-0 bg-black/70 z-[160] flex items-center justify-center p-4">
-        <div class="w-[680px] max-w-[92vw] bg-slate-900 border border-violet-600 rounded-lg shadow-2xl flex flex-col overflow-hidden">
+    <div id="screener-ai-parser-modal" class="hidden fixed inset-0 bg-black/70 z-[160] flex items-center justify-center p-0 overflow-hidden">
+        <div class="w-[80vw] max-w-[80vw] h-[100vh] max-h-[100vh] bg-slate-900 border border-violet-600 rounded-none shadow-2xl flex flex-col overflow-hidden min-h-0">
             <div class="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
                 <div class="text-white font-bold"><i class="fa-solid fa-wand-magic-sparkles mr-2 text-violet-400"></i>AI 策略解析</div>
                 <button onclick="closeScreenerAIParser()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
@@ -1929,17 +1992,105 @@
                 输入你的策略描述，大模型会自动解析为筛选条件。高亮项为筛选器可直接执行，其余条件将进入回测引擎执行。
                 <div id="screener-ai-compliance-tip" class="mt-1 text-[11px] text-amber-300"></div>
             </div>
+            <!-- 中间内容区单独滚动，保证始终可以滚动到最底部 -->
+            <div class="flex-1 min-h-0 overflow-y-auto">
             <div class="px-4 py-3 space-y-3">
-                <textarea id="screener-ai-input" rows="6" class="w-full bg-slate-950 border border-slate-700 rounded p-3 text-sm text-slate-200 font-mono resize-none" placeholder="输入策略描述，例如：&#10;入场条件：五日内有涨停的主板股票，涨停后5日内当天成交量小于涨停那日成交量的一半，尾盘14:55分买入，买入次日涨幅到达四个点卖出一半八个点卖出全部，如果跌幅大于四个点止损一半，大于6个点全部止损。如果都没满足买卖条件，在下午择高点卖出。每日尾盘进行筛选股票池，选出3只股票分三成仓买。"></textarea>
-                <div class="flex items-center justify-between">
-                    <div class="text-[11px] text-slate-500" id="screener-ai-status">请输入策略描述后点击"开始解析"</div>
-                    <button onclick="parseStrategyWithAI()" id="screener-ai-parse-btn" class="bg-gradient-to-r from-violet-700 to-indigo-700 hover:from-violet-600 hover:to-indigo-600 text-white px-4 py-2 rounded text-xs border border-violet-500 font-semibold">
-                        <i class="fa-solid fa-wand-magic-sparkles mr-1"></i>开始解析
-                    </button>
+                <textarea id="screener-ai-input" oninput="onScreenerAiInputChanged()" rows="6" class="w-full bg-slate-950 border border-slate-700 rounded p-3 text-sm text-slate-200 font-mono resize-none" placeholder="输入策略描述，例如：&#10;入场条件：五日内有涨停的主板股票，涨停后5日内当天成交量小于涨停那日成交量的一半，尾盘14:55分买入，买入次日涨幅到达四个点卖出一半八个点卖出全部，如果跌幅大于四个点止损一半，大于6个点全部止损。如果都没满足买卖条件，在下午择高点卖出。每日尾盘进行筛选股票池，选出3只股票分三成仓买。"></textarea>
+                <div class="grid grid-cols-1 md:grid-cols-[1fr_auto_auto] gap-2 text-[11px]">
+                    <select id="screener-ai-example-select" class="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-200"></select>
+                    <button onclick="applySelectedScreenerPromptExample()" class="bg-cyan-700 hover:bg-cyan-600 text-white px-3 py-1 rounded border border-cyan-500">填充示例提示词</button>
+                    <button onclick="loadScreenerPromptExamples(true)" class="bg-slate-700 hover:bg-slate-600 text-white px-3 py-1 rounded border border-slate-600">刷新示例</button>
                 </div>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-2 text-[11px]">
+                    <label class="flex flex-col gap-1">
+                        <span class="text-slate-400">最多回测多少只股票（0=全部）</span>
+                        <input id="screener-ai-batch-topn" type="number" min="0" value="0" class="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-200 font-mono" />
+                    </label>
+                    <label class="flex flex-col gap-1">
+                        <span class="text-slate-400">策略选择范围</span>
+                        <select id="screener-ai-strategy-mode" class="bg-slate-950 border border-slate-700 rounded px-2 py-1 text-slate-200">
+                            <option value="selected">用手动勾选策略</option>
+                            <option value="current">只用当前策略</option>
+                            <option value="all_enabled">用全部启用策略</option>
+                        </select>
+                    </label>
+                </div>
+                <details class="bg-slate-950/60 border border-slate-700 rounded p-2">
+                    <summary class="cursor-pointer text-[11px] text-cyan-300">手动策略多选（批量回测用）</summary>
+                    <div class="mt-2 text-[11px] text-slate-400">说明：当“策略选择范围”设为“用手动勾选策略”时，以下勾选项会生效。</div>
+                    <input id="screener-ai-strategy-search" type="text" placeholder="搜索策略ID/名称" oninput="renderScreenerStrategyMultiSelect()" class="mt-2 w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] text-slate-100 font-mono" />
+                    <div id="screener-ai-strategy-multi-wrap" class="mt-2 max-h-36 overflow-auto bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] text-slate-100 font-mono space-y-1"></div>
+                </details>
+                <details class="bg-slate-950/60 border border-slate-700 rounded p-2">
+                    <summary class="cursor-pointer text-[11px] text-slate-300">查看发送给大模型的提示词</summary>
+                    <div class="mt-2 text-[11px] text-slate-400">说明：系统提示词会在弹窗打开时预加载模板；用户提示词会随输入实时更新，并在调用后展示本次实际发送内容。</div>
+                    <div class="mt-2 space-y-2">
+                        <details class="bg-slate-900/60 border border-slate-700 rounded p-2">
+                            <summary class="cursor-pointer text-[11px] text-violet-300">系统提示词（System Prompt）</summary>
+                            <pre id="screener-ai-system-prompt-view" class="mt-2 max-h-36 overflow-auto whitespace-pre-wrap text-[11px] text-slate-300 font-mono">--</pre>
+                        </details>
+                        <details class="bg-slate-900/60 border border-slate-700 rounded p-2">
+                            <summary class="cursor-pointer text-[11px] text-emerald-300">用户提示词（User Prompt）</summary>
+                            <pre id="screener-ai-user-prompt-view" class="mt-2 max-h-36 overflow-auto whitespace-pre-wrap text-[11px] text-slate-300 font-mono">--</pre>
+                        </details>
+                    </div>
+                </details>
+                <div class="flex items-center justify-between">
+                    <div class="text-[11px] screener-ai-status-bar screener-ai-status-idle" id="screener-ai-status">请输入策略描述后点击"开始解析"</div>
+                    <div class="flex items-center gap-2">
+                        <button onclick="parseStrategyWithAI()" id="screener-ai-parse-btn" class="bg-gradient-to-r from-violet-700 to-indigo-700 hover:from-violet-600 hover:to-indigo-600 text-white px-4 py-2 rounded text-xs border border-violet-500 font-semibold">
+                            <i class="fa-solid fa-wand-magic-sparkles mr-1"></i>先看AI怎么理解
+                        </button>
+                        <button onclick="runAIScreenerDirectly()" id="screener-ai-direct-filter-btn" class="bg-emerald-700 hover:bg-emerald-600 text-white px-4 py-2 rounded text-xs border border-emerald-500 font-semibold">
+                            <i class="fa-solid fa-filter mr-1"></i>直接出选股结果
+                        </button>
+                        <button onclick="runAIScreenerAndStartBacktest()" id="screener-ai-direct-backtest-btn" class="bg-indigo-700 hover:bg-indigo-600 text-white px-4 py-2 rounded text-xs border border-indigo-500 font-semibold">
+                            <i class="fa-solid fa-rocket mr-1"></i>快速回测（首只）
+                        </button>
+                        <button onclick="runAIScreenerAndStartBatchBacktest()" id="screener-ai-direct-batch-btn" class="bg-cyan-700 hover:bg-cyan-600 text-white px-4 py-2 rounded text-xs border border-cyan-500 font-semibold">
+                            <i class="fa-solid fa-layer-group mr-1"></i>批量回测（多只×多策略）
+                        </button>
+                        <button onclick="fillPromptFromCurrentStrategy()" id="screener-ai-from-strategy-btn" class="bg-sky-700 hover:bg-sky-600 text-white px-4 py-2 rounded text-xs border border-sky-500 font-semibold">
+                            <i class="fa-solid fa-right-left mr-1"></i>从当前策略生成提示词
+                        </button>
+                        <button onclick="createStrategyFromAIParsed()" id="screener-ai-create-strategy-btn" class="bg-amber-700 hover:bg-amber-600 text-white px-4 py-2 rounded text-xs border border-amber-500 font-semibold">
+                            <i class="fa-solid fa-floppy-disk mr-1"></i>生成策略到管理器
+                        </button>
+                    </div>
+                </div>
+                <div id="screener-ai-status-meta" class="text-[11px] text-slate-500 font-mono">
+                    阶段：待命 | 进度：0% | 预计剩余：-- | 最近成功：--
+                </div>
+                <div class="text-[11px] text-slate-400">
+                    按钮说明：先看AI怎么理解=仅解析不筛选；直接出选股结果=解析+筛选；快速回测（首只）=解析+筛选+单标的回测；批量回测（多只×多策略）=解析+筛选+批量任务执行。
+                </div>
+                <details class="bg-slate-950/60 border border-slate-700 rounded p-2">
+                    <summary class="cursor-pointer text-[11px] text-sky-300">AI交互历史记录（解析/筛选/建策略）</summary>
+                    <div class="mt-2 flex items-center justify-between text-[11px] text-slate-400">
+                        <span>说明：记录你每次和AI策略解析的交互，以及选股结果快照。</span>
+                        <div class="flex items-center gap-2">
+                            <button onclick="loadScreenerAiHistory()" class="px-2 py-1 rounded border border-slate-600 bg-slate-800 text-slate-200">刷新</button>
+                        </div>
+                    </div>
+                    <div class="mt-2 border border-slate-700 rounded overflow-hidden">
+                        <table class="w-full text-[11px]">
+                            <thead class="bg-slate-900/80 text-slate-400">
+                                <tr>
+                                    <th class="px-2 py-1 text-left">时间</th>
+                                    <th class="px-2 py-1 text-left">类型</th>
+                                    <th class="px-2 py-1 text-left">提示词摘要</th>
+                                    <th class="px-2 py-1 text-right">结果数</th>
+                                </tr>
+                            </thead>
+                            <tbody id="screener-ai-history-tbody" class="divide-y divide-slate-800 text-slate-300">
+                                <tr><td colspan="4" class="px-2 py-2 text-slate-500">暂无历史记录</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </details>
             </div>
             <!-- 解析结果展示 -->
-            <div id="screener-ai-result" class="flex-1 overflow-y-auto px-4 py-3 space-y-3 hidden">
+            <div id="screener-ai-result" class="px-4 py-3 space-y-3 hidden">
                 <div class="text-sm text-emerald-300 font-semibold"><i class="fa-solid fa-check-circle mr-1"></i>解析完成</div>
                 <!-- 筛选条件预览 -->
                 <div class="bg-slate-950/60 border border-slate-700 rounded p-3">
@@ -1952,9 +2103,52 @@
                     <div id="screener-ai-execution-rules" class="space-y-1 text-[11px] font-mono text-slate-300"></div>
                 </div>
             </div>
+            </div>
             <div class="px-4 py-3 border-t border-slate-700 flex justify-end gap-2">
                 <button onclick="applyAIParsedConditions()" id="screener-ai-apply-btn" class="bg-emerald-700 hover:bg-emerald-600 text-white px-4 py-2 rounded text-xs border border-emerald-500 font-semibold hidden"><i class="fa-solid fa-check mr-1"></i>应用筛选条件</button>
                 <button onclick="closeScreenerAIParser()" class="bg-slate-700 hover:bg-slate-600 text-white px-3 py-2 rounded text-xs border border-slate-500">关闭</button>
+            </div>
+        </div>
+    </div>
+    <!-- AI历史详情弹窗 -->
+    <div id="screener-ai-history-detail-modal" class="hidden fixed inset-0 bg-black/75 z-[165] flex items-center justify-center p-4">
+        <div class="w-[880px] max-w-[94vw] max-h-[92vh] bg-slate-900 border border-sky-600 rounded-lg shadow-2xl flex flex-col overflow-hidden min-h-0">
+            <div class="px-4 py-3 border-b border-slate-700 flex items-center justify-between">
+                <div class="text-white font-bold"><i class="fa-solid fa-clock-rotate-left mr-2 text-sky-400"></i>AI交互历史详情</div>
+                <button onclick="closeScreenerAiHistoryDetailModal()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div class="flex-1 min-h-0 overflow-y-auto p-4 space-y-3 text-xs">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+                    <div class="bg-slate-950/70 border border-slate-700 rounded px-3 py-2"><span class="text-slate-400">时间：</span><span id="screener-ai-hd-time" class="text-slate-200">--</span></div>
+                    <div class="bg-slate-950/70 border border-slate-700 rounded px-3 py-2"><span class="text-slate-400">类型：</span><span id="screener-ai-hd-type" class="text-slate-200">--</span></div>
+                    <div class="bg-slate-950/70 border border-slate-700 rounded px-3 py-2"><span class="text-slate-400">结果数：</span><span id="screener-ai-hd-count" class="text-slate-200">0</span></div>
+                </div>
+                <div class="bg-slate-950/60 border border-slate-700 rounded p-3">
+                    <div class="text-sky-300 mb-1">完整提示词</div>
+                    <pre id="screener-ai-hd-prompt" class="whitespace-pre-wrap text-slate-200 font-mono max-h-40 overflow-y-auto">--</pre>
+                </div>
+                <div class="bg-slate-950/60 border border-slate-700 rounded p-3">
+                    <div class="text-emerald-300 mb-1">股票列表详情</div>
+                    <div class="max-h-56 overflow-y-auto border border-slate-700 rounded">
+                        <table class="w-full text-[11px]">
+                            <thead class="bg-slate-900/80 text-slate-400">
+                                <tr>
+                                    <th class="px-2 py-1 text-left">股票代码</th>
+                                    <th class="px-2 py-1 text-left">名称</th>
+                                    <th class="px-2 py-1 text-right">最新价</th>
+                                    <th class="px-2 py-1 text-right">涨跌幅</th>
+                                </tr>
+                            </thead>
+                            <tbody id="screener-ai-hd-stocks" class="divide-y divide-slate-800 text-slate-300">
+                                <tr><td colspan="4" class="px-2 py-2 text-slate-500">暂无数据</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            <div class="px-4 py-3 border-t border-slate-700 flex justify-end gap-2">
+                <button onclick="rerunSelectedScreenerAiHistory()" class="bg-emerald-700 hover:bg-emerald-600 text-white px-3 py-2 rounded text-xs border border-emerald-500">重跑当前记录</button>
+                <button onclick="closeScreenerAiHistoryDetailModal()" class="bg-slate-700 hover:bg-slate-600 text-white px-3 py-2 rounded text-xs border border-slate-500">关闭</button>
             </div>
         </div>
     </div>
@@ -2482,6 +2676,15 @@
             <div class="px-4 sm:px-5 py-2 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-2 border-b border-slate-700 shrink-0">
                 <div id="strategy-manager-status" class="text-xs text-slate-400">待加载</div>
                 <div class="flex items-center gap-2 flex-wrap lg:justify-end">
+                    <select id="strategy-manager-category-filter" onchange="setStrategyManagerCategoryFilter(this.value)" class="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-100">
+                        <option value="">全部分类</option>
+                        <option value="内置策略">内置策略</option>
+                        <option value="选股策略示例">选股策略示例</option>
+                        <option value="用户策略">用户策略</option>
+                        <option value="行情驱动策略">行情驱动策略</option>
+                    </select>
+                    <input id="strategy-manager-keyword-filter" type="text" onkeydown="onStrategyManagerKeywordKeydown(event)" placeholder="搜索ID/名称/说明" class="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-100 min-w-[180px]" />
+                    <button onclick="applyStrategyManagerKeywordFilter()" class="bg-slate-800 hover:bg-slate-700 text-white px-2 py-1.5 rounded text-xs border border-slate-600">搜索</button>
                     <select id="strategy-manager-page-size" onchange="setStrategyManagerPageSize(this.value)" class="bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-100">
                         <option value="10">10条/页</option>
                         <option value="20" selected>20条/页</option>
@@ -3009,6 +3212,12 @@
         let strategyManagerPage = 1;
         let strategyManagerPageSize = 20;
         let strategyManagerTotal = 0;
+        // 策略管理器分类筛选值，空字符串表示不过滤。
+        let strategyManagerCategoryFilter = '';
+        // 策略管理器关键字筛选值，支持ID/名称/说明模糊匹配。
+        let strategyManagerKeywordFilter = '';
+        // 缓存后端返回的“选股策略示例提示词”，供 AI 解析界面预填使用。
+        let screenerPromptExamples = [];
         let pendingGeneratedStrategy = null;
         let strategyAnalyzeInFlight = false;
         // 记录“新增策略”弹窗中分析区是否折叠，折叠后优先展示代码区。
@@ -6291,6 +6500,18 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
         let configDraft = {};
         let webhookFailedEvents = [];
         let webhookFailedSelectedIds = new Set();
+        // 通知事件类型默认选项：用于配置中心直接勾选常用推送事件。
+        const WEBHOOK_EVENT_TYPE_OPTIONS_DEFAULT = [
+            { value: 'trade_exec', label: '成交信号', desc: '持仓成交后的执行通知' },
+            { value: 'live_alert', label: '实盘告警', desc: '运行中的实时风险与指标告警' },
+            { value: 'zhongshu', label: '策略信号', desc: '中书层生成的策略信号通知' },
+            { value: 'menxia', label: '风控结果', desc: '门下层审核通过或拒绝结果' },
+            { value: 'daily_summary', label: '日终汇总', desc: '日终统计与汇总结果' },
+            { value: 'system', label: '系统消息', desc: '系统广播、模式切换、同步完成等通知' },
+            { value: 'backtest_result', label: '回测完成', desc: '回测成功完成后的结果通知' },
+            { value: 'backtest_failed', label: '回测失败', desc: '回测失败或中断后的通知' }
+        ];
+        // 分类选项保留大写编码，用于现有白名单/黑名单过滤逻辑。
         const WEBHOOK_CATEGORY_OPTIONS_DEFAULT = [
             { value: 'A', label: 'A 系统生命周期', desc: '启动/停止/切换/配置生效' },
             { value: 'B', label: 'B 系统异常', desc: '异常/失败/退出' },
@@ -6303,7 +6524,9 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             { value: 'I', label: 'I 持仓手数', desc: 'live_position_lots' },
             { value: 'J', label: 'J 回测进度', desc: 'backtest_progress/backtest_flow' },
             { value: 'K', label: 'K 回测结果', desc: 'backtest_result/backtest_failed/backtest_strategy_report' },
-            { value: 'L', label: 'L 数据链路调试', desc: '拉取K线/rt_min/stk_mins' }
+            { value: 'L', label: 'L 数据链路调试', desc: '拉取K线/rt_min/stk_mins' },
+            // 增量同步完成通知单独分类，便于在通知中心精确勾选。
+            { value: 'M', label: 'M 增量同步完成', desc: '增量同步执行完成/结束通知' }
         ];
         let webhookCategoryOptions = WEBHOOK_CATEGORY_OPTIONS_DEFAULT.slice();
         let fundamentalInterfaceOptions = [];
@@ -6423,20 +6646,26 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             },
             {
                 title: '通用智能服务模型',
-                subtitle: '回测与行情分析专用大模型（data_provider.llm_*）',
+                subtitle: '回测与行情分析专用大模型（data_provider.llm_*，AI策略解析回退配置）',
                 fields: [
-                    { path: 'data_provider.llm_api_url', label: '智能服务地址（OpenAI兼容）', type: 'text' },
-                    { path: 'data_provider.llm_api_key', label: '智能服务访问密钥', type: 'password', secret: true, desc: '密钥字段会走 private_config_path 覆盖，不写入公开配置' },
-                    { path: 'data_provider.llm_model', label: '智能模型名称', type: 'text', placeholder: '例如 gpt-4o-mini / deepseek-chat' }
+                    // 通用模型也提供 provider 选择，保持与策略进化配置一致。
+                    { path: 'data_provider.llm_provider', label: '服务类型', type: 'select', options: [{ value: 'openai_compatible', label: 'OpenAI兼容' }, { value: 'zhipu', label: '智谱GLM' }, { value: 'ollama', label: 'Ollama本地' }] },
+                    // 标记用途：当 strategy_llm_* 未配置时，AI策略解析会回退使用该配置域。
+                    { path: 'data_provider.llm_api_url', label: '智能服务地址（AI策略解析回退）', type: 'text', placeholder: '例如 https://xxx/v1 或 http://127.0.0.1:11434（Ollama可留空）' },
+                    { path: 'data_provider.llm_api_key', label: '智能服务访问密钥', type: 'password', secret: true, desc: '密钥字段会走 private_config_path 覆盖，不写入公开配置；Ollama本地可留空' },
+                    { path: 'data_provider.llm_model', label: '智能模型名称（AI策略解析回退）', type: 'text', placeholder: '例如 gpt-4o-mini / glm-4 / qwen2.5:14b' }
                 ]
             },
             {
                 title: '新增策略模型',
-                subtitle: '策略生成专用大模型（data_provider.strategy_llm_*）',
+                subtitle: '策略生成专用大模型（data_provider.strategy_llm_*，AI策略解析优先配置）',
                 fields: [
-                    { path: 'data_provider.strategy_llm_api_url', label: '新增策略智能服务地址', type: 'text', placeholder: '例如 https://xxx/v1' },
-                    { path: 'data_provider.strategy_llm_api_key', label: '新增策略智能服务密钥', type: 'password', secret: true, desc: '密钥字段会走 private_config_path 覆盖，不写入公开配置' },
-                    { path: 'data_provider.strategy_llm_model', label: '新增策略智能模型名称', type: 'text', placeholder: '例如 qwen-plus / glm-4' },
+                    // 新增策略模型同样支持多 provider，避免配置体验割裂。
+                    { path: 'data_provider.strategy_llm_provider', label: '服务类型（AI策略解析优先）', type: 'select', options: [{ value: 'openai_compatible', label: 'OpenAI兼容' }, { value: 'zhipu', label: '智谱GLM' }, { value: 'ollama', label: 'Ollama本地' }] },
+                    // 标记用途：AI策略解析优先读取 strategy_llm_*，仅在未就绪时回退到通用模型。
+                    { path: 'data_provider.strategy_llm_api_url', label: '新增策略智能服务地址（AI策略解析优先）', type: 'text', placeholder: '例如 https://xxx/v1 或 http://127.0.0.1:11434（Ollama可留空）' },
+                    { path: 'data_provider.strategy_llm_api_key', label: '新增策略智能服务密钥（AI策略解析优先）', type: 'password', secret: true, desc: '密钥字段会走 private_config_path 覆盖，不写入公开配置；Ollama本地可留空' },
+                    { path: 'data_provider.strategy_llm_model', label: '新增策略智能模型名称（AI策略解析优先）', type: 'text', placeholder: '例如 qwen-plus / glm-4 / qwen2.5:14b' },
                     { path: 'data_provider.strategy_llm_timeout_sec', label: '新增策略智能超时秒数', type: 'number', min: 30, max: 300, step: 1, slider: true }
                 ]
             },
@@ -6468,10 +6697,11 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 ],
                 fields: [
                     { path: 'evolution.llm.enabled', label: '启用真实LLM', type: 'boolean', desc: '关闭时使用内置Mock生成；开启后按以下配置调用真实模型' },
-                    { path: 'evolution.llm.provider', label: '服务类型', type: 'select', options: [{ value: 'openai_compatible', label: 'OpenAI兼容' }, { value: 'zhipu', label: '智谱GLM' }] },
-                    { path: 'evolution.llm.base_url', label: 'API地址', type: 'text', placeholder: '例如 https://xxx/v1 或 https://xxx/v1/chat/completions' },
-                    { path: 'evolution.llm.api_key', label: 'API密钥', type: 'password', secret: true, desc: '密钥字段会走 private_config_path 覆盖，不写入公开配置' },
-                    { path: 'evolution.llm.model', label: '模型名', type: 'text', placeholder: '例如 gpt-4o-mini / deepseek-chat' },
+                    // 增加 Ollama 选项，支持本地模型直连。
+                    { path: 'evolution.llm.provider', label: '服务类型', type: 'select', options: [{ value: 'openai_compatible', label: 'OpenAI兼容' }, { value: 'zhipu', label: '智谱GLM' }, { value: 'ollama', label: 'Ollama本地' }] },
+                    { path: 'evolution.llm.base_url', label: 'API地址', type: 'text', placeholder: '例如 https://xxx/v1 或 http://127.0.0.1:11434（Ollama可留空）' },
+                    { path: 'evolution.llm.api_key', label: 'API密钥', type: 'password', secret: true, desc: '密钥字段会走 private_config_path 覆盖，不写入公开配置；Ollama本地可留空' },
+                    { path: 'evolution.llm.model', label: '模型名', type: 'text', placeholder: '例如 gpt-4o-mini / deepseek-chat / qwen2.5:14b' },
                     { path: 'evolution.llm.temperature', label: '采样温度', type: 'number', min: 0, max: 2, step: 0.01, slider: true },
                     { path: 'evolution.llm.max_tokens', label: '最大输出Token', type: 'number', min: 128, max: 8000, step: 1, slider: true },
                     { path: 'evolution.llm.timeout_seconds', label: '请求超时(秒)', type: 'number', min: 5, max: 300, step: 1, slider: true },
@@ -6504,7 +6734,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 subtitle: 'Webhook与飞书通知配置',
                 fields: [
                     { path: 'webhook_notification.enabled', label: '启用推送', type: 'boolean' },
-                    { path: 'webhook_notification.event_types', label: '推送事件类型', type: 'lines', itemType: 'string', hint: '每行一个事件类型，例如 trade_exec' },
+                    { path: 'webhook_notification.event_types', label: '推送事件类型', type: 'checkbox_group', options: WEBHOOK_EVENT_TYPE_OPTIONS_DEFAULT, desc: '勾选后保存为事件类型列表；未勾选的事件不会推送', value_case: 'raw' },
                     { path: 'webhook_notification.webhook_urls', label: '通用Webhook地址列表', type: 'lines', itemType: 'string', hint: '每行一个URL，可配置多个' },
                     { path: 'webhook_notification.feishu_webhook_url', label: '飞书Webhook地址', type: 'password', secret: true },
                     { path: 'webhook_notification.feishu_secret', label: '飞书签名密钥', type: 'password', secret: true },
@@ -6518,7 +6748,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     { path: 'webhook_notification.failed_retry_batch_size', label: '每轮补偿重试条数', type: 'number', min: 1, max: 500, step: 1, slider: true },
                     { path: 'webhook_notification.failed_max_retry', label: '单条最大补偿重试次数', type: 'number', min: 1, max: 200, step: 1, slider: true },
                     { path: 'webhook_notification.category_filter_mode', label: '分类过滤模式', type: 'select', options: [{ value: 'off', label: '关闭过滤（全量）' }, { value: 'whitelist', label: '白名单（仅推送勾选）' }, { value: 'blacklist', label: '黑名单（不推送勾选）' }] },
-                    { path: 'webhook_notification.category_codes', label: '分类勾选（A~L）', type: 'checkbox_group', options: WEBHOOK_CATEGORY_OPTIONS_DEFAULT, desc: '白名单模式=仅推送勾选项；黑名单模式=屏蔽勾选项' }
+                    { path: 'webhook_notification.category_codes', label: '分类勾选（A~M）', type: 'checkbox_group', options: WEBHOOK_CATEGORY_OPTIONS_DEFAULT, desc: '白名单模式=仅推送勾选项；黑名单模式=屏蔽勾选项', value_case: 'upper' }
                 ]
             },
             {
@@ -6667,10 +6897,11 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                         title: '太常寺策略进化（LLM）',
                         fields: [
                             { path: 'evolution.llm.enabled', label: '启用真实LLM', type: 'boolean', desc: '关闭时使用内置Mock生成；开启后按以下配置调用真实模型', uiRelations: [{ area: '策略进化看板', effect: '控制策略进化是否使用真实大模型' }] },
-                            { path: 'evolution.llm.provider', label: '服务类型', type: 'select', options: [{ value: 'openai_compatible', label: 'OpenAI兼容' }, { value: 'zhipu', label: '智谱GLM' }] },
-                            { path: 'evolution.llm.base_url', label: 'API地址', type: 'text', placeholder: '例如 https://xxx/v1' },
-                            { path: 'evolution.llm.api_key', label: 'API密钥', type: 'password', secret: true, desc: '密钥字段会走 private_config_path 覆盖，不写入公开配置' },
-                            { path: 'evolution.llm.model', label: '模型名', type: 'text', placeholder: '例如 gpt-4o-mini / deepseek-chat' },
+                            // 与顶部配置保持一致：支持 Ollama 本地 provider。
+                            { path: 'evolution.llm.provider', label: '服务类型', type: 'select', options: [{ value: 'openai_compatible', label: 'OpenAI兼容' }, { value: 'zhipu', label: '智谱GLM' }, { value: 'ollama', label: 'Ollama本地' }] },
+                            { path: 'evolution.llm.base_url', label: 'API地址', type: 'text', placeholder: '例如 https://xxx/v1 或 http://127.0.0.1:11434（Ollama可留空）' },
+                            { path: 'evolution.llm.api_key', label: 'API密钥', type: 'password', secret: true, desc: '密钥字段会走 private_config_path 覆盖，不写入公开配置；Ollama本地可留空' },
+                            { path: 'evolution.llm.model', label: '模型名', type: 'text', placeholder: '例如 gpt-4o-mini / deepseek-chat / qwen2.5:14b' },
                             { path: 'evolution.llm.temperature', label: '采样温度', type: 'number', min: 0, max: 2, step: 0.01, slider: true },
                             { path: 'evolution.llm.max_tokens', label: '最大输出Token', type: 'number', min: 128, max: 8000, step: 1, slider: true },
                             { path: 'evolution.llm.timeout_seconds', label: '请求超时(秒)', type: 'number', min: 5, max: 300, step: 1, slider: true },
@@ -6682,17 +6913,22 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     {
                         title: '通用智能服务模型',
                         fields: [
-                            { path: 'data_provider.llm_api_url', label: '智能服务地址（OpenAI兼容）', type: 'text', placeholder: '例如 https://xxx/v1', uiRelations: [{ area: '条件筛选器', effect: 'AI策略解析、行情分析使用的模型服务地址' }] },
-                            { path: 'data_provider.llm_api_key', label: '智能服务访问密钥', type: 'password', secret: true, desc: '密钥字段会走 private_config_path 覆盖' },
-                            { path: 'data_provider.llm_model', label: '智能模型名称', type: 'text', placeholder: '例如 gpt-4o-mini / deepseek-chat' }
+                            // 向导模式：通用模型配置增加 provider 选择，和专家模式保持一致。
+                            { path: 'data_provider.llm_provider', label: '服务类型', type: 'select', options: [{ value: 'openai_compatible', label: 'OpenAI兼容' }, { value: 'zhipu', label: '智谱GLM' }, { value: 'ollama', label: 'Ollama本地' }] },
+                            // 向导模式显式标记：这是 AI策略解析的回退配置域。
+                            { path: 'data_provider.llm_api_url', label: '智能服务地址（AI策略解析回退）', type: 'text', placeholder: '例如 https://xxx/v1 或 http://127.0.0.1:11434（Ollama可留空）', uiRelations: [{ area: '条件筛选器', effect: 'AI策略解析、行情分析使用的模型服务地址（当 strategy_llm_* 未配置时回退）' }] },
+                            { path: 'data_provider.llm_api_key', label: '智能服务访问密钥', type: 'password', secret: true, desc: '密钥字段会走 private_config_path 覆盖；Ollama本地可留空' },
+                            { path: 'data_provider.llm_model', label: '智能模型名称（AI策略解析回退）', type: 'text', placeholder: '例如 gpt-4o-mini / glm-4 / qwen2.5:14b' }
                         ]
                     },
                     {
                         title: '新增策略模型',
                         fields: [
-                            { path: 'data_provider.strategy_llm_api_url', label: '新增策略智能服务地址', type: 'text', placeholder: '例如 https://xxx/v1', uiRelations: [{ area: '条件筛选器AI解析', effect: '条件筛选器的AI策略解析功能使用的模型服务地址' }] },
-                            { path: 'data_provider.strategy_llm_api_key', label: '新增策略智能服务密钥', type: 'password', secret: true, desc: '密钥字段会走 private_config_path 覆盖' },
-                            { path: 'data_provider.strategy_llm_model', label: '新增策略智能模型名称', type: 'text', placeholder: '例如 qwen-plus / glm-4' },
+                            // 向导模式：新增策略模型同样增加 provider 选择，避免配置差异。
+                            { path: 'data_provider.strategy_llm_provider', label: '服务类型（AI策略解析优先）', type: 'select', options: [{ value: 'openai_compatible', label: 'OpenAI兼容' }, { value: 'zhipu', label: '智谱GLM' }, { value: 'ollama', label: 'Ollama本地' }] },
+                            { path: 'data_provider.strategy_llm_api_url', label: '新增策略智能服务地址（AI策略解析优先）', type: 'text', placeholder: '例如 https://xxx/v1 或 http://127.0.0.1:11434（Ollama可留空）', uiRelations: [{ area: '条件筛选器AI解析', effect: '条件筛选器的AI策略解析功能优先使用该配置；未就绪时回退到 data_provider.llm_*' }] },
+                            { path: 'data_provider.strategy_llm_api_key', label: '新增策略智能服务密钥（AI策略解析优先）', type: 'password', secret: true, desc: '密钥字段会走 private_config_path 覆盖；Ollama本地可留空' },
+                            { path: 'data_provider.strategy_llm_model', label: '新增策略智能模型名称（AI策略解析优先）', type: 'text', placeholder: '例如 qwen-plus / glm-4 / qwen2.5:14b' },
                             { path: 'data_provider.strategy_llm_timeout_sec', label: '新增策略智能超时秒数', type: 'number', min: 30, max: 300, step: 1, slider: true }
                         ]
                     }
@@ -6958,14 +7194,20 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             } else if (field.type === 'checkbox_group') {
                 const box = document.createElement('div');
                 box.className = 'space-y-2';
-                const selected = new Set(Array.isArray(value) ? value.map(x => String(x).trim().toUpperCase()) : []);
+                // 复选框组支持按字段决定大小写归一化，避免事件类型被误转成大写。
+                const valueCase = String(field.value_case || 'upper').trim().toLowerCase();
+                const normalizeCheckValue = (rawValue) => {
+                    const text = String(rawValue ?? '').trim();
+                    return valueCase === 'upper' ? text.toUpperCase() : text;
+                };
+                const selected = new Set(Array.isArray(value) ? value.map(x => normalizeCheckValue(x)).filter(Boolean) : []);
                 const opts = field.path === 'webhook_notification.category_codes'
                     ? (Array.isArray(webhookCategoryOptions) && webhookCategoryOptions.length ? webhookCategoryOptions : (field.options || []))
                     : (field.options || []);
                 const grid = document.createElement('div');
                 grid.className = 'grid grid-cols-2 gap-1';
                 opts.forEach(opt => {
-                    const v = String(opt?.value || '').trim().toUpperCase();
+                    const v = normalizeCheckValue(opt?.value || '');
                     if (!v) return;
                     const item = document.createElement('label');
                     item.className = 'flex items-start gap-2 text-xs text-slate-200 bg-slate-900 border border-slate-700 rounded px-2 py-1';
@@ -6976,6 +7218,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     input.dataset.path = field.path;
                     input.dataset.kind = 'checkitem';
                     input.dataset.value = v;
+                    input.dataset.valueCase = valueCase;
                     const txtWrap = document.createElement('span');
                     txtWrap.className = 'leading-tight';
                     const ttl = document.createElement('div');
@@ -7716,7 +7959,10 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     const arr = lines.map(v => itemType === 'number' ? (Number.isFinite(Number(v)) ? Number(v) : 0) : v);
                     setByPath(out, path, arr);
                 } else if (kind === 'checkitem') {
-                    const v = String(el.dataset.value || '').trim().toUpperCase();
+                    // 复选框组保存时沿用渲染阶段的大小写规则，保证事件类型与分类编码都正确落盘。
+                    const valueCase = String(el.dataset.valueCase || 'upper').trim().toLowerCase();
+                    const rawValue = String(el.dataset.value || '').trim();
+                    const v = valueCase === 'upper' ? rawValue.toUpperCase() : rawValue;
                     if (!checklistMap[path]) checklistMap[path] = [];
                     if (!v) return;
                     if (el.checked) checklistMap[path].push(v);
@@ -7733,7 +7979,8 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 }
             });
             Object.keys(checklistMap).forEach(path => {
-                const arr = Array.from(new Set((checklistMap[path] || []).map(x => String(x).trim().toUpperCase()).filter(Boolean)));
+                // 这里直接去重并保留前面归一化后的值，避免再次统一转大写。
+                const arr = Array.from(new Set((checklistMap[path] || []).map(x => String(x).trim()).filter(Boolean)));
                 setByPath(out, path, arr);
             });
             Object.keys(mapValueMap).forEach(path => {
@@ -7863,20 +8110,57 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
         let screenerActiveTab = 'market';
         let screenerResults = [];
         let screenerPage = 1;
+        // 分页总数状态：统一使用后端返回值，避免前端误显示 n/n。
+        let screenerTotal = 0;
+        let screenerTotalPages = 1;
         let screenerPageSize = 50;
         let screenerSortBy = null;
         let screenerSortOrder = 'desc';
         let screenerSelectedCodes = new Set();
         let screenerContextRow = null;
+        let screenerAdvancedMode = false;
+        let screenerDataSourceDoc = null;
+        // 数据来源说明默认折叠，减少首屏高度占用。
+        let screenerDataSourceCollapsed = true;
 
         function openScreenerModal() {
             const modal = document.getElementById('screener-modal');
             if (!modal) return;
             modal.classList.remove('hidden');
             modal.classList.add('flex');
+            // 默认进入智能模式，仅展示AI流程；高级筛选按需展开。
+            setScreenerAdvancedMode(false);
+            // 弹窗打开时同步刷新“数据来源说明”。
+            loadScreenerDataSourceDoc();
             loadScreenerFilterOptions();
             loadScreenerCatalog();
             setDefaultBacktestDates();
+        }
+
+        function setScreenerAdvancedMode(enabled) {
+            // 控制传统条件筛选区显示，默认隐藏以突出AI交互。
+            screenerAdvancedMode = !!enabled;
+            const pre = document.getElementById('screener-manual-prefilters');
+            const tabs = document.getElementById('screener-manual-tabs');
+            const condWrap = document.getElementById('screener-manual-conditions-wrap');
+            const actionWrap = document.getElementById('screener-manual-actions-wrap');
+            const smartBtn = document.getElementById('screener-mode-smart-btn');
+            const advBtn = document.getElementById('screener-mode-advanced-btn');
+            [pre, tabs, condWrap, actionWrap].forEach((el) => {
+                if (!el) return;
+                if (screenerAdvancedMode) el.classList.remove('hidden');
+                else el.classList.add('hidden');
+            });
+            if (smartBtn) {
+                smartBtn.className = screenerAdvancedMode
+                    ? 'px-2 py-1 rounded border border-slate-600 bg-slate-800 text-slate-200 text-[11px]'
+                    : 'px-2 py-1 rounded border border-emerald-500 bg-emerald-700 text-white text-[11px]';
+            }
+            if (advBtn) {
+                advBtn.className = screenerAdvancedMode
+                    ? 'px-2 py-1 rounded border border-cyan-500 bg-cyan-700 text-white text-[11px]'
+                    : 'px-2 py-1 rounded border border-slate-600 bg-slate-800 text-slate-200 text-[11px]';
+            }
         }
 
         function closeScreenerModal() {
@@ -7905,6 +8189,102 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             } catch (e) {
                 document.getElementById('screener-filter-options-status').textContent = '选项加载失败';
             }
+        }
+
+        async function loadScreenerDataSourceDoc() {
+            // 读取后端统一维护的数据来源文案，避免前端硬编码口径漂移。
+            const updatedEl = document.getElementById('screener-data-source-updated');
+            const contentEl = document.getElementById('screener-data-source-content');
+            if (!updatedEl || !contentEl) return;
+            try {
+                const res = await fetch('/api/screener/data_sources');
+                const data = await res.json();
+                if (data.status !== 'success' || !data.data) {
+                    throw new Error(data.msg || 'load failed');
+                }
+                const doc = data.data || {};
+                screenerDataSourceDoc = doc;
+                updatedEl.textContent = doc.updated_at ? `更新时间 ${doc.updated_at}` : '已加载';
+                // 将数组文案渲染为简洁段落，保持在弹窗顶部可快速阅读。
+                const sec = (title, arr) => {
+                    if (!Array.isArray(arr) || !arr.length) return '';
+                    const lines = arr.map(x => `- ${String(x || '')}`).join('<br>');
+                    return `<div class="mt-1"><span class="text-cyan-300">${title}</span><br>${lines}</div>`;
+                };
+                contentEl.innerHTML = [
+                    sec('来源优先级', doc.source_priority),
+                    sec('本地路径', doc.data_paths),
+                    sec('使用逻辑', doc.usage_logic),
+                    sec('当前限制', doc.limitations),
+                ].filter(Boolean).join('');
+            } catch (e) {
+                updatedEl.textContent = '加载失败';
+                contentEl.textContent = '数据来源说明加载失败，请检查 /api/screener/data_sources 接口。';
+            }
+        }
+
+        function toggleScreenerDataSourcePanel() {
+            // 提供折叠能力，避免顶部说明占用过多垂直空间。
+            const contentEl = document.getElementById('screener-data-source-content');
+            const runtimeEl = document.getElementById('screener-data-source-runtime');
+            const btnEl = document.getElementById('screener-data-source-toggle-btn');
+            if (!contentEl || !runtimeEl || !btnEl) return;
+            screenerDataSourceCollapsed = !screenerDataSourceCollapsed;
+            if (screenerDataSourceCollapsed) {
+                contentEl.classList.add('hidden');
+                runtimeEl.classList.add('hidden');
+                btnEl.textContent = '展开';
+            } else {
+                contentEl.classList.remove('hidden');
+                runtimeEl.classList.remove('hidden');
+                btnEl.textContent = '折叠';
+            }
+        }
+
+        async function copyScreenerDataSourceDoc() {
+            // 复制说明文本，方便合规/运营侧直接粘贴使用。
+            const doc = screenerDataSourceDoc || {};
+            const blocks = [];
+            if (Array.isArray(doc.source_priority) && doc.source_priority.length) {
+                blocks.push('来源优先级\n' + doc.source_priority.map(x => `- ${x}`).join('\n'));
+            }
+            if (Array.isArray(doc.data_paths) && doc.data_paths.length) {
+                blocks.push('本地路径\n' + doc.data_paths.map(x => `- ${x}`).join('\n'));
+            }
+            if (Array.isArray(doc.usage_logic) && doc.usage_logic.length) {
+                blocks.push('使用逻辑\n' + doc.usage_logic.map(x => `- ${x}`).join('\n'));
+            }
+            if (Array.isArray(doc.limitations) && doc.limitations.length) {
+                blocks.push('当前限制\n' + doc.limitations.map(x => `- ${x}`).join('\n'));
+            }
+            const text = blocks.join('\n\n') || '暂无可复制说明';
+            try {
+                await navigator.clipboard.writeText(text);
+                showScreenerToast('说明已复制到剪贴板', 'success');
+            } catch (e) {
+                showScreenerToast('复制失败，请手动复制', 'warning');
+            }
+        }
+
+        function renderScreenerSourceStats(stats) {
+            // 将后端来源统计渲染到顶部说明卡，提升筛选透明度。
+            const el = document.getElementById('screener-data-source-runtime');
+            if (!el) return;
+            const fAll = stats && stats.filtered ? stats.filtered : null;
+            const fPage = stats && stats.filtered_page ? stats.filtered_page : null;
+            if (!fAll || !fAll.counts || !fAll.ratio_pct) {
+                el.textContent = '本次筛选来源占比：暂无统计';
+                return;
+            }
+            const cAll = fAll.counts;
+            const rAll = fAll.ratio_pct;
+            if (fPage && fPage.counts && fPage.ratio_pct) {
+                const cPage = fPage.counts;
+                const rPage = fPage.ratio_pct;
+                el.textContent = `当前页来源占比：DuckDB ${cPage.duckdb || 0}(${rPage.duckdb || 0}%)，AkShare ${cPage.akshare || 0}(${rPage.akshare || 0}%)，混合 ${cPage.mixed || 0}(${rPage.mixed || 0}%)，基础 ${cPage.basic || 0}(${rPage.basic || 0}%)；筛选全集：DuckDB ${cAll.duckdb || 0}(${rAll.duckdb || 0}%)，AkShare ${cAll.akshare || 0}(${rAll.akshare || 0}%)，混合 ${cAll.mixed || 0}(${rAll.mixed || 0}%)，基础 ${cAll.basic || 0}(${rAll.basic || 0}%)。说明：混合=DuckDB主数据+AkShare补字段。`;
+                return;
+            }
+            el.textContent = `筛选全集来源占比：DuckDB ${cAll.duckdb || 0}(${rAll.duckdb || 0}%)，AkShare ${cAll.akshare || 0}(${rAll.akshare || 0}%)，混合 ${cAll.mixed || 0}(${rAll.mixed || 0}%)，基础 ${cAll.basic || 0}(${rAll.basic || 0}%)。说明：混合=DuckDB主数据+AkShare补字段。`;
         }
 
         function populateScreenerSelect(id, options) {
@@ -8019,6 +8399,34 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             // Placeholder: could auto-apply on filter change, but we wait for explicit button click
         }
 
+        function showScreenerToast(message, level = 'success') {
+            // 中间浮窗提示：替代 alert，3秒自动消失，不阻塞用户操作。
+            const text = String(message || '').trim();
+            if (!text) return;
+            let wrap = document.getElementById('screener-center-toast-wrap');
+            if (!wrap) {
+                wrap = document.createElement('div');
+                wrap.id = 'screener-center-toast-wrap';
+                wrap.className = 'fixed inset-0 z-[170] pointer-events-none flex items-center justify-center';
+                document.body.appendChild(wrap);
+            }
+            const item = document.createElement('div');
+            const clsMap = {
+                success: 'bg-emerald-900/95 border-emerald-500 text-emerald-100',
+                error: 'bg-rose-900/95 border-rose-500 text-rose-100',
+                warning: 'bg-amber-900/95 border-amber-500 text-amber-100',
+                info: 'bg-slate-900/95 border-slate-500 text-slate-100',
+            };
+            const colorCls = clsMap[level] || clsMap.info;
+            item.className = `pointer-events-none ${colorCls} border px-4 py-2 rounded shadow-2xl text-sm max-w-[70vw] whitespace-pre-wrap`;
+            item.innerText = text;
+            wrap.appendChild(item);
+            setTimeout(() => {
+                item.remove();
+                if (!wrap.childElementCount) wrap.remove();
+            }, 3000);
+        }
+
         async function applyScreenerFilter() {
             const exchange = document.getElementById('screener-exchange')?.value || '';
             const region = document.getElementById('screener-region')?.value || '';
@@ -8055,13 +8463,29 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 });
                 const data = await res.json();
                 if (data.status === 'success') {
-                    screenerResults = data.data || [];
+                    // 分页兜底：若总数>0但当前页为空，自动回到第1页重查，避免“闪成0条”的错觉。
+                    const total = Number(data.total || 0);
+                    const totalPages = Math.max(1, Number(data.total_pages || 1));
+                    const rows = Array.isArray(data.data) ? data.data : [];
+                    if (total > 0 && rows.length === 0 && Number(body.page || 1) > 1) {
+                        screenerPage = 1;
+                        await applyScreenerFilter();
+                        return;
+                    }
+                    screenerResults = rows;
+                    // 同步服务端分页元数据，供分页栏和翻页边界使用。
+                    screenerTotal = total;
+                    screenerTotalPages = totalPages;
+                    screenerPage = Math.min(Math.max(1, Number(data.page || body.page || 1)), screenerTotalPages);
+                    // 刷新本次筛选来源占比展示。
+                    renderScreenerSourceStats(data.source_stats || null);
                     renderScreenerResults();
+                    showScreenerToast(`筛选已生效，本页 ${screenerResults.length} 条`, 'success');
                 } else {
-                    alert('筛选失败: ' + (data.msg || '未知错误'));
+                    showScreenerToast('筛选失败: ' + (data.msg || '未知错误'), 'error');
                 }
             } catch (e) {
-                alert('请求失败: ' + e.message);
+                showScreenerToast('请求失败: ' + e.message, 'error');
             }
         }
 
@@ -8073,46 +8497,116 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             document.getElementById('screener-enterprise').value = '';
             document.getElementById('screener-margin').value = '';
             screenerResults = [];
+            // 重置分页状态，避免沿用旧总数导致显示混乱。
+            screenerTotal = 0;
+            screenerTotalPages = 1;
+            screenerPage = 1;
             screenerSelectedCodes.clear();
             renderScreenerResults();
+        }
+
+        function _resolveDisplayStockCode(row) {
+            // 统一提取股票代码：兼容 600000 / 600000.SH / SH600000 / SZ000001 等形态。
+            const raw = String(
+                row?.code ?? row?.stock_code ?? row?.ts_code ?? row?.symbol ?? row?.trade_code ?? ''
+            ).trim().toUpperCase();
+            if (!raw) return '--';
+            // 标准形态：6位数字，或 6位+交易所后缀。
+            if (/^\d{6}(\.(SH|SZ|BJ))?$/.test(raw)) return raw;
+            // 兼容 SH600000 / SZ000001 / BJ430001 形态。
+            const m1 = raw.match(/^(SH|SZ|BJ)(\d{6})$/);
+            if (m1) return `${m1[2]}.${m1[1]}`;
+            // 兼容 600000XSHG / 000001XSHE 等少量扩展形态。
+            const m2 = raw.match(/^(\d{6})\.(XSHG|XSHE|XBJ)$/);
+            if (m2) {
+                const ex = m2[2] === 'XSHG' ? 'SH' : (m2[2] === 'XSHE' ? 'SZ' : 'BJ');
+                return `${m2[1]}.${ex}`;
+            }
+            return '--';
+        }
+
+        function _toggleScreenerMetricColumns(rows) {
+            // 若某列全为空，则整列隐藏，避免“全是空白值”影响体验。
+            const list = Array.isArray(rows) ? rows : [];
+            const hasPrice = list.some(r => Number.isFinite(Number(r?.price)));
+            const hasChange = list.some(r => Number.isFinite(Number(r?.change_pct)));
+            const hasTurnover = list.some(r => Number.isFinite(Number(r?.turnover)));
+            const hasFloatMv = list.some(r => Number.isFinite(Number(r?.float_mv)));
+            const setVisible = (id, visible) => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                el.style.display = visible ? '' : 'none';
+            };
+            setVisible('screener-col-price', hasPrice);
+            setVisible('screener-col-change', hasChange);
+            setVisible('screener-col-turnover', hasTurnover);
+            setVisible('screener-col-floatmv', hasFloatMv);
+            return { hasPrice, hasChange, hasTurnover, hasFloatMv };
         }
 
         function renderScreenerResults() {
             const tbody = document.getElementById('screener-results-body');
             const info = document.getElementById('screener-pagination-info');
             const pageNum = document.getElementById('screener-page-num');
+            const metricFlags = _toggleScreenerMetricColumns(screenerResults);
+            const currentRows = Array.isArray(screenerResults) ? screenerResults.length : 0;
+            const totalRows = Number(screenerTotal || 0);
+            const currentPage = Math.max(1, Number(screenerPage || 1));
+            const totalPages = Math.max(1, Number(screenerTotalPages || 1));
 
             if (!screenerResults.length) {
                 tbody.innerHTML = '<tr><td colspan="8" class="px-3 py-8 text-center text-slate-500">暂无符合条件的标的</td></tr>';
-                if (info) info.textContent = '共 0 条';
-                if (pageNum) pageNum.textContent = '1 / 1';
+                if (info) info.textContent = `当前页 ${currentRows} 条 / 共 ${totalRows} 条`;
+                if (pageNum) pageNum.textContent = `${currentPage} / ${totalPages}`;
+                updateScreenerPaginationButtons();
                 return;
             }
 
             let html = '';
             screenerResults.forEach(row => {
-                const checked = screenerSelectedCodes.has(row.code) ? 'checked' : '';
+                const stockCode = _resolveDisplayStockCode(row);
+                const checked = screenerSelectedCodes.has(stockCode) ? 'checked' : '';
                 const changePct = row.change_pct != null ? (row.change_pct >= 0 ? '+' : '') + (row.change_pct || 0).toFixed(2) + '%' : '--';
                 const changeClass = (row.change_pct || 0) >= 0 ? 'text-trading-green' : 'text-trading-red';
                 const price = row.price != null ? (row.price).toFixed(2) : '--';
                 const turnover = row.turnover != null ? (row.turnover).toFixed(2) + '%' : '--';
                 const floatMv = row.float_mv != null ? formatMv(row.float_mv) : '--';
-                html += `<tr class="hover:bg-slate-800/40" oncontextmenu="showScreenerContextMenu(event, '${row.code}')">
-                    <td class="px-3 py-1.5"><input type="checkbox" ${checked} onchange="toggleScreenerRow('${row.code}', this.checked)" /></td>
-                    <td class="px-3 py-1.5 text-white code-font">${row.code}</td>
+                html += `<tr class="hover:bg-slate-800/40" oncontextmenu="showScreenerContextMenu(event, '${stockCode}')">
+                    <td class="px-3 py-1.5"><input type="checkbox" ${checked} onchange="toggleScreenerRow('${stockCode}', this.checked)" /></td>
+                    <td class="px-3 py-1.5 text-white code-font">${stockCode}</td>
                     <td class="px-3 py-1.5">${row.name || '--'}</td>
-                    <td class="px-3 py-1.5 code-font">${price}</td>
-                    <td class="px-3 py-1.5 code-font ${changeClass}">${changePct}</td>
-                    <td class="px-3 py-1.5 code-font">${turnover}</td>
-                    <td class="px-3 py-1.5 code-font">${floatMv}</td>
+                    <td class="px-3 py-1.5 code-font" style="display:${metricFlags.hasPrice ? '' : 'none'}">${price}</td>
+                    <td class="px-3 py-1.5 code-font ${changeClass}" style="display:${metricFlags.hasChange ? '' : 'none'}">${changePct}</td>
+                    <td class="px-3 py-1.5 code-font" style="display:${metricFlags.hasTurnover ? '' : 'none'}">${turnover}</td>
+                    <td class="px-3 py-1.5 code-font" style="display:${metricFlags.hasFloatMv ? '' : 'none'}">${floatMv}</td>
                     <td class="px-3 py-1.5 text-slate-500">${row.screener_time || '--'}</td>
                 </tr>`;
             });
             tbody.innerHTML = html;
 
-            // Update pagination info (total comes from server but we only have current page data here)
-            if (info) info.textContent = `共 ${screenerResults.length} 条（当前页）`;
-            if (pageNum) pageNum.textContent = `${screenerPage} / ${screenerPage}`;
+            // 使用后端分页元数据，显示“当前页条数/总条数 + 当前页/总页数”。
+            if (info) info.textContent = `当前页 ${currentRows} 条 / 共 ${totalRows} 条`;
+            if (pageNum) pageNum.textContent = `${currentPage} / ${totalPages}`;
+            updateScreenerPaginationButtons();
+        }
+
+        function updateScreenerPaginationButtons() {
+            // 根据页码边界禁用翻页按钮，避免首尾页重复发起无效请求。
+            const prevBtn = document.getElementById('screener-prev-page-btn');
+            const nextBtn = document.getElementById('screener-next-page-btn');
+            const currentPage = Math.max(1, Number(screenerPage || 1));
+            const totalPages = Math.max(1, Number(screenerTotalPages || 1));
+            const disablePrev = currentPage <= 1;
+            const disableNext = currentPage >= totalPages;
+            const setBtnState = (btn, disabled) => {
+                if (!btn) return;
+                btn.disabled = !!disabled;
+                btn.classList.toggle('opacity-50', !!disabled);
+                btn.classList.toggle('cursor-not-allowed', !!disabled);
+                btn.classList.toggle('hover:bg-slate-600', !disabled);
+            };
+            setBtnState(prevBtn, disablePrev);
+            setBtnState(nextBtn, disableNext);
         }
 
         function formatMv(valInYi) {
@@ -8141,7 +8635,12 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
 
         function toggleScreenerSelectAll(checked) {
             if (checked) {
-                screenerResults.forEach(r => screenerSelectedCodes.add(r.code));
+                screenerResults.forEach(r => {
+                    const stockCode = _resolveDisplayStockCode(r);
+                    if (stockCode && stockCode !== '--') {
+                        screenerSelectedCodes.add(stockCode);
+                    }
+                });
             } else {
                 screenerSelectedCodes.clear();
             }
@@ -8158,17 +8657,22 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
         }
 
         function nextScreenerPage() {
-            screenerPage++; applyScreenerFilter();
+            // 到达末页后不再继续请求，避免出现无效 n+1 页。
+            if (screenerPage >= Math.max(1, Number(screenerTotalPages || 1))) return;
+            screenerPage++;
+            applyScreenerFilter();
         }
 
         function getSelectedCodes() {
             if (screenerSelectedCodes.size > 0) return Array.from(screenerSelectedCodes);
-            return screenerResults.map(r => r.code);
+            return (Array.isArray(screenerResults) ? screenerResults : [])
+                .map(r => _resolveDisplayStockCode(r))
+                .filter(code => code && code !== '--');
         }
 
         async function addToStockPool() {
             const codes = getSelectedCodes();
-            if (!codes.length) { alert('请先勾选标的'); return; }
+            if (!codes.length) { showScreenerToast('请先勾选标的', 'warning'); return; }
             try {
                 const res = await fetch('/api/blk/import_stock_pool', {
                     method: 'POST',
@@ -8185,25 +8689,25 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 });
                 const data = await res.json();
                 if (data.status === 'success') {
-                    alert(`已导入 ${data.added_count} 个标的到标的池`);
+                    showScreenerToast(`已导入 ${data.added_count} 个标的到标的池`, 'success');
                 } else {
-                    alert('导入失败: ' + (data.msg || '未知错误'));
+                    showScreenerToast('导入失败: ' + (data.msg || '未知错误'), 'error');
                 }
             } catch (e) {
-                alert('请求失败: ' + e.message);
+                showScreenerToast('请求失败: ' + e.message, 'error');
             }
         }
 
         async function sendToBacktest() {
             // 合规前置：未通过免责声明确认时禁止触发回测。
-            if (!disclaimerAccepted) { alert('请先勾选免责声明并进入系统后再执行回测'); return; }
+            if (!disclaimerAccepted) { showScreenerToast('请先勾选免责声明并进入系统后再执行回测', 'warning'); return; }
             const codes = getSelectedCodes();
-            if (!codes.length) { alert('请先勾选标的'); return; }
+            if (!codes.length) { showScreenerToast('请先勾选标的', 'warning'); return; }
             // Use the first selected code for backtest, or let user know
             const start = document.getElementById('screener-bt-start')?.value;
             const end = document.getElementById('screener-bt-end')?.value;
             const capital = parseFloat(document.getElementById('screener-bt-capital')?.value || '1000000');
-            if (!start || !end) { alert('请设置回测起止日期'); return; }
+            if (!start || !end) { showScreenerToast('请设置回测起止日期', 'warning'); return; }
             try {
                 const res = await fetch('/api/control/start_backtest', {
                     method: 'POST',
@@ -8216,18 +8720,18 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 });
                 const data = await res.json();
                 if (data.status === 'success') {
-                    alert(`已对 ${codes[0]} 启动回测（共选中 ${codes.length} 个标的，当前仅回测首个）`);
+                    showScreenerToast(`已对 ${codes[0]} 启动回测（共选中 ${codes.length} 个标的，当前仅回测首个）`, 'success');
                 } else {
-                    alert('回测启动失败: ' + (data.msg || '未知错误'));
+                    showScreenerToast('回测启动失败: ' + (data.msg || '未知错误'), 'error');
                 }
             } catch (e) {
-                alert('请求失败: ' + e.message);
+                showScreenerToast('请求失败: ' + e.message, 'error');
             }
         }
 
         async function exportScreenerCSV() {
             const codes = getSelectedCodes();
-            if (!codes.length) { alert('请先勾选标的'); return; }
+            if (!codes.length) { showScreenerToast('请先勾选标的', 'warning'); return; }
             try {
                 const res = await fetch('/api/screener/export', {
                     method: 'POST',
@@ -8245,22 +8749,22 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     document.body.removeChild(a);
                     URL.revokeObjectURL(url);
                 } else {
-                    alert('导出失败');
+                    showScreenerToast('导出失败', 'error');
                 }
             } catch (e) {
-                alert('请求失败: ' + e.message);
+                showScreenerToast('请求失败: ' + e.message, 'error');
             }
         }
 
         async function startScreenerBacktest() {
             // 合规前置：未通过免责声明确认时禁止触发回测。
-            if (!disclaimerAccepted) { alert('请先勾选免责声明并进入系统后再执行回测'); return; }
+            if (!disclaimerAccepted) { showScreenerToast('请先勾选免责声明并进入系统后再执行回测', 'warning'); return; }
             const codes = getSelectedCodes();
-            if (!codes.length) { alert('请先筛选并勾选标的'); return; }
+            if (!codes.length) { showScreenerToast('请先筛选并勾选标的', 'warning'); return; }
             const start = document.getElementById('screener-bt-start')?.value;
             const end = document.getElementById('screener-bt-end')?.value;
             const capital = parseFloat(document.getElementById('screener-bt-capital')?.value || '1000000');
-            if (!start || !end) { alert('请设置回测起止日期'); return; }
+            if (!start || !end) { showScreenerToast('请设置回测起止日期', 'warning'); return; }
             try {
                 const res = await fetch('/api/control/start_backtest', {
                     method: 'POST',
@@ -8273,12 +8777,12 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 });
                 const data = await res.json();
                 if (data.status === 'success') {
-                    alert(`已对 ${codes[0]} 启动回测`);
+                    showScreenerToast(`已对 ${codes[0]} 启动回测`, 'success');
                 } else {
-                    alert('回测启动失败: ' + (data.msg || '未知错误'));
+                    showScreenerToast('回测启动失败: ' + (data.msg || '未知错误'), 'error');
                 }
             } catch (e) {
-                alert('请求失败: ' + e.message);
+                showScreenerToast('请求失败: ' + e.message, 'error');
             }
         }
 
@@ -8309,7 +8813,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 screenerSelectedCodes.add(screenerContextRow);
                 exportScreenerCSV();
             } else if (action === 'detail') {
-                alert('标的详情（Phase 2 支持）：' + screenerContextRow);
+                showScreenerToast('标的详情（Phase 2 支持）：' + screenerContextRow, 'info');
             }
         }
 
@@ -8325,6 +8829,149 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
 
         // ==================== AI 策略解析 ====================
         let aiParsedData = null;
+        let aiPromptTrace = { system_prompt: '', user_prompt: '' };
+        let aiPromptTemplatesCache = null;
+        let screenerAiManualStrategyIds = new Set();
+        let screenerAiHistoryRows = [];
+        let screenerAiHistorySelectedIndex = -1;
+        let screenerAiActionRunning = false;
+        // 记录AI状态栏最近一次成功时间，用于“是否卡住”的快速判断。
+        let screenerAiLastSuccessText = '--';
+        // 运行态进度上下文：用于阶段、进度、预计耗时显示。
+        let screenerAiProgressTimer = null;
+        let screenerAiProgressState = { action: '', stage: 0, total: 0, label: '', startedAt: 0, expectedSec: 0 };
+        const SCREENER_AI_EXPECTED_SEC_MAP = {
+            parse: 12,
+            ai_filter: 16,
+            prompt_from_strategy: 6,
+            batch_start: 18,
+            create_strategy: 10,
+        };
+
+        function _clearScreenerAiProgressTimer() {
+            // 清理状态栏刷新定时器，避免重复注册导致资源浪费。
+            if (screenerAiProgressTimer) {
+                clearInterval(screenerAiProgressTimer);
+                screenerAiProgressTimer = null;
+            }
+        }
+
+        function _renderScreenerAiStatusMeta() {
+            // 渲染状态辅助信息：阶段、进度、预计剩余、最近成功时间。
+            const el = document.getElementById('screener-ai-status-meta');
+            if (!el) return;
+            const s = screenerAiProgressState || {};
+            if (!s.startedAt || String(s.action || '').trim() === '') {
+                el.textContent = `阶段：待命 | 进度：0% | 预计剩余：-- | 最近成功：${screenerAiLastSuccessText}`;
+                return;
+            }
+            const nowMs = Date.now();
+            const elapsedSec = Math.max(0, (nowMs - Number(s.startedAt || nowMs)) / 1000.0);
+            const stage = Math.max(0, Number(s.stage || 0));
+            const total = Math.max(1, Number(s.total || 1));
+            const pct = Math.min(99, Math.max(1, Math.round((stage / total) * 100)));
+            const expectedSec = Math.max(0, Number(s.expectedSec || 0));
+            const remainSec = expectedSec > 0 ? Math.max(0, Math.round(expectedSec - elapsedSec)) : null;
+            const remainText = remainSec === null ? '--' : `${remainSec}s`;
+            const stageText = String(s.label || `执行阶段 ${stage}/${total}`);
+            el.textContent = `阶段：${stageText}(${stage}/${total}) | 进度：${pct}% | 预计剩余：${remainText} | 最近成功：${screenerAiLastSuccessText}`;
+        }
+
+        function startScreenerAiProgress(action, stage, total, label, expectedSec = null) {
+            // 启动进度态并开启周期刷新，适用于网络请求/数据处理阶段。
+            const act = String(action || '').trim();
+            const secFromMap = Number(SCREENER_AI_EXPECTED_SEC_MAP[act] || 0);
+            screenerAiProgressState = {
+                action: act,
+                stage: Math.max(1, Number(stage || 1)),
+                total: Math.max(1, Number(total || 1)),
+                label: String(label || '').trim(),
+                startedAt: Date.now(),
+                expectedSec: Number.isFinite(Number(expectedSec)) && Number(expectedSec) > 0 ? Number(expectedSec) : secFromMap,
+            };
+            _clearScreenerAiProgressTimer();
+            _renderScreenerAiStatusMeta();
+            screenerAiProgressTimer = setInterval(_renderScreenerAiStatusMeta, 500);
+        }
+
+        function advanceScreenerAiProgress(stage, label) {
+            // 推进进度阶段，用于同一任务中的多步骤展示。
+            if (!screenerAiProgressState || !screenerAiProgressState.startedAt) return;
+            screenerAiProgressState.stage = Math.max(1, Number(stage || screenerAiProgressState.stage || 1));
+            if (label !== undefined) {
+                screenerAiProgressState.label = String(label || '').trim();
+            }
+            _renderScreenerAiStatusMeta();
+        }
+
+        function _markScreenerAiLastSuccessNow() {
+            // 记录最近成功时间，增强状态栏可追踪性。
+            const now = new Date();
+            const hh = String(now.getHours()).padStart(2, '0');
+            const mm = String(now.getMinutes()).padStart(2, '0');
+            const ss = String(now.getSeconds()).padStart(2, '0');
+            screenerAiLastSuccessText = `${hh}:${mm}:${ss}`;
+        }
+
+        function setScreenerAiStatus(level, message, spinning = false) {
+            // 统一更新AI解析状态栏：文案、图标、颜色与动效一次同步。
+            const el = document.getElementById('screener-ai-status');
+            if (!el) return;
+            const lv = String(level || 'idle').trim().toLowerCase();
+            el.classList.remove(
+                'screener-ai-status-idle',
+                'screener-ai-status-running',
+                'screener-ai-status-success',
+                'screener-ai-status-warning',
+                'screener-ai-status-error'
+            );
+            if (lv === 'running') el.classList.add('screener-ai-status-running');
+            else if (lv === 'success') el.classList.add('screener-ai-status-success');
+            else if (lv === 'warning') el.classList.add('screener-ai-status-warning');
+            else if (lv === 'error') el.classList.add('screener-ai-status-error');
+            else el.classList.add('screener-ai-status-idle');
+            const safeText = String(message || '').trim() || '--';
+            const iconHtml = spinning
+                ? '<i class="fa-solid fa-spinner fa-spin mr-1"></i>'
+                : (lv === 'success'
+                    ? '<i class="fa-solid fa-check-circle mr-1"></i>'
+                    : (lv === 'warning'
+                        ? '<i class="fa-solid fa-triangle-exclamation mr-1"></i>'
+                        : (lv === 'error'
+                            ? '<i class="fa-solid fa-circle-xmark mr-1"></i>'
+                            : '<i class="fa-solid fa-circle-info mr-1"></i>')));
+            el.innerHTML = `${iconHtml}${safeText}`;
+            // 非运行态时收敛进度并刷新“最近成功时间”显示。
+            if (lv === 'success') {
+                _markScreenerAiLastSuccessNow();
+                _clearScreenerAiProgressTimer();
+                screenerAiProgressState = { action: '', stage: 0, total: 0, label: '', startedAt: 0, expectedSec: 0 };
+            } else if (lv === 'warning' || lv === 'error' || lv === 'idle') {
+                _clearScreenerAiProgressTimer();
+                screenerAiProgressState = { action: '', stage: 0, total: 0, label: '', startedAt: 0, expectedSec: 0 };
+            }
+            _renderScreenerAiStatusMeta();
+        }
+
+        function setScreenerAiActionRunning(running) {
+            // AI按钮互斥：任一动作执行中时，统一禁用其它按钮，避免并发触发。
+            screenerAiActionRunning = !!running;
+            const ids = [
+                'screener-ai-parse-btn',
+                'screener-ai-direct-filter-btn',
+                'screener-ai-direct-backtest-btn',
+                'screener-ai-direct-batch-btn',
+                'screener-ai-from-strategy-btn',
+                'screener-ai-create-strategy-btn',
+            ];
+            ids.forEach((id) => {
+                const btn = document.getElementById(id);
+                if (!btn) return;
+                btn.disabled = screenerAiActionRunning;
+                btn.classList.toggle('opacity-50', screenerAiActionRunning);
+                btn.classList.toggle('cursor-not-allowed', screenerAiActionRunning);
+            });
+        }
         // 兼容后端多形态返回：将规则统一转换为数组，避免 forEach 报错。
         function normalizeRuleList(rawRules) {
             if (Array.isArray(rawRules)) return rawRules;
@@ -8377,9 +9024,11 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             const parseBtn = document.getElementById('screener-ai-parse-btn');
             const sendBtn = document.getElementById('screener-send-backtest-btn');
             const startBtn = document.getElementById('screener-start-backtest-btn');
+            const fromStrategyBtn = document.getElementById('screener-ai-from-strategy-btn');
             applyComplianceButtonState(parseBtn, disclaimerAccepted);
             applyComplianceButtonState(sendBtn, disclaimerAccepted);
             applyComplianceButtonState(startBtn, disclaimerAccepted);
+            applyComplianceButtonState(fromStrategyBtn, disclaimerAccepted);
         }
 
         function openScreenerAIParser() {
@@ -8389,9 +9038,237 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             modal.classList.add('flex');
             document.getElementById('screener-ai-result').classList.add('hidden');
             document.getElementById('screener-ai-apply-btn').classList.add('hidden');
-            document.getElementById('screener-ai-status').textContent = '请输入策略描述后点击"开始解析"';
+            setScreenerAiStatus('idle', '请输入策略描述后点击"开始解析"');
             document.getElementById('screener-ai-input').value = '';
             aiParsedData = null;
+            aiPromptTrace = { system_prompt: '', user_prompt: '' };
+            renderAiPromptTrace(aiPromptTrace);
+            // 打开时同步一次策略多选列表，便于用户手工控制策略范围。
+            renderScreenerStrategyMultiSelect();
+            // 预加载系统提示词模板，并初始化用户提示词展示。
+            loadScreenerPromptTemplates();
+            // 加载“选股策略示例提示词”，并预填首条示例，用户可继续修改。
+            loadScreenerPromptExamples();
+            onScreenerAiInputChanged();
+            // 打开弹窗时刷新历史记录，便于用户查看最近交互。
+            loadScreenerAiHistory();
+        }
+
+        async function fillPromptFromCurrentStrategy() {
+            // 从当前策略生成自然语言提示词，填充后可继续手工编辑。
+            const inputEl = document.getElementById('screener-ai-input');
+            if (!inputEl) return;
+            let targetId = '';
+            const selected = Array.isArray(selectedStrategyIds)
+                ? selectedStrategyIds.map((x) => String(x || '').trim()).filter(Boolean)
+                : [];
+            if (selected.length === 1) {
+                targetId = selected[0];
+            } else if (selected.length > 1) {
+                showScreenerToast('检测到已选多个策略，请先只保留一个策略再生成提示词', 'warning');
+                return;
+            } else if (Array.isArray(strategyCatalog) && strategyCatalog.length > 0) {
+                // 若未显式选择，回退到首个启用策略，保证功能可用。
+                const firstEnabled = strategyCatalog.find((s) => s && s.enabled !== false) || strategyCatalog[0];
+                targetId = String(firstEnabled?.id || '').trim();
+            }
+            if (!targetId) {
+                showScreenerToast('未找到可用策略，请先在策略面板选择策略', 'warning');
+                return;
+            }
+            try {
+                startScreenerAiProgress('prompt_from_strategy', 1, 2, '读取策略信息');
+                setScreenerAiStatus('running', '正在根据策略生成提示词...', true);
+                const q = new URLSearchParams({ strategy_id: targetId });
+                const res = await fetch(`/api/strategy_manager/prompt_from_strategy?${q.toString()}`);
+                const data = await res.json();
+                if (!res.ok || String(data?.status || '').toLowerCase() !== 'success') {
+                    throw new Error(data?.msg || '生成失败');
+                }
+                advanceScreenerAiProgress(2, '填充提示词');
+                inputEl.value = String(data?.prompt || '').trim();
+                onScreenerAiInputChanged();
+                setScreenerAiStatus('success', `已根据策略 ${String(data?.strategy_name || targetId)} 生成提示词，可继续修改`);
+                showScreenerToast('提示词已填充，可直接修改后解析', 'success');
+            } catch (e) {
+                const msg = `生成提示词失败: ${e}`;
+                setScreenerAiStatus('error', msg);
+                showScreenerToast(msg, 'error');
+            }
+        }
+
+        function renderScreenerStrategyMultiSelect() {
+            // 手动策略多选：参考策略面板能力，提供轻量勾选列表。
+            const wrap = document.getElementById('screener-ai-strategy-multi-wrap');
+            if (!wrap) return;
+            const keyword = String(document.getElementById('screener-ai-strategy-search')?.value || '').trim().toLowerCase();
+            const rows = Array.isArray(strategyCatalog) ? strategyCatalog : [];
+            const filtered = rows.filter((s) => {
+                const sid = String(s?.id || '').toLowerCase();
+                const name = String(s?.name || '').toLowerCase();
+                if (!keyword) return true;
+                return sid.includes(keyword) || name.includes(keyword);
+            });
+            if (!rows.length) {
+                wrap.innerHTML = '<div class="text-slate-500 py-1">暂无可选策略</div>';
+                return;
+            }
+            if (!filtered.length) {
+                wrap.innerHTML = '<div class="text-slate-500 py-1">没有匹配的策略</div>';
+                return;
+            }
+            let html = '';
+            filtered.slice(0, 200).forEach((s) => {
+                const sid = String(s?.id || '').trim();
+                const checked = screenerAiManualStrategyIds.has(sid) ? 'checked' : '';
+                const enabled = (s && s.enabled === false) ? 'disabled' : '';
+                const color = (s && s.enabled === false) ? 'text-slate-500' : 'text-slate-200';
+                html += `
+                    <label class="flex items-center gap-2 ${color}">
+                        <input type="checkbox" ${checked} ${enabled} onchange="toggleScreenerAiManualStrategy('${sid}', this.checked)" class="w-3.5 h-3.5 accent-cyan-500" />
+                        <span>[${sid || '--'}] ${String(s?.name || '--')}</span>
+                    </label>
+                `;
+            });
+            wrap.innerHTML = html;
+            // 若首次打开未选中任何策略，默认继承当前全局已选策略。
+            if (screenerAiManualStrategyIds.size === 0) {
+                const fromGlobal = Array.isArray(selectedStrategyIds)
+                    ? selectedStrategyIds.map((x) => String(x || '').trim()).filter(Boolean)
+                    : [];
+                fromGlobal.forEach((sid) => screenerAiManualStrategyIds.add(sid));
+                if (fromGlobal.length) {
+                    renderScreenerStrategyMultiSelect();
+                    return;
+                }
+            }
+        }
+
+        function toggleScreenerAiManualStrategy(strategyId, checked) {
+            // 维护手动策略多选集合，供批量回测读取。
+            const sid = String(strategyId || '').trim();
+            if (!sid) return;
+            if (checked) screenerAiManualStrategyIds.add(sid);
+            else screenerAiManualStrategyIds.delete(sid);
+        }
+
+        async function loadScreenerPromptExamples(forceReload = false) {
+            // 读取后端示例提示词列表，供 AI 解析界面直接引入。
+            if (!forceReload && Array.isArray(screenerPromptExamples) && screenerPromptExamples.length > 0) {
+                renderScreenerPromptExamples();
+                return;
+            }
+            const selectEl = document.getElementById('screener-ai-example-select');
+            try {
+                if (selectEl) {
+                    selectEl.innerHTML = '<option value="">正在加载示例...</option>';
+                }
+                const res = await fetch('/api/strategy_manager/screener_examples');
+                const data = await res.json();
+                if (!res.ok || String(data?.status || '').toLowerCase() !== 'success') {
+                    throw new Error(data?.msg || '读取示例失败');
+                }
+                const rows = Array.isArray(data?.examples) ? data.examples : [];
+                screenerPromptExamples = rows;
+                renderScreenerPromptExamples();
+                // 打开弹窗时自动预填第一条示例，仍允许用户手工修改。
+                const inputEl = document.getElementById('screener-ai-input');
+                const currentText = String(inputEl?.value || '').trim();
+                if (!currentText) {
+                    applySelectedScreenerPromptExample(false);
+                }
+            } catch (e) {
+                if (selectEl) {
+                    selectEl.innerHTML = `<option value="">示例加载失败：${String(e?.message || e)}</option>`;
+                }
+            }
+        }
+
+        function renderScreenerPromptExamples() {
+            // 将示例列表渲染为下拉选项，便于一键填充。
+            const selectEl = document.getElementById('screener-ai-example-select');
+            if (!selectEl) return;
+            const rows = Array.isArray(screenerPromptExamples) ? screenerPromptExamples : [];
+            if (!rows.length) {
+                selectEl.innerHTML = '<option value="">暂无可用示例</option>';
+                return;
+            }
+            selectEl.innerHTML = rows.map((x, idx) => {
+                const id = String(x?.example_id || `example_${idx}`);
+                const title = String(x?.title || `示例${idx + 1}`);
+                const cat = String(x?.category || '示例');
+                return `<option value="${id}">[${cat}] ${title}</option>`;
+            }).join('');
+            if (!selectEl.value) {
+                selectEl.value = String(rows[0]?.example_id || '');
+            }
+        }
+
+        function applySelectedScreenerPromptExample(showToast = true) {
+            // 将选中示例填充到用户输入框，用户可在此基础上继续编辑。
+            const selectEl = document.getElementById('screener-ai-example-select');
+            const inputEl = document.getElementById('screener-ai-input');
+            if (!selectEl || !inputEl) return;
+            const selectedId = String(selectEl.value || '').trim();
+            const rows = Array.isArray(screenerPromptExamples) ? screenerPromptExamples : [];
+            const target = rows.find((x) => String(x?.example_id || '').trim() === selectedId) || rows[0];
+            if (!target) return;
+            inputEl.value = String(target?.prompt || '').trim();
+            onScreenerAiInputChanged();
+            if (showToast) {
+                showScreenerToast('已填充示例提示词，可继续修改后再解析', 'success');
+            }
+        }
+
+        async function loadScreenerPromptTemplates(forceReload = false) {
+            // 读取后端模板用于预展示，降低“空白提示词”造成的不确定感。
+            if (!forceReload && aiPromptTemplatesCache) {
+                const sys = String(aiPromptTemplatesCache?.ai_filter?.system_prompt || '');
+                renderAiPromptTrace({
+                    system_prompt: sys,
+                    user_prompt: String(document.getElementById('screener-ai-input')?.value || '').trim(),
+                });
+                return;
+            }
+            try {
+                const res = await fetch('/api/screener/prompt_templates');
+                const data = await res.json();
+                if (!res.ok || String(data?.status || '').toLowerCase() !== 'success') {
+                    throw new Error(data?.msg || '读取提示词模板失败');
+                }
+                aiPromptTemplatesCache = data?.data || {};
+                const sys = String(aiPromptTemplatesCache?.ai_filter?.system_prompt || '');
+                renderAiPromptTrace({
+                    system_prompt: sys,
+                    user_prompt: String(document.getElementById('screener-ai-input')?.value || '').trim(),
+                });
+            } catch (e) {
+                // 模板读取失败不阻塞主流程，只在展示区给出说明。
+                renderAiPromptTrace({
+                    system_prompt: `模板加载失败：${e?.message || e}`,
+                    user_prompt: String(document.getElementById('screener-ai-input')?.value || '').trim(),
+                });
+            }
+        }
+
+        function onScreenerAiInputChanged() {
+            // 用户输入变化时实时刷新“用户提示词”可视化文本。
+            const userText = String(document.getElementById('screener-ai-input')?.value || '').trim();
+            const sysText = String(aiPromptTrace?.system_prompt || aiPromptTemplatesCache?.ai_filter?.system_prompt || '');
+            renderAiPromptTrace({
+                system_prompt: sysText,
+                user_prompt: userText,
+            });
+        }
+
+        function renderAiPromptTrace(trace) {
+            // 将系统提示词与用户提示词可视化，支持用户审阅模型输入。
+            const sysEl = document.getElementById('screener-ai-system-prompt-view');
+            const userEl = document.getElementById('screener-ai-user-prompt-view');
+            const systemPrompt = String(trace?.system_prompt || '').trim();
+            const userPrompt = String(trace?.user_prompt || '').trim();
+            if (sysEl) sysEl.textContent = systemPrompt || '--';
+            if (userEl) userEl.textContent = userPrompt || '--';
         }
 
         function closeScreenerAIParser() {
@@ -8402,20 +9279,22 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
         }
 
         async function parseStrategyWithAI() {
+            if (screenerAiActionRunning) {
+                showScreenerToast('AI任务执行中，请稍后', 'warning');
+                return;
+            }
             const text = document.getElementById('screener-ai-input').value.trim();
-            if (!text) { alert('请输入策略描述'); return; }
-            const status = document.getElementById('screener-ai-status');
-            const btn = document.getElementById('screener-ai-parse-btn');
+            if (!text) { showScreenerToast('请输入策略描述', 'warning'); return; }
             // 先做敏感词拦截，避免高风险描述继续流入后续流程。
             const complianceResult = validateComplianceSensitiveText(text, '策略描述');
             if (!complianceResult.ok) {
-                status.textContent = complianceResult.message;
-                alert(complianceResult.message);
+                setScreenerAiStatus('warning', complianceResult.message);
+                showScreenerToast(complianceResult.message, 'warning');
                 return;
             }
-            status.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-1"></i> 大模型解析中...';
-            btn.disabled = true;
-            btn.classList.add('opacity-50', 'cursor-not-allowed');
+            startScreenerAiProgress('parse', 1, 3, '提交解析请求');
+            setScreenerAiStatus('running', '大模型解析中...', true);
+            setScreenerAiActionRunning(true);
 
             try {
                 const res = await fetch('/api/screener/parse_strategy', {
@@ -8425,18 +9304,505 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 });
                 const data = await res.json();
                 if (data.status === 'success') {
+                    advanceScreenerAiProgress(2, '处理解析结果');
                     aiParsedData = data.data;
+                    const trace = data?.data?.prompt_trace || {};
+                    aiPromptTrace = {
+                        system_prompt: String(trace?.system_prompt || aiPromptTemplatesCache?.parse_strategy?.system_prompt || ''),
+                        user_prompt: String(trace?.user_prompt || text || ''),
+                    };
+                    renderAiPromptTrace(aiPromptTrace);
                     renderAIParsedResult(data.data);
-                    status.innerHTML = '<i class="fa-solid fa-check-circle text-emerald-400 mr-1"></i> 解析完成';
+                    advanceScreenerAiProgress(3, '渲染完成');
+                    setScreenerAiStatus('success', '解析完成');
                     document.getElementById('screener-ai-apply-btn').classList.remove('hidden');
+                    showScreenerToast('AI解析已完成，可直接筛选或生成策略', 'success');
+                    loadScreenerAiHistory();
                 } else {
-                    status.textContent = '解析失败: ' + (data.msg || '未知错误');
+                    const msg = '解析失败: ' + (data.msg || '未知错误');
+                    setScreenerAiStatus('error', msg);
+                    showScreenerToast(msg, 'error');
                 }
             } catch (e) {
-                status.textContent = '请求失败: ' + e.message;
+                const msg = '请求失败: ' + e.message;
+                setScreenerAiStatus('error', msg);
+                showScreenerToast(msg, 'error');
+            } finally {
+                setScreenerAiActionRunning(false);
+            }
+        }
+
+        async function runAIScreenerDirectly() {
+            if (screenerAiActionRunning) {
+                showScreenerToast('AI任务执行中，请稍后', 'warning');
+                return false;
+            }
+            // 一步执行：自然语言提示词 -> AI解析 -> 条件筛选 -> 页面结果展示。
+            const text = document.getElementById('screener-ai-input').value.trim();
+            if (!text) { showScreenerToast('请输入策略描述', 'warning'); return false; }
+            // 复用同一套合规词校验，避免高风险描述流入后端。
+            const complianceResult = validateComplianceSensitiveText(text, '策略描述');
+            if (!complianceResult.ok) {
+                setScreenerAiStatus('warning', complianceResult.message);
+                showScreenerToast(complianceResult.message, 'warning');
+                return false;
+            }
+
+            startScreenerAiProgress('ai_filter', 1, 4, '提交筛选请求');
+            setScreenerAiStatus('running', 'AI一步筛选中...', true);
+            setScreenerAiActionRunning(true);
+
+            try {
+                const res = await fetch('/api/screener/ai_filter', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        prompt: text,
+                        // 传递示例ID，供后端强制应用该示例的排序参数。
+                        example_id: String(document.getElementById('screener-ai-example-select')?.value || '').trim(),
+                        page: 1,
+                        page_size: screenerPageSize || 50,
+                        logic_mode: document.getElementById('screener-logic-mode')?.value || 'AND',
+                    }),
+                });
+                const data = await res.json();
+                if (data.status === 'success') {
+                    advanceScreenerAiProgress(2, '处理AI筛选结果');
+                    // 同步AI解析结果区，便于用户理解筛选逻辑和执行规则。
+                    aiParsedData = data.parsed || null;
+                    const trace = data.prompt_trace || {};
+                    aiPromptTrace = {
+                        system_prompt: String(trace?.system_prompt || aiPromptTemplatesCache?.ai_filter?.system_prompt || ''),
+                        user_prompt: String(trace?.user_prompt || text || ''),
+                    };
+                    renderAiPromptTrace(aiPromptTrace);
+                    if (aiParsedData) {
+                        renderAIParsedResult({
+                            screen_conditions: aiParsedData.screen_conditions || [],
+                            execution_rules: aiParsedData.execution_rules || [],
+                        });
+                        document.getElementById('screener-ai-apply-btn').classList.remove('hidden');
+                    }
+
+                    // 将筛选结果直接渲染到主结果表格。
+                    advanceScreenerAiProgress(3, '渲染筛选结果');
+                    const result = data.filter_result || {};
+                    screenerResults = result.data || [];
+                    // AI一步筛选同样写入统一分页元数据，保持翻页显示一致。
+                    screenerTotal = Number(result.total || 0);
+                    screenerTotalPages = Math.max(1, Number(result.total_pages || 1));
+                    screenerPage = Math.min(Math.max(1, Number(result.page || 1)), screenerTotalPages);
+                    // AI筛选成功后，默认选中第一只标的，减少后续回测操作步骤。
+                    autoSelectFirstScreenerCode();
+                    // 自动补齐回测参数，避免用户遗漏日期或资金字段。
+                    applyAiBacktestDefaults();
+                    renderScreenerResults();
+                    advanceScreenerAiProgress(4, '完成');
+                    setScreenerAiStatus('success', `筛选完成，共 ${Number(result.total || 0)} 条`);
+                    showScreenerToast(`筛选已生效，共 ${Number(result.total || 0)} 条`, 'success');
+                    loadScreenerAiHistory();
+                    return true;
+                } else {
+                    const msg = '一步筛选失败: ' + (data.msg || '未知错误');
+                    setScreenerAiStatus('error', msg);
+                    showScreenerToast(msg, 'error');
+                    return false;
+                }
+            } catch (e) {
+                const msg = '请求失败: ' + e.message;
+                setScreenerAiStatus('error', msg);
+                showScreenerToast(msg, 'error');
+                return false;
+            } finally {
+                setScreenerAiActionRunning(false);
+            }
+        }
+
+        function autoSelectFirstScreenerCode() {
+            // 自动选中首个结果，兼容“当前回测接口仅支持单标的”的限制。
+            screenerSelectedCodes.clear();
+            if (Array.isArray(screenerResults) && screenerResults.length > 0) {
+                const code = _resolveDisplayStockCode(screenerResults[0]);
+                if (code && code !== '--') screenerSelectedCodes.add(code);
+            }
+        }
+
+        function applyAiBacktestDefaults() {
+            // 沿用条件筛选默认规则，为AI链路补齐回测参数。
+            setDefaultBacktestDates();
+            const capitalInput = document.getElementById('screener-bt-capital');
+            if (capitalInput && !String(capitalInput.value || '').trim()) {
+                capitalInput.value = '1000000';
+            }
+        }
+
+        function _resolveScreenerBatchCodesByTopN() {
+            // 优先使用勾选代码；无勾选时回退到当前筛选结果列表。
+            const pickedCodes = getSelectedCodes();
+            let codes = Array.isArray(pickedCodes) && pickedCodes.length
+                ? pickedCodes.map(x => String(x || '').trim()).filter(Boolean)
+                : (Array.isArray(screenerResults) ? screenerResults.map(r => _resolveDisplayStockCode(r)).filter(code => code && code !== '--') : []);
+            // 去重并保持输入顺序。
+            codes = Array.from(new Set(codes));
+            const topN = Number(document.getElementById('screener-ai-batch-topn')?.value || '0');
+            if (Number.isFinite(topN) && topN > 0) {
+                codes = codes.slice(0, Math.floor(topN));
+            }
+            return codes;
+        }
+
+        function _resolveScreenerBatchStrategyIdsByMode() {
+            // 根据用户选择的策略范围计算实际策略列表。
+            const mode = String(document.getElementById('screener-ai-strategy-mode')?.value || 'selected').trim();
+            const manualSelected = Array.from(screenerAiManualStrategyIds).map((x) => String(x || '').trim()).filter(Boolean);
+            const selected = Array.isArray(selectedStrategyIds)
+                ? selectedStrategyIds.map(x => String(x || '').trim()).filter(Boolean)
+                : [];
+            if (mode === 'current') {
+                return selected.length ? [selected[0]] : [];
+            }
+            if (mode === 'all_enabled') {
+                const allEnabled = Array.isArray(strategyCatalog)
+                    ? strategyCatalog
+                        .filter(s => !!(s && (s.enabled !== false)))
+                        .map(s => String(s.id || '').trim())
+                        .filter(Boolean)
+                    : [];
+                return Array.from(new Set(allEnabled));
+            }
+            if (mode === 'selected') {
+                if (manualSelected.length) return Array.from(new Set(manualSelected));
+                return Array.from(new Set(selected));
+            }
+            return Array.from(new Set(selected));
+        }
+
+        async function runAIScreenerAndStartBacktest() {
+            // 一键链路：先筛选，再启动回测，减少用户点击成本。
+            await runAIScreenerDirectly();
+            if (!Array.isArray(screenerResults) || screenerResults.length === 0) {
+                showScreenerToast('筛选结果为空，无法启动回测', 'warning');
+                return;
+            }
+            // 自动回测前给用户确认，避免误触发回测任务。
+            const firstCode = _resolveDisplayStockCode(screenerResults[0]);
+            if (!firstCode || firstCode === '--') {
+                showScreenerToast('未获取到有效标的代码，无法启动回测', 'warning');
+                return;
+            }
+            const ok = confirm(`将使用首个标的 ${firstCode} 启动回测，是否继续？`);
+            if (!ok) return;
+            await startScreenerBacktest();
+        }
+
+        async function runAIScreenerAndStartBatchBacktest() {
+            // 合规前置：未通过免责声明确认时禁止触发回测。
+            if (!disclaimerAccepted) { showScreenerToast('请先勾选免责声明并进入系统后再执行回测', 'warning'); return; }
+            const ok = await runAIScreenerDirectly();
+            if (!ok) return;
+            if (!Array.isArray(screenerResults) || screenerResults.length === 0) {
+                showScreenerToast('筛选结果为空，无法启动批量回测', 'warning');
+                return;
+            }
+
+            // 根据TopN配置生成实际批量标的列表。
+            const codes = _resolveScreenerBatchCodesByTopN();
+            if (!codes.length) {
+                showScreenerToast('未获取到有效标的代码，无法启动批量回测', 'warning');
+                return;
+            }
+
+            // 根据策略范围配置生成实际策略列表。
+            const strategyMode = String(document.getElementById('screener-ai-strategy-mode')?.value || 'selected').trim();
+            const strategyIds = _resolveScreenerBatchStrategyIdsByMode();
+            const start = document.getElementById('screener-bt-start')?.value;
+            const end = document.getElementById('screener-bt-end')?.value;
+            const capital = parseFloat(document.getElementById('screener-bt-capital')?.value || '1000000');
+            if (!start || !end) {
+                showScreenerToast('请设置回测起止日期', 'warning');
+                return;
+            }
+
+            const workers = Number(document.getElementById('batch-run-workers')?.value || '1');
+            const maxTasks = Number(document.getElementById('batch-run-max-tasks')?.value || '0');
+            const confirmText = `将使用 ${codes.length} 个标的、${strategyIds.length || 1} 个策略生成批量任务并启动执行，是否继续？`;
+            if (!confirm(confirmText)) return;
+
+            const btn = document.getElementById('screener-ai-direct-batch-btn');
+            startScreenerAiProgress('batch_start', 1, 3, '创建批量任务');
+            setScreenerAiStatus('running', '正在创建批量任务并启动...', true);
+            btn.disabled = true;
+            btn.classList.add('opacity-50', 'cursor-not-allowed');
+
+            try {
+                const res = await fetch('/api/screener/batch_backtest/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        codes,
+                        strategy_ids: strategyIds,
+                        strategy_mode: strategyMode,
+                        top_n: Number(document.getElementById('screener-ai-batch-topn')?.value || '0'),
+                        start_date: start,
+                        end_date: end,
+                        capital,
+                        max_tasks: Number.isFinite(maxTasks) ? Math.max(0, Math.floor(maxTasks)) : 0,
+                        parallel_workers: Number.isFinite(workers) ? Math.max(1, Math.floor(workers)) : 1,
+                        scenario_tag: '条件筛选批量回测',
+                        kline_type: '1day',
+                        data_source: ''
+                    }),
+                });
+                const data = await res.json();
+                if (!res.ok || String(data.status || '').toLowerCase() !== 'success') {
+                    throw new Error(data.msg || '批量回测启动失败');
+                }
+
+                // 同步批量面板参数，便于用户立即查看任务进度。
+                advanceScreenerAiProgress(2, '同步任务面板');
+                const tasksCsv = String(data.tasks_csv || '').trim();
+                const batchNo = String(data.batch_no || '').trim();
+                const runTasksInput = document.getElementById('batch-run-tasks-csv');
+                if (runTasksInput && tasksCsv) runTasksInput.value = tasksCsv;
+                const runFilterInput = document.getElementById('batch-run-batch-filter');
+                if (runFilterInput && batchNo) runFilterInput.value = batchNo;
+                const bdmTasksInput = document.getElementById('bdm-tasks-csv');
+                if (bdmTasksInput && tasksCsv) bdmTasksInput.value = tasksCsv;
+                const bdmFilterInput = document.getElementById('bdm-batch-filter');
+                if (bdmFilterInput && batchNo) bdmFilterInput.value = batchNo;
+
+                advanceScreenerAiProgress(3, '提交执行完成');
+                setScreenerAiStatus('success', `批量回测已启动，任务 ${Number(data.task_count || 0)} 条`);
+                logMessage('SYSTEM', `条件筛选批量回测已启动: tasks=${Number(data.task_count || 0)} batch=${batchNo || '--'} pid=${data.pid || '--'}`, 'warning');
+                openBatchDashboardModal();
+                refreshBatchRunStatus();
+                if (typeof refreshBatchRunStatusForDashboard === 'function') {
+                    refreshBatchRunStatusForDashboard();
+                }
+                showScreenerToast(`批量回测已启动，任务 ${Number(data.task_count || 0)} 条`, 'success');
+            } catch (e) {
+                const msg = `批量回测失败: ${e.message}`;
+                setScreenerAiStatus('error', msg);
+                showScreenerToast(msg, 'error');
             } finally {
                 btn.disabled = false;
                 btn.classList.remove('opacity-50', 'cursor-not-allowed');
+            }
+        }
+
+        async function createStrategyFromAIParsed() {
+            if (screenerAiActionRunning) {
+                showScreenerToast('AI任务执行中，请稍后', 'warning');
+                return;
+            }
+            // 由当前提示词与AI解析结果生成新策略，并写入策略管理器。
+            const prompt = String(document.getElementById('screener-ai-input')?.value || '').trim();
+            if (!prompt) {
+                showScreenerToast('请先输入策略描述并完成解析', 'warning');
+                return;
+            }
+            setScreenerAiActionRunning(true);
+            startScreenerAiProgress('create_strategy', 1, 3, '提交建策略请求');
+            setScreenerAiStatus('running', '正在生成并保存策略...', true);
+            try {
+                const res = await fetch('/api/screener/strategy/create_from_ai', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        prompt,
+                        strategy_name: '',
+                        kline_type: '1day',
+                        parsed: aiParsedData || {},
+                    }),
+                });
+                const data = await res.json();
+                if (!res.ok || String(data.status || '').toLowerCase() !== 'success') {
+                    throw new Error(data.msg || '生成策略失败');
+                }
+                advanceScreenerAiProgress(2, '刷新策略目录');
+                setScreenerAiStatus('success', `已生成策略 ${data.strategy_id || '--'}`);
+                showScreenerToast(`已生成策略并写入管理器：${data.strategy_id || '--'}`, 'success');
+                // 同步刷新全局策略目录，确保“策略多选”立刻可见新策略。
+                if (typeof fetchGlobalStrategies === 'function') {
+                    await fetchGlobalStrategies();
+                }
+                advanceScreenerAiProgress(3, '完成');
+                renderScreenerStrategyMultiSelect();
+                loadScreenerAiHistory();
+            } catch (e) {
+                const msg = `生成策略失败: ${e.message}`;
+                setScreenerAiStatus('error', msg);
+                showScreenerToast(msg, 'error');
+            } finally {
+                setScreenerAiActionRunning(false);
+            }
+        }
+
+        async function loadScreenerAiHistory() {
+            // 读取AI交互历史并渲染到弹窗中的历史表格。
+            const tbody = document.getElementById('screener-ai-history-tbody');
+            if (!tbody) return;
+            try {
+                const res = await fetch('/api/screener/history/list', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ page: 1, page_size: 20, event_type: '' }),
+                });
+                const data = await res.json();
+                if (!res.ok || String(data.status || '').toLowerCase() !== 'success') {
+                    throw new Error(data.msg || '加载历史失败');
+                }
+                screenerAiHistoryRows = Array.isArray(data.items) ? data.items : [];
+                // 每次刷新历史后重置选中项，避免索引漂移导致误重跑。
+                screenerAiHistorySelectedIndex = -1;
+                renderScreenerAiHistoryTable();
+            } catch (e) {
+                tbody.innerHTML = `<tr><td colspan="4" class="px-2 py-2 text-rose-300">历史加载失败：${String(e?.message || e)}</td></tr>`;
+            }
+        }
+
+        function renderScreenerAiHistoryTable() {
+            // 将历史记录渲染为简洁表格，突出“时间/类型/结果数”。
+            const tbody = document.getElementById('screener-ai-history-tbody');
+            if (!tbody) return;
+            const rows = Array.isArray(screenerAiHistoryRows) ? screenerAiHistoryRows : [];
+            if (!rows.length) {
+                tbody.innerHTML = '<tr><td colspan="4" class="px-2 py-2 text-slate-500">暂无历史记录</td></tr>';
+                return;
+            }
+            let html = '';
+            rows.forEach((row, idx) => {
+                const createdAt = formatToShanghaiTime(row?.created_at);
+                const eventType = String(row?.event_type || '--');
+                const payload = (row && typeof row.payload === 'object') ? row.payload : {};
+                const prompt = String(payload?.prompt || '').trim();
+                const promptSummary = prompt.length > 28 ? `${prompt.slice(0, 28)}...` : (prompt || '--');
+                const selectedCount = Number(payload?.selected_count || 0);
+                const resultCount = Number.isFinite(selectedCount) ? selectedCount : 0;
+                // 历史记录支持行点击回填提示词，选中行高亮便于用户确认重跑对象。
+                const isActive = idx === screenerAiHistorySelectedIndex;
+                const activeCls = isActive ? 'bg-emerald-700/35 ring-1 ring-inset ring-emerald-300' : '';
+                const selectedTag = isActive
+                    ? '<span class="ml-1 inline-flex items-center px-1.5 py-0.5 rounded border border-emerald-400/70 text-[10px] text-emerald-200 bg-emerald-900/50"><i class="fa-solid fa-circle-check mr-1"></i>已选</span>'
+                    : '';
+                html += `<tr class="hover:bg-slate-800/30 cursor-pointer ${activeCls}" onclick="selectScreenerAiHistoryRow(${idx})">
+                    <td class="px-2 py-1.5">${createdAt}</td>
+                    <td class="px-2 py-1.5">${eventType}${selectedTag}</td>
+                    <td class="px-2 py-1.5" title="${prompt.replace(/"/g, '&quot;')}">${promptSummary}</td>
+                    <td class="px-2 py-1.5 text-right font-mono">${resultCount}</td>
+                </tr>`;
+            });
+            tbody.innerHTML = html;
+        }
+
+        function selectScreenerAiHistoryRow(index) {
+            // 点击历史行：自动回填提示词并高亮当前行。
+            const idx = Number(index);
+            if (!Number.isInteger(idx) || idx < 0 || idx >= screenerAiHistoryRows.length) return;
+            const row = screenerAiHistoryRows[idx];
+            const payload = (row && typeof row.payload === 'object') ? row.payload : {};
+            const prompt = String(payload?.prompt || '').trim();
+            if (!prompt) {
+                showScreenerToast('该历史记录没有可回填的提示词', 'warning');
+                return;
+            }
+            screenerAiHistorySelectedIndex = idx;
+            const input = document.getElementById('screener-ai-input');
+            if (input) {
+                input.value = prompt;
+            }
+            // 同步提示词展示面板，确保用户看到本次重跑输入。
+            onScreenerAiInputChanged();
+            renderScreenerAiHistoryTable();
+            openScreenerAiHistoryDetailModal(row);
+            showScreenerToast('已回填提示词，可直接点击重跑选中记录', 'success');
+        }
+
+        async function rerunSelectedScreenerAiHistory() {
+            // 一键重跑：基于当前选中的历史记录直接触发“直接筛选”流程。
+            if (screenerAiHistorySelectedIndex < 0 || screenerAiHistorySelectedIndex >= screenerAiHistoryRows.length) {
+                showScreenerToast('请先点击一条历史记录再重跑', 'warning');
+                return;
+            }
+            // 再次兜底回填，防止用户中途改动输入框造成重跑目标不一致。
+            selectScreenerAiHistoryRow(screenerAiHistorySelectedIndex);
+            await runAIScreenerDirectly();
+        }
+
+        function openScreenerAiHistoryDetailModal(row) {
+            // 打开历史详情弹窗，展示完整提示词与股票列表详情。
+            const modal = document.getElementById('screener-ai-history-detail-modal');
+            if (!modal) return;
+            const payload = (row && typeof row.payload === 'object') ? row.payload : {};
+            const selectedStocks = Array.isArray(payload?.selected_stocks) ? payload.selected_stocks : [];
+            const fallbackCodes = Array.isArray(payload?.selected_codes) ? payload.selected_codes : [];
+            const stocks = selectedStocks.length ? selectedStocks : fallbackCodes.map((c) => ({ code: c }));
+            const setText = (id, val) => {
+                const el = document.getElementById(id);
+                if (el) el.textContent = String(val || '--');
+            };
+            setText('screener-ai-hd-time', formatToShanghaiTime(row?.created_at));
+            setText('screener-ai-hd-type', row?.event_type || '--');
+            setText('screener-ai-hd-count', Number(payload?.selected_count || stocks.length || 0));
+            setText('screener-ai-hd-prompt', String(payload?.prompt || '--'));
+            const tbody = document.getElementById('screener-ai-hd-stocks');
+            if (tbody) {
+                if (!stocks.length) {
+                    tbody.innerHTML = '<tr><td colspan="4" class="px-2 py-2 text-slate-500">暂无股票明细</td></tr>';
+                } else {
+                    let html = '';
+                    stocks.slice(0, 200).forEach((s) => {
+                        const code = String(s?.code || '--').trim() || '--';
+                        const name = String(s?.name || '--').trim() || '--';
+                        const price = Number.isFinite(Number(s?.price)) ? Number(s.price).toFixed(2) : '--';
+                        const change = Number.isFinite(Number(s?.change_pct)) ? `${Number(s.change_pct).toFixed(2)}%` : '--';
+                        html += `<tr class="hover:bg-slate-800/30">
+                            <td class="px-2 py-1.5 font-mono">${code}</td>
+                            <td class="px-2 py-1.5">${name}</td>
+                            <td class="px-2 py-1.5 text-right font-mono">${price}</td>
+                            <td class="px-2 py-1.5 text-right font-mono">${change}</td>
+                        </tr>`;
+                    });
+                    tbody.innerHTML = html;
+                }
+            }
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+
+        function closeScreenerAiHistoryDetailModal() {
+            // 关闭历史详情弹窗。
+            const modal = document.getElementById('screener-ai-history-detail-modal');
+            if (!modal) return;
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        function formatToShanghaiTime(rawTime) {
+            // 将ISO时间统一格式化为上海时间（UTC+8），避免用户看到UTC时间偏差。
+            const text = String(rawTime || '').trim();
+            if (!text) return '--';
+            const dt = new Date(text);
+            if (!Number.isFinite(dt.getTime())) {
+                // 非标准时间字符串时保持原值，避免误格式化。
+                return text.replace('T', ' ').replace('Z', '').slice(0, 19) || '--';
+            }
+            try {
+                return new Intl.DateTimeFormat('zh-CN', {
+                    timeZone: 'Asia/Shanghai',
+                    year: 'numeric',
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                    hour12: false,
+                }).format(dt).replace(/\//g, '-');
+            } catch (_) {
+                // 兜底：浏览器不支持 timeZone 参数时，手动按UTC+8偏移。
+                const sh = new Date(dt.getTime() + 8 * 60 * 60 * 1000);
+                const pad = (n) => String(n).padStart(2, '0');
+                return `${sh.getUTCFullYear()}-${pad(sh.getUTCMonth() + 1)}-${pad(sh.getUTCDate())} ${pad(sh.getUTCHours())}:${pad(sh.getUTCMinutes())}:${pad(sh.getUTCSeconds())}`;
             }
         }
 
@@ -8500,45 +9866,142 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
         function applyAIParsedConditions() {
             if (!aiParsedData) return;
 
-            // 将 AI 解析的条件合并到筛选器
+            // 将 AI 解析的条件合并到筛选器前，先读取原始条件列表。
             const conditions = aiParsedData.screen_conditions || [];
-            if (conditions.length === 0) { alert('无可执行的筛选条件，请手动设置'); return; }
+            if (conditions.length === 0) { showScreenerToast('无可执行的筛选条件，请手动设置', 'warning'); return; }
+
+            // 应用前先清空现有筛选控件，避免历史条件叠加导致“应用后变0条”。
+            document.querySelectorAll('.screener-field-range').forEach(input => { input.value = ''; });
+            document.querySelectorAll('[data-type="toggle"]').forEach(input => { input.checked = false; });
+
+            // 兼容 AI 常见非标准条件（如 market=主板），统一映射到可执行控件 key。
+            const normalizeForUi = (cond) => {
+                const c = Object.assign({}, cond || {});
+                const rawKey = String(c.key || '').trim().toLowerCase();
+                const labelText = String(c.label || '').trim();
+                const valueText = String(c.value ?? '').trim();
+                const combinedText = `${labelText} ${valueText}`;
+                if (['market', 'board', 'stock_board', 'exchange_board', 'main_board'].includes(rawKey)) {
+                    c.key = 'is_main_board';
+                    c.operator = 'toggle';
+                    c.value = true;
+                    c.enabled = true;
+                    c.tab = 'market';
+                } else if (combinedText.includes('主板')) {
+                    c.key = 'is_main_board';
+                    c.operator = 'toggle';
+                    c.value = true;
+                    c.enabled = true;
+                    c.tab = 'market';
+                }
+                return c;
+            };
+            // 根据 key 查找筛选器字段定义（跨全部 tab），用于判断控件类型。
+            const resolveFieldByKey = (targetKey) => {
+                const safeKey = String(targetKey || '').trim();
+                if (!safeKey || !screenerCatalog || typeof screenerCatalog !== 'object') return null;
+                const tabs = Object.keys(screenerCatalog);
+                for (const tab of tabs) {
+                    const cats = Array.isArray(screenerCatalog[tab]) ? screenerCatalog[tab] : [];
+                    for (const cat of cats) {
+                        const fields = Array.isArray(cat?.fields) ? cat.fields : [];
+                        const hit = fields.find((f) => String(f?.key || '').trim() === safeKey);
+                        if (hit) return hit;
+                    }
+                }
+                return null;
+            };
 
             // 先切到对应 tab 并渲染
-            const enabledConds = conditions.filter(c => c.enabled);
+            const enabledConds = conditions.filter(c => c && c.enabled).map(normalizeForUi);
             if (enabledConds.length > 0) {
                 const tabMap = { market: 'market', technical: 'technical', financial: 'financial' };
                 switchScreenerTab(tabMap[enabledConds[0].tab] || 'market');
             }
 
             // 填充条件到筛选器（通过填充输入框）
+            let appliedCount = 0;
+            let skippedUnsupportedCount = 0;
             enabledConds.forEach(cond => {
                 const key = cond.key;
                 const op = cond.operator;
                 const val = cond.value;
                 const val2 = cond.value2;
+                const fieldDef = resolveFieldByKey(key);
+                const fieldType = String(fieldDef?.type || '').trim();
 
                 if (op === 'toggle') {
                     const toggle = document.getElementById(`screener-toggle-${key}`);
-                    if (toggle) toggle.checked = true;
-                } else if (op === 'between' || op === 'has_event' || op === 'formula') {
+                    if (toggle) {
+                        toggle.checked = true;
+                        appliedCount += 1;
+                    }
+                } else if (op === 'has_event' || op === 'formula') {
+                    // has_event/formula 无法直接映射到“数值输入框”，否则会被误写成 gte 导致全空。
+                    // 若目标字段是 toggle，则退化为开关启用；否则跳过并给出提示。
+                    if (fieldType === 'toggle') {
+                        const toggle = document.getElementById(`screener-toggle-${key}`);
+                        if (toggle) {
+                            toggle.checked = true;
+                            appliedCount += 1;
+                        }
+                    } else {
+                        skippedUnsupportedCount += 1;
+                    }
+                } else if (op === 'between') {
                     // 填充 range 输入框
                     const minInput = document.querySelector(`.screener-field-range[data-key="${key}"][data-role="min"]`);
                     const maxInput = document.querySelector(`.screener-field-range[data-key="${key}"][data-role="max"]`);
-                    if (val != null && minInput) minInput.value = val;
-                    if (val2 != null && maxInput) maxInput.value = val2;
+                    if (val != null && minInput) {
+                        minInput.value = val;
+                        appliedCount += 1;
+                    }
+                    if (val2 != null && maxInput) {
+                        maxInput.value = val2;
+                        appliedCount += 1;
+                    }
                 } else if (op === 'gte' || op === 'gt') {
                     const minInput = document.querySelector(`.screener-field-range[data-key="${key}"][data-role="min"]`);
-                    if (minInput) minInput.value = val;
+                    if (minInput) {
+                        minInput.value = val;
+                        appliedCount += 1;
+                    }
                 } else if (op === 'lte' || op === 'lt') {
                     const maxInput = document.querySelector(`.screener-field-range[data-key="${key}"][data-role="max"]`);
-                    if (maxInput) maxInput.value = val;
+                    if (maxInput) {
+                        maxInput.value = val;
+                        appliedCount += 1;
+                    }
                 }
             });
+            if (skippedUnsupportedCount > 0) {
+                showScreenerToast(`已跳过 ${skippedUnsupportedCount} 条不可映射条件（has_event/formula）`, 'warning');
+            }
+
+            // 如果AI条件全部无法映射到控件，按主板提示词做最低可执行兜底。
+            if (appliedCount <= 0) {
+                const promptText = String(document.getElementById('screener-ai-input')?.value || '').trim();
+                if (promptText.includes('主板')) {
+                    const toggle = document.getElementById('screener-toggle-is_main_board');
+                    if (toggle) {
+                        switchScreenerTab('market');
+                        toggle.checked = true;
+                        appliedCount = 1;
+                        showScreenerToast('AI条件未命中控件，已按“主板”自动兜底', 'warning');
+                    }
+                }
+            }
+            if (appliedCount <= 0) {
+                showScreenerToast('AI条件无法映射到筛选控件，请直接使用“直接出选股结果”', 'warning');
+                return;
+            }
 
             // 关闭弹窗，自动执行筛选
             closeScreenerAIParser();
+            // 应用AI条件后强制回到第一页，避免沿用旧页码造成“当前页为空”。
+            screenerPage = 1;
             setTimeout(() => applyScreenerFilter(), 300);
+            showScreenerToast('已应用可执行条件并开始筛选', 'success');
         }
 
         function isEvolutionBoardModalOpen() {
@@ -11149,8 +12612,6 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 const liveReady = data.live_enabled === true;
                 if (status) status.innerText = `保存成功，已生效（模式=${savedMode}，近似实时生效=${liveReady ? '是' : '否'}）`;
                 await syncStatus();
-                // 配置变更后强制刷新一次 LLM 状态灯，避免展示旧缓存。
-                await refreshLlmStatusLamp(true);
                 logMessage('SYSTEM', `配置保存成功并已生效（模式=${savedMode}，近似实时生效=${liveReady ? '是' : '否'}）`, 'success');
                 // 自动重试队列：若由新手修复路径进入，则保存成功后自动回到新手引导并触发检查。
                 if (onboardingAutoRetryPending) {
@@ -11667,7 +13128,35 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
         function openStrategyManager() {
             const modal = document.getElementById('strategy-manager-modal');
             if (modal) modal.classList.remove('hidden');
+            // 打开弹窗时同步分类下拉值，避免UI状态与内存状态不一致。
+            const categorySel = document.getElementById('strategy-manager-category-filter');
+            if (categorySel) categorySel.value = String(strategyManagerCategoryFilter || '');
+            // 同步关键字输入框，确保筛选状态可见。
+            const keywordInput = document.getElementById('strategy-manager-keyword-filter');
+            if (keywordInput) keywordInput.value = String(strategyManagerKeywordFilter || '');
             loadStrategyManager();
+        }
+
+        async function setStrategyManagerCategoryFilter(value) {
+            // 切换分类后重置到第一页，避免旧分页越界。
+            strategyManagerCategoryFilter = String(value || '').trim();
+            strategyManagerPage = 1;
+            await loadStrategyManager(1);
+        }
+
+        async function applyStrategyManagerKeywordFilter() {
+            // 应用关键字筛选并重置到第一页。
+            const keywordInput = document.getElementById('strategy-manager-keyword-filter');
+            strategyManagerKeywordFilter = String(keywordInput?.value || '').trim();
+            strategyManagerPage = 1;
+            await loadStrategyManager(1);
+        }
+
+        function onStrategyManagerKeywordKeydown(event) {
+            // 支持回车触发搜索，减少鼠标点击。
+            if (String(event?.key || '').toLowerCase() !== 'enter') return;
+            event.preventDefault();
+            applyStrategyManagerKeywordFilter();
         }
 
         function closeStrategyManager() {
@@ -11811,6 +13300,10 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 const editBtn = r.editable && !protectedFlag ? `<button onclick="openStrategyEditModal('${sid}')" class="text-white px-2 py-1 rounded text-[11px] border bg-amber-700 hover:bg-amber-600 border-amber-500">编辑</button>` : '';
                 const copyBtn = r.editable ? `<button onclick="openStrategyCopyModal('${sid}')" class="text-white px-2 py-1 rounded text-[11px] border bg-indigo-700 hover:bg-indigo-600 border-indigo-500">复制</button>` : '';
                 const sourceLabel = String(r.source_label || (r.source === 'market' ? '行情驱动' : (r.source === 'human' ? '用户输入' : '--')));
+                const categoryLabel = String(r.strategy_category || '').trim();
+                const categoryBadge = categoryLabel
+                    ? `<span class="ml-1 px-1.5 py-0.5 rounded text-[10px] border border-violet-600 text-violet-300">${esc(categoryLabel)}</span>`
+                    : '';
                 const klineType = String(r.kline_type || '--');
                 const rawTitle = String(r.raw_requirement_title || '原始需求');
                 const usageNotice = String(r.usage_notice || '').trim();
@@ -11830,7 +13323,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 return `
                     <tr class="hover:bg-slate-800/40">
                         <td class="px-3 py-2 text-slate-200 font-mono">${sid}</td>
-                        <td class="px-3 py-2 text-slate-200">${String(r.name || sid)}${protectedBadge}${depBadge}${refBadge}</td>
+                        <td class="px-3 py-2 text-slate-200">${String(r.name || sid)}${categoryBadge}${protectedBadge}${depBadge}${refBadge}</td>
                         <td class="px-3 py-2 text-slate-300 font-mono">${klineType}<span class="ml-1 text-[11px] text-slate-500">(${sourceLabel})</span></td>
                         <td class="px-3 py-2 text-slate-300">${shortText(r.analysis_text || '')}</td>
                         <td class="px-3 py-2 text-cyan-300 font-mono">${shortText(r.code || '')}</td>
@@ -11859,7 +13352,17 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 if (status) status.innerText = '加载中...理财有风险，投资需谨慎';
                 const page = Math.max(1, Number(targetPage) || 1);
                 const pageSize = Math.max(1, Number(strategyManagerPageSize) || 20);
-                const res = await fetch(`/api/strategy_manager/list?page=${page}&page_size=${pageSize}`);
+                // 拼装查询参数：支持分页 + 分类 + 关键字联合筛选。
+                const q = new URLSearchParams();
+                q.set('page', String(page));
+                q.set('page_size', String(pageSize));
+                if (strategyManagerCategoryFilter) {
+                    q.set('category', strategyManagerCategoryFilter);
+                }
+                if (strategyManagerKeywordFilter) {
+                    q.set('keyword', strategyManagerKeywordFilter);
+                }
+                const res = await fetch(`/api/strategy_manager/list?${q.toString()}`);
                 const data = await res.json();
                 if (data.status !== 'success') throw new Error(data.msg || '读取失败');
                 strategyManagerRows = Array.isArray(data.strategies) ? data.strategies : [];
@@ -11867,7 +13370,9 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 strategyManagerPage = Math.max(1, Number(data.page) || page);
                 renderStrategyManagerList(strategyManagerRows);
                 updateStrategyQuick(selectedStrategyIds.length === 1 ? String(selectedStrategyIds[0]) : 'all');
-                if (status) status.innerText = `共 ${strategyManagerTotal} 个策略`;
+                const catLabel = strategyManagerCategoryFilter ? `，分类：${strategyManagerCategoryFilter}` : '';
+                const keywordLabel = strategyManagerKeywordFilter ? `，关键词：${strategyManagerKeywordFilter}` : '';
+                if (status) status.innerText = `共 ${strategyManagerTotal} 个策略${catLabel}${keywordLabel}`;
             } catch (e) {
                 if (status) status.innerText = `加载失败: ${e}`;
             }
@@ -12492,88 +13997,6 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             } catch (_) {
             } finally {
                 statusSyncInFlight = false;
-            }
-        }
-
-        function closeLlmStatusPanel() {
-            const panel = document.getElementById('llm-status-panel');
-            if (panel) panel.classList.add('hidden');
-        }
-
-        function toggleLlmStatusPanel() {
-            const panel = document.getElementById('llm-status-panel');
-            if (!panel) return;
-            if (panel.classList.contains('hidden')) {
-                panel.classList.remove('hidden');
-                renderLlmStatusPanel();
-                return;
-            }
-            panel.classList.add('hidden');
-        }
-
-        function renderLlmStatusPanel() {
-            const body = document.getElementById('llm-status-panel-body');
-            if (!body) return;
-            const data = (window.__llmStatusLast && typeof window.__llmStatusLast === 'object') ? window.__llmStatusLast : {};
-            const health = String(data.health || '--').toUpperCase();
-            const provider = String(data.provider || '--');
-            const model = String(data.model || '--');
-            const msg = String(data.msg || '--');
-            const cached = Boolean(data.cached);
-            const latency = Number(data.latency_ms || 0);
-            const activeSources = (data && typeof data.active_sources === 'object' && data.active_sources) ? data.active_sources : {};
-            const candidates = (data && typeof data.model_candidates === 'object' && data.model_candidates) ? data.model_candidates : {};
-            const candidateItems = (candidates && typeof candidates.items === 'object' && candidates.items) ? candidates.items : {};
-            const lines = [
-                `health=${health}`,
-                `cached=${cached}`,
-                `provider=${provider}`,
-                `model=${model}`,
-                `latency_ms=${latency > 0 ? latency : '--'}`,
-                `message=${msg}`,
-                `active_source.provider=${String(activeSources.provider || '--')}`,
-                `active_source.model=${String(activeSources.model || '--')}`,
-                `active_source.base_url=${String(activeSources.base_url || '--')}`,
-                `active_source.api_key=${String(activeSources.api_key || '--')}`,
-            ];
-            Object.entries(candidateItems).forEach(([k, v]) => lines.push(`candidate.${String(k)}=${String(v)}`));
-            body.innerHTML = lines.map(x => `<div>${x}</div>`).join('');
-        }
-
-        async function refreshLlmStatusLamp(forceRefresh = false) {
-            const wrap = document.getElementById('llm-status-wrap');
-            const dot = document.getElementById('llm-status-dot');
-            if (!wrap || !dot) return;
-            try {
-                const url = forceRefresh ? '/api/llm/status?force_refresh=true' : '/api/llm/status';
-                const res = await fetch(url);
-                const data = await res.json();
-                const health = String(data.health || 'red').toLowerCase();
-                const provider = String(data.provider || '--');
-                const model = String(data.model || '--');
-                const latency = Number(data.latency_ms || 0);
-                const cached = Boolean(data.cached);
-                const candidates = (data && typeof data.model_candidates === 'object' && data.model_candidates) ? data.model_candidates : {};
-                const candidateCount = Number(candidates.count || 0);
-                const candidateItems = (candidates && typeof candidates.items === 'object' && candidates.items) ? candidates.items : {};
-                const activeSources = (data && typeof data.active_sources === 'object' && data.active_sources) ? data.active_sources : {};
-                const prefix = cached ? '[缓存]' : '[实时]';
-                if (health === 'green') {
-                    dot.className = 'w-2 h-2 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.55)] animate-pulse-fast';
-                } else if (health === 'yellow') {
-                    dot.className = 'w-2 h-2 rounded-full bg-amber-400 shadow-[0_0_10px_rgba(251,191,36,0.45)] animate-pulse-fast';
-                } else {
-                    dot.className = 'w-2 h-2 rounded-full bg-rose-500 shadow-[0_0_10px_rgba(244,63,94,0.45)]';
-                }
-                const tail = latency > 0 ? ` ${latency}ms` : '';
-                const sourceModel = String(activeSources.model || '--');
-                wrap.title = `LLM: ${health.toUpperCase()} ${prefix} ${provider}/${model}${tail} · source=${sourceModel} · 候选=${candidateCount}`;
-                window.__llmStatusLast = data;
-                const panel = document.getElementById('llm-status-panel');
-                if (panel && !panel.classList.contains('hidden')) renderLlmStatusPanel();
-            } catch (e) {
-                dot.className = 'w-2 h-2 rounded-full bg-rose-500 shadow-[0_0_10px_rgba(244,63,94,0.45)]';
-                wrap.title = `统一模型层状态获取失败：${String(e)}`;
             }
         }
 
@@ -15271,7 +16694,12 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 return evolutionSeedTempSelectedIds.slice();
             }
             const picked = Array.isArray(selectedStrategyIds) ? selectedStrategyIds.map(x => String(x || '').trim()).filter(Boolean) : [];
-            return picked;
+            if (picked.length > 0) return picked;
+            // 若用户尚未选择策略，默认回退到内置选股示例策略10，便于冷启动演示。
+            const hasBuiltin10 = Array.isArray(strategyCatalog)
+                ? strategyCatalog.some((x) => String(x?.id || '').trim() === '10')
+                : false;
+            return hasBuiltin10 ? ['10'] : [];
         }
 
         function renderEvolutionSeedStrategySelectOptions() {
@@ -15279,8 +16707,12 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             if (!list) return;
             const prevSelected = new Set(Array.isArray(evolutionSeedTempSelectedIds) ? evolutionSeedTempSelectedIds.map(x => String(x || '').trim()) : []);
             const topSelected = Array.isArray(selectedStrategyIds) ? selectedStrategyIds.map(x => String(x || '').trim()).filter(Boolean) : [];
-            const defaultSet = prevSelected.size ? prevSelected : (evolutionSeedAllowTopFallback ? new Set(topSelected) : new Set());
             const rows = Array.isArray(strategyCatalog) ? strategyCatalog.filter(x => String(x?.id || '').trim()) : [];
+            // 默认勾选策略：优先历史勾选 -> 顶部已选 -> 内置示例10。
+            let defaultSet = prevSelected.size ? prevSelected : (evolutionSeedAllowTopFallback ? new Set(topSelected) : new Set());
+            if (defaultSet.size === 0 && rows.some((x) => String(x?.id || '').trim() === '10')) {
+                defaultSet = new Set(['10']);
+            }
             evolutionSeedTempSelectedIds = rows.filter(row => {
                 const id = String(row?.id || '').trim();
                 if (!id) return false;
@@ -17128,15 +18560,6 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 closeFundPoolAdjustModal();
             }
         });
-        document.addEventListener('mousedown', (e) => {
-            const panel = document.getElementById('llm-status-panel');
-            const trigger = document.getElementById('llm-status-wrap');
-            if (!panel || panel.classList.contains('hidden')) return;
-            const target = e && e.target ? e.target : null;
-            if (!target) return;
-            if (panel.contains(target) || (trigger && trigger.contains(target))) return;
-            closeLlmStatusPanel();
-        });
         window.addEventListener('resize', () => {
             const container = document.getElementById('kline-modal-chart');
             if (klineChart && container && klineModalOpened) {
@@ -17164,10 +18587,6 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             syncStatus();
         }, 3000);
         setInterval(() => {
-            // 顶部状态灯走缓存接口，降低探活频率与开销。
-            refreshLlmStatusLamp(false);
-        }, 15000);
-        setInterval(() => {
             // Evolution 默认走 WS 推送，此处仅做兜底修正，避免网络抖动导致的状态漂移
             refreshEvolutionDashboard({
                 withHistory: false,
@@ -17184,7 +18603,6 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
         setTimeout(() => {
             if (!strategyCatalog.length) fetchGlobalStrategies();
         }, 800);
-        refreshLlmStatusLamp(false);
         syncActionLayout();
         renderLiveStatus();
         updateConfidenceScore();
