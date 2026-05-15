@@ -1,6 +1,11 @@
 # main.py
 import sys
 import os
+from src.utils.dependency_bootstrap import ensure_project_dependencies
+
+# 在导入 pandas 等第三方依赖前先执行依赖检查。
+ensure_project_dependencies()
+
 import pandas as pd
 from datetime import datetime, timedelta
 

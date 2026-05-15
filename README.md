@@ -48,7 +48,7 @@
 
 第一次用，先别管复杂功能，按这 5 步走就行：
 
-1. 先启动：在项目根目录执行pip install -r requirements.txt 安转依赖，再执行 `python server.py`启动。
+1. 先启动：可先在项目根目录执行 `pip install -r requirements.txt` 预装依赖，再执行 `python server.py` 启动；如果有缺失依赖，启动过程也会自动检查并安装。
 2. 再选策略：在页面顶部勾选你要跑的策略（内置/自定义都行）
 3. 填参数：设置 `股票代码 + 时间区间 + ，模拟初始资金`
 4. 点回测：点击“单票回测”，先拿到第一份结果和日志
@@ -194,6 +194,8 @@ python -m pip install -r requirements.txt
 ```bash
 python server.py
 ```
+
+说明：启动时会自动检查 `requirements.txt` 中声明的依赖；如果当前环境缺失依赖，系统会自动尝试安装，首启耗时可能略长。
 
 启动后打开控制台页面，选策略、填参数、点“单票回测”即可开始跑。
 

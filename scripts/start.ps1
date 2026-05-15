@@ -75,6 +75,9 @@ if (Test-Path $venvPython) {
     Write-Step "Using system python: $pythonCmd"
 }
 
+# 启动入口已内置依赖检查，这里提前提示便于用户理解首启耗时。
+Write-Step "Dependency bootstrap is enabled. Missing packages will be installed automatically."
+
 # ---------------------------------------------------------------------------
 # Port detection and auto-increment
 # ---------------------------------------------------------------------------

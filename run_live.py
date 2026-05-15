@@ -1,4 +1,9 @@
 # run_live.py
+from src.utils.dependency_bootstrap import ensure_project_dependencies
+
+# 在导入实盘依赖前先做启动自检。
+ensure_project_dependencies()
+
 from src.core.live_cabinet import LiveCabinet
 from src.utils.config_loader import ConfigLoader
 import os

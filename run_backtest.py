@@ -4,6 +4,11 @@ from datetime import datetime
 import json
 import os
 import time
+from src.utils.dependency_bootstrap import ensure_project_dependencies
+
+# 在载入回测依赖前先做启动自检。
+ensure_project_dependencies()
+
 from src.core.backtest_cabinet import BacktestCabinet
 from src.utils.backtest_baseline import apply_backtest_baseline
 

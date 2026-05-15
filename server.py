@@ -23,6 +23,11 @@ import socket
 import ssl
 from contextlib import asynccontextmanager
 from collections import deque
+from src.utils.dependency_bootstrap import ensure_project_dependencies
+
+# 在导入第三方库前先完成依赖自检，避免首启缺包直接崩溃。
+ensure_project_dependencies()
+
 import pandas as pd
 import numpy as np
 import matplotlib

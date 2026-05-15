@@ -16,6 +16,10 @@ import traceback
 import subprocess
 import datetime
 import atexit
+from src.utils.dependency_bootstrap import ensure_project_dependencies
+
+# 桌面端开发模式启动时，也需要先保证 requirements 依赖完整。
+ensure_project_dependencies()
 
 # ---------------------------------------------------------------------------
 # macOS 原生 AppKit 阻塞（无第三方依赖）
