@@ -200,3 +200,58 @@ def test_fetch_minute_data_uses_pseudo_1m_when_lc1_missing(monkeypatch):
     assert not out.empty
     assert len(out) == 1
     assert float(out.iloc[-1]["close"]) == 11.18
+
+
+def test_fetch_minute_data_reads_local_01_file_before_network(monkeypatch, tmp_path):
+    # 新版通达信 1 分钟文件保存为 `minline/*.01`，这里验证 provider 会优先走本地解析而不是回退网络。
+    p = TdxProvider(tdxdir=str(tmp_path))
+    p._cache_enabled = False
+
+    minute_dir = tmp_path / "vipdoc" / "sh" / "minline"
+    minute_dir.mkdir(parents=True, exist_ok=True)
+    local_file = minute_dir / "sh600000.01"
+    # 只需要占位文件命中路径判断，真实解析结果由 monkeypatch 的解析器提供。
+    local_file.write_bytes(b"tdx")
+
+    minute_index = pd.to_datetime(["2026-03-03 09:31:00", "2026-03-03 09:32:00"])
+    local_df = pd.DataFrame(
+        {
+            "open": [9.66, 9.67],
+            "high": [9.67, 9.68],
+            "low": [9.64, 9.66],
+            "close": [9.67, 9.66],
+            "amount": [12852128.0, 4511947.0],
+            "volume": [1330200, 467000],
+        },
+        index=minute_index,
+    )
+
+    class _FakeMinBarReader:
+        # 记录命中的本地路径，确保 `.01` 兼容逻辑真实生效。
+        last_path = ""
+
+        def get_df(self, file_path):
+            self.__class__.last_path = str(file_path)
+            return local_df.copy()
+
+    # 模拟 mootdx Reader 本身找不到 `.01`，从而触发项目内新增的本地文件回退逻辑。
+    monkeypatch.setattr(p, "_ensure_reader", lambda: _FakeReader(minute_rows=[]))
+    monkeypatch.setattr(p, "_load_cached_minute_data", lambda code, s, e: (pd.DataFrame(), False))
+    monkeypatch.setattr("mootdx.reader.TdxMinBarReader", _FakeMinBarReader)
+    monkeypatch.setattr(
+        p,
+        "_quotes_snapshot",
+        lambda raw_code: (_ for _ in ()).throw(AssertionError("should not fetch network snapshot")),
+    )
+    monkeypatch.setattr(
+        p,
+        "_quotes_bars",
+        lambda raw_code: (_ for _ in ()).throw(AssertionError("should not fetch network bars")),
+    )
+
+    out = p.fetch_minute_data("600000.SH", datetime(2026, 3, 3, 9, 31, 0), datetime(2026, 3, 3, 9, 32, 0))
+
+    assert isinstance(out, pd.DataFrame)
+    assert len(out) == 2
+    assert _FakeMinBarReader.last_path.endswith("sh600000.01")
+    assert float(out.iloc[0]["close"]) == 9.67

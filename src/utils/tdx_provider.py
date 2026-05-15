@@ -1,5 +1,9 @@
+import json
+import logging
 import os
 import platform
+import threading
+import time
 from datetime import datetime
 from typing import Any, Optional
 
@@ -8,6 +12,8 @@ import pandas as pd
 from src.utils.config_loader import ConfigLoader
 from src.utils.indicators import Indicators
 
+logger = logging.getLogger("TdxProvider")
+
 
 class TdxProvider:
     """
@@ -15,12 +21,25 @@ class TdxProvider:
     统一输出字段: code, dt, open, high, low, close, vol, amount
     """
 
+    _quote_server_cache_lock = threading.Lock()
+    _quote_server_cache_mem: dict[str, tuple[str, int]] = {}
+    _quote_server_cache_meta_mem: dict[str, dict[str, Any]] = {}
+
     def __init__(self, host=None, port=None, nodes=None, tdxdir=None):
         cfg = ConfigLoader.reload()
         self.last_error = ""
         self.mootdx_market = str(cfg.get("data_provider.tdx_market", "std") or "std").strip() or "std"
-        self.host = str(host or cfg.get("data_provider.tdx_host", "119.147.212.81") or "119.147.212.81").strip() or "119.147.212.81"
-        self.port = int(port or cfg.get("data_provider.tdx_port", 7709) or 7709)
+        cfg_host = str(cfg.get("data_provider.tdx_host", "") or "").strip()
+        cfg_port = int(cfg.get("data_provider.tdx_port", 7709) or 7709)
+        explicit_host = str(host or cfg_host or "").strip()
+        explicit_port = int(port or cfg_port or 7709)
+        self.host = explicit_host or "119.147.212.81"
+        self.port = explicit_port
+        # 显式配置节点时优先尊重用户设置；未显式配置时才优先复用缓存节点。
+        self._explicit_server = bool(explicit_host)
+        # 读取配置中心的 TDX 超时参数；当值为空或 <=0 时回退到历史默认值 6 秒。
+        configured_timeout = int(cfg.get("data_provider.tdx_timeout_sec", 0) or 0)
+        self.quote_timeout_sec = max(1, configured_timeout) if configured_timeout > 0 else 6
         explicit_dir = str(tdxdir or "").strip()
         self.tdxdir = explicit_dir if explicit_dir else self._resolve_tdxdir(cfg)
         self._cache_enabled = bool(cfg.get("data_provider.local_cache_enabled", True))
@@ -33,6 +52,12 @@ class TdxProvider:
         self._quotes = None
         self.runtime_platform = str(platform.system() or "").strip().lower() or os.name
         self.provider_mode = "local_vipdoc" if self._has_valid_tdxdir() else "network_mirror"
+        self._quote_server_cache_file = os.path.join(self._cache_dir, "tdx_quote_server.json")
+        self._cached_server_meta = self._load_cached_quote_server_meta()
+        self._preferred_server = self._resolve_preferred_quote_server()
+        self._bestip_probe_attempted = False
+        # 缓存节点只在整轮任务首次真正用到网络行情时评估是否需要重测 fastest 节点。
+        self._refresh_bestip_on_first_network_use = self._should_refresh_cached_server(self._cached_server_meta)
 
     def _candidate_quote_servers(self):
         out = []
@@ -74,6 +99,120 @@ class TdxProvider:
         except Exception:
             pass
         return out or [("119.147.212.81", 7709)]
+
+    def _quote_server_cache_key(self):
+        return str(self.mootdx_market or "std").strip().lower() or "std"
+
+    def _load_cached_quote_server_meta(self):
+        key = self._quote_server_cache_key()
+        with self._quote_server_cache_lock:
+            cached_meta = self._quote_server_cache_meta_mem.get(key)
+        if isinstance(cached_meta, dict) and cached_meta.get("host"):
+            return cached_meta
+        if not os.path.exists(self._quote_server_cache_file):
+            return {}
+        try:
+            with open(self._quote_server_cache_file, "r", encoding="utf-8") as f:
+                payload = json.load(f)
+            market_data = payload.get(key)
+            if not isinstance(market_data, dict):
+                return {}
+            meta = {
+                "host": str(market_data.get("host", "") or "").strip(),
+                "port": int(market_data.get("port", 7709) or 7709),
+                "updated_at": str(market_data.get("updated_at", "") or "").strip(),
+                "last_latency_sec": float(market_data.get("last_latency_sec", 0.0) or 0.0),
+                "source_mode": str(market_data.get("source_mode", "") or "").strip(),
+            }
+            if not meta.get("host"):
+                return {}
+            with self._quote_server_cache_lock:
+                self._quote_server_cache_meta_mem[key] = meta
+                self._quote_server_cache_mem[key] = (str(meta["host"]), int(meta["port"]))
+            return meta
+        except Exception:
+            return {}
+
+    def _should_refresh_cached_server(self, meta):
+        # 任务级最多重测一次 fastest 节点：缓存过旧或最近延迟明显偏慢时才触发。
+        if self._explicit_server or not isinstance(meta, dict) or not meta.get("host"):
+            return False
+        updated_at = str(meta.get("updated_at", "") or "").strip()
+        last_latency = float(meta.get("last_latency_sec", 0.0) or 0.0)
+        if last_latency >= 8.0:
+            return True
+        if not updated_at:
+            return True
+        try:
+            updated_dt = datetime.fromisoformat(updated_at)
+        except Exception:
+            return True
+        age_sec = max(0.0, (datetime.now() - updated_dt).total_seconds())
+        return age_sec >= 12 * 60 * 60
+
+    def _load_cached_quote_server(self):
+        meta = self._load_cached_quote_server_meta()
+        if not meta:
+            return None
+        return (str(meta.get("host", "") or "").strip(), int(meta.get("port", 7709) or 7709))
+
+    def _save_cached_quote_server(self, server, latency_sec=None, source_mode=""):
+        if not isinstance(server, (list, tuple)) or len(server) < 2:
+            return
+        host = str(server[0] or "").strip()
+        if not host:
+            return
+        try:
+            port = int(server[1] or 7709)
+        except Exception:
+            port = 7709
+        key = self._quote_server_cache_key()
+        cached = (host, port)
+        latency_value = 0.0
+        try:
+            latency_value = max(0.0, float(latency_sec or 0.0))
+        except Exception:
+            latency_value = 0.0
+        with self._quote_server_cache_lock:
+            self._quote_server_cache_mem[key] = cached
+            self._quote_server_cache_meta_mem[key] = {
+                "host": host,
+                "port": port,
+                "updated_at": datetime.now().isoformat(timespec="seconds"),
+                "last_latency_sec": latency_value,
+                "source_mode": str(source_mode or "").strip(),
+            }
+        payload = {}
+        try:
+            if os.path.exists(self._quote_server_cache_file):
+                with open(self._quote_server_cache_file, "r", encoding="utf-8") as f:
+                    existing = json.load(f)
+                    if isinstance(existing, dict):
+                        payload = existing
+        except Exception:
+            payload = {}
+        payload[key] = {
+            "host": host,
+            "port": port,
+            "updated_at": datetime.now().isoformat(timespec="seconds"),
+            "last_latency_sec": latency_value,
+            "source_mode": str(source_mode or "").strip(),
+        }
+        try:
+            with open(self._quote_server_cache_file, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+        except Exception:
+            return
+
+    def _resolve_preferred_quote_server(self):
+        if self._explicit_server:
+            return (self.host, self.port)
+        cached = self._load_cached_quote_server()
+        if cached:
+            self.host = str(cached[0])
+            self.port = int(cached[1])
+            return cached
+        return None
 
     def _resolve_tdxdir(self, cfg):
         env_dir = str(os.environ.get("TDX_DIR", "") or "").strip()
@@ -126,8 +265,45 @@ class TdxProvider:
         exch = "sh" if sym.endswith(".SH") else "sz"
         root = str(self.tdxdir or "").strip()
         day_path = os.path.join(root, "vipdoc", exch, "lday", f"{exch}{raw}.day")
-        min1_path = os.path.join(root, "vipdoc", exch, "minline", f"{exch}{raw}.lc1")
+        # 新版通达信 1 分钟文件常见为 `.01`，旧版/第三方工具仍可能保留 `.1` / `.lc1`。
+        # 这里统一返回“优先存在的本地 1 分钟文件”，让诊断信息与本地真实目录保持一致。
+        min1_path = self._resolve_local_minute_file(code)
         return day_path, min1_path
+
+    def _symbol_minute_file_candidates(self, code):
+        sym = self._normalize_symbol(code)
+        raw = self._raw_symbol(code)
+        exch = "sh" if sym.endswith(".SH") else "sz"
+        root = str(self.tdxdir or "").strip()
+        # 按新版优先、旧版兼容的顺序枚举本地 1 分钟文件候选，便于增量同步优先命中新格式。
+        return [
+            os.path.join(root, "vipdoc", exch, "minline", f"{exch}{raw}.01"),
+            os.path.join(root, "vipdoc", exch, "minline", f"{exch}{raw}.1"),
+            os.path.join(root, "vipdoc", exch, "minline", f"{exch}{raw}.lc1"),
+        ]
+
+    def _resolve_local_minute_file(self, code):
+        candidates = self._symbol_minute_file_candidates(code)
+        for file_path in candidates:
+            if os.path.exists(file_path):
+                return file_path
+        # 若本地不存在任何分钟文件，也返回新版首选路径，便于错误提示直观展示目标位置。
+        return candidates[0] if candidates else ""
+
+    def _read_local_minute_file(self, file_path):
+        local_path = str(file_path or "").strip()
+        if not local_path or not os.path.exists(local_path):
+            return pd.DataFrame()
+        try:
+            from mootdx.reader import TdxLCMinBarReader, TdxMinBarReader  # type: ignore
+
+            suffix = os.path.splitext(local_path)[1].lower()
+            # `.lc1` 仍走旧解析器；`.01` / `.1` 走新版分钟条目解析器。
+            reader = TdxLCMinBarReader() if suffix.startswith(".lc") else TdxMinBarReader()
+            return reader.get_df(local_path)
+        except Exception as e:
+            self.last_error = f"本地TDX分钟文件解析失败 path={local_path}: {e}"
+            return pd.DataFrame()
 
     def _import_mootdx(self):
         try:
@@ -153,7 +329,8 @@ class TdxProvider:
         _, Quotes = self._import_mootdx()
         if Quotes is None:
             return None
-        kwargs = {"market": self.mootdx_market, "timeout": 6}
+        # Quotes 连通性探测沿用统一超时配置，避免网络稍慢时过早判定节点不可用。
+        kwargs = {"market": self.mootdx_market, "timeout": self.quote_timeout_sec}
         if bool(bestip):
             kwargs["bestip"] = True
         if server and isinstance(server, (list, tuple)) and len(server) >= 2:
@@ -174,25 +351,140 @@ class TdxProvider:
         if self._quotes is not None:
             return self._quotes
         last_err = ""
-        # 先走 bestip，保持与 tdxtest.py 一致的实时链路
+        # 缓存节点过旧或最近探测明显偏慢时，整轮任务首次网络使用前只重测一次 fastest 节点。
+        if (
+            (not self._explicit_server)
+            and self._preferred_server is not None
+            and self._refresh_bestip_on_first_network_use
+            and not self._bestip_probe_attempted
+        ):
+            self._bestip_probe_attempted = True
+            bestip_started = time.perf_counter()
+            try:
+                logger.info(
+                    "TDX 行情连接预热重测开始：模式=任务级自动优选 原因=缓存节点过旧或偏慢 当前缓存=%s:%s",
+                    self._preferred_server[0],
+                    self._preferred_server[1],
+                )
+                self._quotes = self._create_quotes(bestip=True)
+                elapsed = time.perf_counter() - bestip_started
+                self.last_error = ""
+                self._preferred_server = (self.host, self.port)
+                self._cached_server_meta = {
+                    "host": self.host,
+                    "port": self.port,
+                    "updated_at": datetime.now().isoformat(timespec="seconds"),
+                    "last_latency_sec": elapsed,
+                    "source_mode": "task_bestip_refresh",
+                }
+                self._save_cached_quote_server((self.host, self.port), latency_sec=elapsed, source_mode="task_bestip_refresh")
+                self._refresh_bestip_on_first_network_use = False
+                logger.info(
+                    "TDX 行情连接预热重测成功：模式=任务级自动优选 节点=%s:%s 耗时=%.2fs",
+                    self.host,
+                    self.port,
+                    elapsed,
+                )
+                return self._quotes
+            except Exception as e:
+                last_err = str(e)
+                self._quotes = None
+                logger.warning("TDX 行情连接预热重测失败：模式=任务级自动优选 原因=%s", last_err)
+        # 优先复用显式配置或上次成功节点，避免每次新任务都重新执行 bestip 扫描。
+        if self._preferred_server is not None:
+            try:
+                cached_started = time.perf_counter()
+                logger.info(
+                    "TDX 行情连接初始化开始：模式=%s 市场=%s 超时=%ss 节点=%s:%s",
+                    "显式配置" if self._explicit_server else "缓存节点",
+                    self.mootdx_market,
+                    self.quote_timeout_sec,
+                    self._preferred_server[0],
+                    self._preferred_server[1],
+                )
+                self._quotes = self._create_quotes(server=self._preferred_server)
+                self.host = str(self._preferred_server[0])
+                self.port = int(self._preferred_server[1])
+                self.last_error = ""
+                self._save_cached_quote_server(
+                    self._preferred_server,
+                    latency_sec=time.perf_counter() - cached_started,
+                    source_mode="explicit" if self._explicit_server else "cached",
+                )
+                logger.info(
+                    "TDX 行情连接初始化成功：模式=%s 节点=%s:%s",
+                    "显式配置" if self._explicit_server else "缓存节点",
+                    self.host,
+                    self.port,
+                )
+                return self._quotes
+            except Exception as e:
+                last_err = str(e)
+                logger.warning(
+                    "TDX 行情连接初始化失败：模式=%s 节点=%s:%s 原因=%s",
+                    "显式配置" if self._explicit_server else "缓存节点",
+                    self._preferred_server[0],
+                    self._preferred_server[1],
+                    last_err,
+                )
+                self._quotes = None
+        # 首选节点不可用时，再回退到 bestip 探测，兼顾启动速度和可用性。
         try:
+            self._bestip_probe_attempted = True
+            bestip_started = time.perf_counter()
+            logger.info(
+                "TDX 行情连接初始化开始：模式=自动优选节点 市场=%s 超时=%ss",
+                self.mootdx_market,
+                self.quote_timeout_sec,
+            )
             self._quotes = self._create_quotes(bestip=True)
             self.last_error = ""
+            self._preferred_server = (self.host, self.port)
+            self._save_cached_quote_server(
+                (self.host, self.port),
+                latency_sec=time.perf_counter() - bestip_started,
+                source_mode="bestip",
+            )
+            logger.info(
+                "TDX 行情连接初始化成功：模式=自动优选节点 节点提示=%s:%s",
+                self.host,
+                self.port,
+            )
             return self._quotes
         except Exception as e:
             last_err = str(e)
+            logger.warning("TDX 行情连接初始化失败：模式=自动优选节点 原因=%s", last_err)
             self._quotes = None
-        for server in self._candidate_quote_servers():
+        candidates = self._candidate_quote_servers()
+        logger.info(
+            "TDX 行情连接回退到候选节点扫描：候选数=%s 市场=%s",
+            len(candidates),
+            self.mootdx_market,
+        )
+        for server in candidates:
             try:
+                candidate_started = time.perf_counter()
                 self._quotes = self._create_quotes(server=server)
                 self.host = str(server[0])
                 self.port = int(server[1])
                 self.last_error = ""
+                self._preferred_server = (self.host, self.port)
+                self._save_cached_quote_server(
+                    server,
+                    latency_sec=time.perf_counter() - candidate_started,
+                    source_mode="candidate_scan",
+                )
+                logger.info(
+                    "TDX 行情连接初始化成功：模式=候选节点扫描 节点=%s:%s",
+                    self.host,
+                    self.port,
+                )
                 return self._quotes
             except Exception as e:
                 last_err = str(e)
                 self._quotes = None
                 continue
+        logger.error("TDX 行情连接初始化全部失败：市场=%s 原因=%s", self.mootdx_market, last_err or "")
         self.last_error = f"mootdx Quotes 初始化失败: {last_err}" if last_err else "mootdx Quotes 初始化失败"
         return self._quotes
 
@@ -341,21 +633,51 @@ class TdxProvider:
     def _reader_minute(self, raw_code):
         reader = self._ensure_reader()
         if reader is None:
-            return pd.DataFrame()
+            # Reader 初始化失败时，仍尝试直接按文件路径解析新版 `.01`，降低对 mootdx 路径匹配的依赖。
+            return self._read_local_minute_file(self._resolve_local_minute_file(raw_code))
         for name in ["minute", "min", "mins", "minute_bars", "bars"]:
             if not hasattr(reader, name):
                 continue
             fn = getattr(reader, name)
             try:
-                return fn(symbol=raw_code)
+                df = fn(symbol=raw_code)
             except TypeError:
                 try:
-                    return fn(raw_code)
+                    df = fn(raw_code)
                 except Exception:
                     continue
             except Exception:
                 continue
-        return pd.DataFrame()
+            if df is not None and not getattr(df, "empty", True):
+                return df
+        # mootdx 0.11.x 对新版 `minline/*.01` 不会自动命中，这里补充显式本地文件回退。
+        return self._read_local_minute_file(self._resolve_local_minute_file(raw_code))
+
+    def _is_recent_minute_window(self, end_time):
+        # 仅当请求窗口贴近当前时刻时，才值得用网络快照补最后几根分钟线。
+        end_ts = pd.to_datetime(end_time, errors="coerce")
+        if pd.isna(end_ts):
+            return False
+        now_ts = pd.Timestamp(datetime.now())
+        return abs((now_ts - end_ts).total_seconds()) <= 20 * 60
+
+    def _log_minute_fetch_stage(self, code, stage, started_at, df=None, extra=""):
+        # 分阶段记录耗时与行数，便于定位分钟线取数到底慢在本地读取还是网络调用。
+        rows = 0
+        try:
+            if df is not None and not getattr(df, "empty", True):
+                rows = int(len(df))
+        except Exception:
+            rows = 0
+        extra_text = f" {extra}" if str(extra or "").strip() else ""
+        logger.info(
+            "TDX 分钟取数阶段：股票=%s 阶段=%s 耗时=%.2fs 行数=%s%s",
+            self._normalize_symbol(code),
+            stage,
+            max(0.0, time.perf_counter() - float(started_at or 0.0)),
+            rows,
+            extra_text,
+        )
 
     def _quotes_bars(self, raw_code):
         quotes = self._ensure_quotes()
@@ -505,30 +827,63 @@ class TdxProvider:
         if pd.isna(st) or pd.isna(et) or st > et:
             self.last_error = "TDX时间参数无效"
             return pd.DataFrame()
+        fetch_started = time.perf_counter()
         cached_df, cache_hit = self._load_cached_minute_data(code, st, et)
         if cache_hit:
             self.last_error = ""
+            self._log_minute_fetch_stage(code, "分钟缓存命中", fetch_started, cached_df)
             return cached_df
         raw_code = self._raw_symbol(code)
-
-        df_snap = self._snapshot_to_bar_df(self._quotes_snapshot(raw_code), code=code)
-        df_quote = self._normalize_ohlcv_df(self._quotes_bars(raw_code), code=code)
-        df_reader = self._normalize_ohlcv_df(self._reader_minute(raw_code), code=code)
         parts = []
         if not cached_df.empty:
             parts.append(cached_df)
+        # 历史分钟增量同步优先读取本地 vipdoc；本地可用时不要先走高延迟网络接口。
+        reader_started = time.perf_counter()
+        df_reader = self._normalize_ohlcv_df(self._reader_minute(raw_code), code=code)
+        self._log_minute_fetch_stage(code, "本地分钟读取", reader_started, df_reader)
         if not df_reader.empty:
             parts.append(df_reader)
-        if not df_snap.empty:
-            parts.append(df_snap)
-        if not df_quote.empty:
-            parts.append(df_quote)
+        _, min1_path = self._symbol_file_hints(code)
+        local_minute_missing = not os.path.exists(min1_path)
+        should_try_network = (
+            (not self._has_valid_tdxdir())
+            or self._is_recent_minute_window(et)
+            or df_reader.empty
+            or local_minute_missing
+        )
+        df_snap = pd.DataFrame()
+        df_quote = pd.DataFrame()
+        if should_try_network:
+            # 本地分钟文件缺失或读取为空时，直接回退网络取数；实时窗口再额外补快照。
+            snap_started = time.perf_counter()
+            df_snap = self._snapshot_to_bar_df(self._quotes_snapshot(raw_code), code=code)
+            self._log_minute_fetch_stage(
+                code,
+                "网络快照读取",
+                snap_started,
+                df_snap,
+                extra=f"本地1min文件存在={not local_minute_missing}",
+            )
+            quote_started = time.perf_counter()
+            df_quote = self._normalize_ohlcv_df(self._quotes_bars(raw_code), code=code)
+            self._log_minute_fetch_stage(
+                code,
+                "网络分钟读取",
+                quote_started,
+                df_quote,
+                extra=f"本地读取为空={df_reader.empty}",
+            )
+            if not df_snap.empty:
+                parts.append(df_snap)
+            if not df_quote.empty:
+                parts.append(df_quote)
         if not parts:
             if self._has_valid_tdxdir():
                 day_path, min1_path = self._symbol_file_hints(code)
                 self.last_error = (
                     f"mootdx分钟线为空 code={self._normalize_symbol(code)}; "
-                    f"本地文件检查 day_exists={os.path.exists(day_path)} lc1_exists={os.path.exists(min1_path)}; "
+                    f"本地文件检查 day_exists={os.path.exists(day_path)} min1_exists={os.path.exists(min1_path)} "
+                    f"min1_path={min1_path}; "
                     f"请在通达信客户端下载该标的历史数据后重试"
                 )
             else:
@@ -536,36 +891,42 @@ class TdxProvider:
                     self.last_error
                     or f"mootdx分钟线为空 code={self._normalize_symbol(code)}；当前处于无vipdoc的网络镜像模式，请先扩大回测窗口触发本地缓存积累或检查节点连通性"
                 )
+            self._log_minute_fetch_stage(code, "分钟取数失败", fetch_started, extra=f"原因={self.last_error}")
             return pd.DataFrame()
         merged = pd.concat(parts, ignore_index=True)
         merged = self._normalize_ohlcv_df(merged, code=code)
         merged = merged[(merged["dt"] >= st) & (merged["dt"] <= et)].copy()
         if merged.empty:
-            # lc1 缺失或快照时间不在请求窗口时，允许用 quotes 快照补一条“当前分钟伪1m”
-            # 以避免实盘监控端无数据可展示。
-            pseudo = self._snapshot_to_pseudo_current_minute_df(
-                self._quotes_snapshot(raw_code),
-                code=code,
-                anchor_dt=min(pd.Timestamp(datetime.now()), et),
-            )
-            if pseudo is not None and (not pseudo.empty):
-                pseudo = pseudo[(pseudo["dt"] >= st) & (pseudo["dt"] <= et)].copy()
-                if not pseudo.empty:
-                    self._save_minute_cache(code, pseudo)
-                    self.last_error = ""
-                    return pseudo
+            if should_try_network:
+                # 实时窗口允许用快照补当前分钟，纯历史窗口则直接失败，避免每只股票都长时间等待网络。
+                pseudo_started = time.perf_counter()
+                pseudo = self._snapshot_to_pseudo_current_minute_df(
+                    self._quotes_snapshot(raw_code),
+                    code=code,
+                    anchor_dt=min(pd.Timestamp(datetime.now()), et),
+                )
+                if pseudo is not None and (not pseudo.empty):
+                    pseudo = pseudo[(pseudo["dt"] >= st) & (pseudo["dt"] <= et)].copy()
+                    self._log_minute_fetch_stage(code, "伪分钟补点", pseudo_started, pseudo)
+                    if not pseudo.empty:
+                        self._save_minute_cache(code, pseudo)
+                        self.last_error = ""
+                        return pseudo
             if self._has_valid_tdxdir():
                 day_path, min1_path = self._symbol_file_hints(code)
                 self.last_error = (
                     f"mootdx分钟线为空 code={self._normalize_symbol(code)}; "
-                    f"本地文件检查 day_exists={os.path.exists(day_path)} lc1_exists={os.path.exists(min1_path)}; "
+                    f"本地文件检查 day_exists={os.path.exists(day_path)} min1_exists={os.path.exists(min1_path)} "
+                    f"min1_path={min1_path}; "
                     f"请在通达信客户端下载该标的历史数据后重试"
                 )
             else:
                 self.last_error = self.last_error or f"mootdx分钟线为空 code={self._normalize_symbol(code)}"
+            self._log_minute_fetch_stage(code, "分钟窗口过滤后为空", fetch_started, extra=f"原因={self.last_error}")
             return pd.DataFrame()
         self._save_minute_cache(code, merged)
         self.last_error = ""
+        self._log_minute_fetch_stage(code, "分钟取数完成", fetch_started, merged)
         return merged
 
     def fetch_kline_data(self, code, start_time, end_time, interval="1min"):

@@ -30,7 +30,7 @@
     ]
   },
   "data_provider": {
-    "source": "duckdb",
+    "source": "tdx",
     "enable_fallback": false,
     "tushare_api_url": "http://tushare.xyz",
     "tushare_token": "",
@@ -68,7 +68,7 @@
     "postgres_table_30min": "dat_30mins",
     "postgres_table_60min": "dat_60mins",
     "postgres_table_day": "dat_day",
-    "duckdb_path": "databases/duckdb/quantifydata.duckdb",
+    "duckdb_path": "G:/duckdb/quantifydata.duckdb",
     "duckdb_query_page_size": 20000,
     "duckdb_table_1min": "dat_1mins",
     "duckdb_table_5min": "dat_5mins",
@@ -91,10 +91,10 @@
     "tdx_host": "",
     "tdx_port": 0,
     "tdx_node_list": "",
-    "tdx_timeout_sec": 0,
+    "tdx_timeout_sec": 120,
     "tdx_retry_count": 0,
     "tdx_max_bars": 0,
-    "llm_provider": "",
+    "llm_provider": "openai_compatible",
     "strategy_llm_provider": "openai_compatible"
   },
   "history_sync": {
@@ -103,8 +103,9 @@
     "scheduler_start_time": "09:30",
     "time_mode": "custom",
     "lookback_days": 20,
-    "custom_start_time": "2026-04-01 09:30:00",
-    "custom_end_time": "2026-04-01 15:00:00",
+    "concurrency": 10,
+    "custom_start_time": "2026-03-02 09:30:00",
+    "custom_end_time": "2026-03-02 15:00:00",
     "session_only": true,
     "intraday_mode": false,
     "max_codes": 10000,
@@ -116,12 +117,12 @@
       "dat_15mins",
       "dat_30mins",
       "dat_60mins",
-      "dat_days"
+      "dat_day"
     ],
     "dry_run": false,
     "on_duplicate": "ignore",
     "write_mode": "direct_db",
-    "direct_db_source": ""
+    "direct_db_source": "duckdb"
   },
   "targets": [],
   "strategies": {

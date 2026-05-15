@@ -122,6 +122,22 @@ class DuckDbProvider:
             pass
         return ts
 
+    def _normalize_ts_value(self, value):
+        # 查询边界和结果集都统一成无时区时间，避免 pandas 比较时出现 tz-aware/tz-naive 冲突。
+        ts = pd.to_datetime(value, errors="coerce")
+        if pd.isna(ts):
+            return ts
+        try:
+            if getattr(ts, "tzinfo", None) is not None:
+                ts = ts.tz_convert("Asia/Shanghai").tz_localize(None)
+        except Exception:
+            try:
+                if getattr(ts, "tzinfo", None) is not None:
+                    ts = ts.tz_localize(None)
+            except Exception:
+                pass
+        return ts
+
     def _normalize_df(self, df):
         if df is None or df.empty:
             return pd.DataFrame()
@@ -187,28 +203,37 @@ class DuckDbProvider:
             pass
         return dt.strftime("%Y-%m-%d %H:%M:%S")
 
+    def _query_date_text(self, value):
+        dt = pd.to_datetime(value, errors="coerce")
+        if pd.isna(dt):
+            text = str(value or "").strip()
+            return text[:10] if len(text) >= 10 else text
+        return dt.strftime("%Y-%m-%d")
+
+    def _trade_time_parse_expr(self):
+        # 不同表的 trade_time 可能是 VARCHAR 或 TIMESTAMPTZ，这里统一归一到可比较的日期表达式。
+        return (
+            "CAST(COALESCE("
+            "TRY_CAST(trade_time AS TIMESTAMP WITH TIME ZONE), "
+            "TRY_STRPTIME(CAST(trade_time AS VARCHAR), '%Y-%m-%d %H:%M:%S%z')"
+            ") AS DATE)"
+        )
+
     def _fetch_rows_paged(self, conn, table, code, start_time, end_time):
-        offset = 0
-        chunks = []
-        start_text = self._query_time_text(start_time)
-        end_text = self._query_time_text(end_time)
+        start_date = self._query_date_text(start_time)
+        end_date = self._query_date_text(end_time)
+        parse_expr = self._trade_time_parse_expr()
         sql = (
             f"SELECT code, trade_time AS dt, open, high, low, close, vol, amount "
             f"FROM {self._quoted_table(table)} "
-            f"WHERE code = ? AND CAST(trade_time AS VARCHAR) >= ? AND CAST(trade_time AS VARCHAR) <= ? "
-            f"ORDER BY CAST(trade_time AS VARCHAR) ASC LIMIT ? OFFSET ?"
+            f"WHERE code = ? "
+            f"AND {parse_expr} >= CAST(? AS DATE) "
+            f"AND {parse_expr} <= CAST(? AS DATE)"
         )
-        while True:
-            frame = conn.execute(sql, [code, start_text, end_text, self.page_size, offset]).fetchdf()
-            if frame is None or frame.empty:
-                break
-            chunks.append(frame)
-            if len(frame) < self.page_size:
-                break
-            offset += self.page_size
-        if not chunks:
+        frame = conn.execute(sql, [code, start_date, end_date]).fetchdf()
+        if frame is None or frame.empty:
             return pd.DataFrame()
-        return pd.concat(chunks, ignore_index=True)
+        return frame.reset_index(drop=True)
 
 
     def _query_range(self, code, start_time, end_time, interval):
@@ -223,7 +248,16 @@ class DuckDbProvider:
             for c in self._code_variants(code):
                 raw_df = self._fetch_rows_paged(conn, table, c, start_time, end_time)
                 if raw_df is not None and not raw_df.empty:
-                    return self._normalize_df(raw_df)
+                    df = self._normalize_df(raw_df)
+                    if df.empty:
+                        continue
+                    start_dt = self._normalize_ts_value(start_time)
+                    end_dt = self._normalize_ts_value(end_time)
+                    if not pd.isna(start_dt):
+                        df = df[df["dt"] >= start_dt]
+                    if not pd.isna(end_dt):
+                        df = df[df["dt"] <= end_dt]
+                    return df.reset_index(drop=True)
             return pd.DataFrame()
         except Exception as e:
             self.last_error = f"DuckDB 查询失败: {e}"
@@ -371,6 +405,10 @@ class DuckDbProvider:
         if conn is None:
             return 0
         written = 0
+        insert_sql = (
+            f"INSERT INTO {self._quoted_table(table)} (code, trade_time, open, high, low, close, vol, amount) "
+            f"VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+        )
         upsert_sql = (
             f"INSERT INTO {self._quoted_table(table)} (code, trade_time, open, high, low, close, vol, amount) "
             f"VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
@@ -387,7 +425,8 @@ class DuckDbProvider:
                 except Exception as e:
                     err_text = str(e).lower()
                     if "conflict target" in err_text or ("unique" in err_text and "primary key" in err_text):
-                        self._delete_then_insert_rows(conn, table, chunk)
+                        # 增量同步在写入前已经按目标库 existing_keys 做过去重；无唯一键场景直接插入缺失行即可。
+                        conn.executemany(insert_sql, chunk)
                     else:
                         raise
                 written += len(chunk)

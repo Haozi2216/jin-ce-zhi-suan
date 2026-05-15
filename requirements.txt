@@ -5,7 +5,7 @@ matplotlib
 mplfinance
 pymysql
 psycopg2-binary
-duckdb
+duckdb>=1.5.2,<1.6
 requests
 tushare
 akshare

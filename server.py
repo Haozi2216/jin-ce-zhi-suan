@@ -60,7 +60,7 @@ from src.utils.mysql_provider import MysqlProvider
 from src.utils.postgres_provider import PostgresProvider
 from src.utils.duckdb_provider import DuckDbProvider
 from src.utils.tdx_provider import TdxProvider
-from src.utils.history_sync_service import HistoryDiffSyncService, TABLE_INTERVAL_MAP, DEFAULT_SYNC_TABLES
+from src.utils.history_sync_service import HistoryDiffSyncService, TABLE_INTERVAL_MAP, DEFAULT_SYNC_TABLES, normalize_history_sync_tables
 from src.utils.backtest_baseline import apply_backtest_baseline
 from src.utils.webhook_notifier import WebhookNotifier
 from src.utils.screener_data_provider import (
@@ -1797,6 +1797,224 @@ def _check_provider_connectivity_for_code(provider, provider_source: str, stock_
     except Exception as e:
         return False, str(e)
 
+def _build_runtime_test_config(incoming_config: Optional[dict] = None) -> Dict[str, Any]:
+    # 连通性测试优先使用“表单草稿 + 当前磁盘配置”的合并结果，确保未保存的 UI 修改也能参与测试。
+    base_cfg = ConfigLoader.reload().to_dict()
+    patch_cfg = incoming_config if isinstance(incoming_config, dict) else {}
+    sanitized_patch = json.loads(json.dumps(patch_cfg, ensure_ascii=False))
+    merged_candidate = _deep_merge_dict(base_cfg, sanitized_patch)
+    # 私密字段若仍是掩码值，回退到当前生效配置，避免把 ******** 当成真实凭据参与测试。
+    for path in _secret_config_paths(merged_candidate):
+        if not _path_exists(sanitized_patch, path):
+            continue
+        if _is_secret_mask_value(_get_path_value(sanitized_patch, path, "")):
+            _delete_path_value(sanitized_patch, path)
+    return _deep_merge_dict(base_cfg, sanitized_patch)
+
+def _bind_runtime_table_name_resolver(provider: Any, cfg: Dict[str, Any], prefix: str) -> Any:
+    # 为数据库类 provider 注入“当前测试配置”的表名解析，避免未保存配置时仍读取磁盘旧值。
+    key_map = {
+        "1min": f"data_provider.{prefix}_table_1min",
+        "5min": f"data_provider.{prefix}_table_5min",
+        "10min": f"data_provider.{prefix}_table_10min",
+        "15min": f"data_provider.{prefix}_table_15min",
+        "30min": f"data_provider.{prefix}_table_30min",
+        "60min": f"data_provider.{prefix}_table_60min",
+        "D": f"data_provider.{prefix}_table_day",
+    }
+    defaults = dict(getattr(provider, "_table_defaults", {}) or {})
+    safe_name = getattr(provider, "_safe_table_name", None)
+
+    def _resolve_table_name(interval: str) -> str:
+        cfg_name = str(cfg.get(key_map.get(interval, ""), "") or "").strip()
+        if callable(safe_name):
+            cfg_name = str(safe_name(cfg_name) or "").strip()
+        if cfg_name:
+            return cfg_name
+        return str(defaults.get(interval, "") or "")
+
+    provider._resolve_table_name = _resolve_table_name
+    return provider
+
+def _build_runtime_connectivity_provider(source: str, cfg: Dict[str, Any]):
+    # 统一按“运行时测试配置”构建数据源 provider，避免前端必须先保存才能测试。
+    src = str(source or "default").strip().lower()
+    if src == "tushare":
+        token = str(cfg.get("data_provider.tushare_token", "") or "").strip()
+        provider = TushareProvider(token=token)
+        provider._tushare_http_url = str(cfg.get("data_provider.tushare_api_url", "http://tushare.xyz") or "http://tushare.xyz").strip()
+        provider.set_token(token)
+        return provider
+    if src == "akshare":
+        return AkshareProvider()
+    if src == "mysql":
+        provider = MysqlProvider(
+            host=cfg.get("data_provider.mysql_host", "127.0.0.1"),
+            port=cfg.get("data_provider.mysql_port", 3306),
+            user=cfg.get("data_provider.mysql_user", ""),
+            password=cfg.get("data_provider.mysql_password", ""),
+            database=cfg.get("data_provider.mysql_database", ""),
+            charset=cfg.get("data_provider.mysql_charset", "utf8mb4"),
+        )
+        provider.page_size = max(1000, int(cfg.get("data_provider.mysql_query_page_size", getattr(provider, "page_size", 20000)) or getattr(provider, "page_size", 20000)))
+        return _bind_runtime_table_name_resolver(provider, cfg, "mysql")
+    if src == "postgresql":
+        provider = PostgresProvider(
+            host=cfg.get("data_provider.postgres_host", "127.0.0.1"),
+            port=cfg.get("data_provider.postgres_port", 5432),
+            user=cfg.get("data_provider.postgres_user", ""),
+            password=cfg.get("data_provider.postgres_password", ""),
+            database=cfg.get("data_provider.postgres_database", ""),
+            schema=cfg.get("data_provider.postgres_schema", "public"),
+        )
+        provider.page_size = max(1000, int(cfg.get("data_provider.postgres_query_page_size", getattr(provider, "page_size", 20000)) or getattr(provider, "page_size", 20000)))
+        return _bind_runtime_table_name_resolver(provider, cfg, "postgres")
+    if src == "duckdb":
+        provider = DuckDbProvider(db_path=cfg.get("data_provider.duckdb_path", ""))
+        provider.page_size = max(1000, int(cfg.get("data_provider.duckdb_query_page_size", getattr(provider, "page_size", 20000)) or getattr(provider, "page_size", 20000)))
+        return _bind_runtime_table_name_resolver(provider, cfg, "duckdb")
+    if src == "tdx":
+        return TdxProvider(
+            host=cfg.get("data_provider.tdx_host", None),
+            port=cfg.get("data_provider.tdx_port", None),
+            tdxdir=cfg.get("data_provider.tdxdir", "") or cfg.get("data_provider.tdx_dir", ""),
+        )
+    return DataProvider(
+        api_key=cfg.get("data_provider.default_api_key", ""),
+        base_url=cfg.get("data_provider.default_api_url", ""),
+    )
+
+def _run_tushare_connectivity_check(cfg: Dict[str, Any], stock_code: str) -> Dict[str, Any]:
+    # Tushare 需要显式透传 URL 与 Token，避免 UI 草稿配置尚未保存时误读旧值。
+    api_url = str(cfg.get("data_provider.tushare_api_url", "http://tushare.xyz") or "").strip().strip("`'\" ").strip()
+    token = str(cfg.get("data_provider.tushare_token", "") or "").strip()
+    if not api_url:
+        return {"status": "error", "ok": False, "msg": "tushare_api_url 不能为空", "source": "tushare", "stock_code": stock_code}
+    if not token:
+        return {"status": "error", "ok": False, "msg": "tushare_token 未配置（请在 private/config 配置后重试）", "source": "tushare", "stock_code": stock_code}
+    provider = _build_runtime_connectivity_provider("tushare", cfg)
+    ok, detail = provider.check_connectivity(stock_code)
+    if ok:
+        return {
+            "status": "success",
+            "ok": True,
+            "msg": "Tushare 连通性校验通过",
+            "source": "tushare",
+            "stock_code": stock_code,
+            "detail": str(detail or "ok"),
+            "target": api_url,
+        }
+    return {
+        "status": "error",
+        "ok": False,
+        "msg": str(detail or getattr(provider, "last_error", "") or "Tushare 连通性校验失败"),
+        "source": "tushare",
+        "stock_code": stock_code,
+        "target": api_url,
+    }
+
+def _run_tdx_connectivity_check(cfg: Dict[str, Any], stock_code: str, auto_detect: bool = True) -> Dict[str, Any]:
+    # TDX 同时支持本地 vipdoc 与网络镜像模式，这里统一返回当前探测到的工作模式。
+    cfg_tdxdir = str(cfg.get("data_provider.tdxdir", "") or cfg.get("data_provider.tdx_dir", "") or "").strip()
+    tdxdir = _normalize_tdxdir_path(cfg_tdxdir)
+    candidates = _detect_tdxdir_candidates(limit=8) if bool(auto_detect) else []
+    autodetected = False
+    if (not _is_valid_tdxdir(tdxdir)) and candidates:
+        tdxdir = candidates[0]
+        autodetected = True
+    provider = TdxProvider(
+        host=cfg.get("data_provider.tdx_host", None),
+        port=cfg.get("data_provider.tdx_port", None),
+        tdxdir=tdxdir,
+    )
+    ok, detail = provider.check_connectivity(stock_code)
+    mode_info = provider.describe_mode() if hasattr(provider, "describe_mode") else {}
+    target_text = ""
+    if str(mode_info.get("provider_mode", "") or "").strip() == "network_mirror":
+        target_text = f"网络镜像模式 · 缓存目录 {str(mode_info.get('cache_dir', '--') or '--')}"
+    elif tdxdir:
+        target_text = f"本地 vipdoc @ {tdxdir}"
+    if ok:
+        return {
+            "status": "success",
+            "ok": True,
+            "msg": "TDX(Mootdx) 连通性校验通过",
+            "source": "tdx",
+            "stock_code": stock_code,
+            "detail": str(detail or "ok"),
+            "target": target_text,
+            "tdxdir_used": tdxdir,
+            "autodetected": autodetected,
+            "candidates": candidates,
+            "provider_mode": mode_info.get("provider_mode", "network_mirror" if not _is_valid_tdxdir(tdxdir) else "local_vipdoc"),
+            "cache_dir": mode_info.get("cache_dir", ""),
+            "has_vipdoc": bool(mode_info.get("has_vipdoc", _is_valid_tdxdir(tdxdir))),
+        }
+    return {
+        "status": "error",
+        "ok": False,
+        "msg": str(detail or getattr(provider, "last_error", "") or "TDX 连通性校验失败"),
+        "source": "tdx",
+        "stock_code": stock_code,
+        "target": target_text,
+        "tdxdir_used": tdxdir,
+        "autodetected": autodetected,
+        "candidates": candidates,
+        "provider_mode": mode_info.get("provider_mode", "network_mirror" if not _is_valid_tdxdir(tdxdir) else "local_vipdoc"),
+        "cache_dir": mode_info.get("cache_dir", ""),
+        "has_vipdoc": bool(mode_info.get("has_vipdoc", _is_valid_tdxdir(tdxdir))),
+    }
+
+def _run_data_source_connectivity_check(source: str, cfg: Dict[str, Any], stock_code: str, auto_detect: bool = True) -> Dict[str, Any]:
+    # 通用数据源连通性测试入口，供配置中心向导/专家模式复用。
+    src = str(source or "default").strip().lower() or "default"
+    code = str(stock_code or "").strip().upper() or "000001.SZ"
+    if src == "tushare":
+        return _run_tushare_connectivity_check(cfg, code)
+    if src == "tdx":
+        return _run_tdx_connectivity_check(cfg, code, auto_detect=auto_detect)
+    provider = _build_runtime_connectivity_provider(src, cfg)
+    ok, detail = _check_provider_connectivity_for_code(provider, src, code)
+    source_name_map = {
+        "default": "默认API",
+        "akshare": "AkShare",
+        "mysql": "MySQL",
+        "postgresql": "PostgreSQL",
+        "duckdb": "DuckDB",
+    }
+    target = ""
+    if src == "default":
+        target = str(cfg.get("data_provider.default_api_url", "") or "").strip()
+    elif src == "mysql":
+        target = f"{str(cfg.get('data_provider.mysql_host', '') or '').strip()}:{int(cfg.get('data_provider.mysql_port', 3306) or 3306)}/{str(cfg.get('data_provider.mysql_database', '') or '').strip()}"
+    elif src == "postgresql":
+        target = f"{str(cfg.get('data_provider.postgres_host', '') or '').strip()}:{int(cfg.get('data_provider.postgres_port', 5432) or 5432)}/{str(cfg.get('data_provider.postgres_database', '') or '').strip()}"
+    elif src == "duckdb":
+        try:
+            target = str(provider._resolve_db_path() or cfg.get("data_provider.duckdb_path", "") or "").strip()
+        except Exception:
+            target = str(cfg.get("data_provider.duckdb_path", "") or "").strip()
+    elif src == "akshare":
+        target = "AkShare 公共行情接口"
+    if ok:
+        return {
+            "status": "success",
+            "ok": True,
+            "msg": f"{source_name_map.get(src, src or '数据源')} 连通性校验通过",
+            "source": src,
+            "stock_code": code,
+            "detail": str(detail or "ok"),
+            "target": target,
+        }
+    return {
+        "status": "error",
+        "ok": False,
+        "msg": str(detail or getattr(provider, "last_error", "") or f"{src} 连通性校验失败"),
+        "source": src,
+        "stock_code": code,
+        "target": target,
+    }
+
 def _normalize_onboarding_error_text(raw: Any, max_len: int = 1200) -> str:
     # 统一规整错误文本，避免空值和超长文案影响前端显示。
     txt = str(raw or "").strip()
@@ -2091,6 +2309,44 @@ def _required_config_keys_for_source(source: str) -> List[str]:
         ]
     # akshare / duckdb / tdx 在默认形态下可以先不强制额外键。
     return []
+
+def _describe_onboarding_provider_config(source: str, cfg) -> Dict[str, Any]:
+    # 新手引导使用统一配置状态描述，避免出现“看起来配置完整”但实际仍不清楚当前运行模式的情况。
+    src = str(source or "default").strip().lower()
+    required_keys = _required_config_keys_for_source(src)
+    missing_keys = [k for k in required_keys if not _is_onboarding_value_present(cfg.get(k, None))]
+    detail = "配置完整" if not missing_keys else f"缺失字段: {', '.join(missing_keys)}"
+    # TDX 支持“本地 vipdoc”与“网络镜像”两种形态，这里补充模式说明，避免新手误以为一定是本地库模式。
+    if src == "tdx" and not missing_keys:
+        raw_tdxdir = str(
+            os.environ.get("TDX_DIR", "")
+            or cfg.get("data_provider.tdxdir", "")
+            or cfg.get("data_provider.tdx_dir", "")
+            or ""
+        ).strip()
+        raw_host = str(cfg.get("data_provider.tdx_host", "") or "").strip()
+        raw_node_list = str(cfg.get("data_provider.tdx_node_list", "") or "").strip()
+        try:
+            raw_port = int(cfg.get("data_provider.tdx_port", 0) or 0)
+        except Exception:
+            raw_port = 0
+        has_local_vipdoc = bool(raw_tdxdir) and os.path.isdir(os.path.join(raw_tdxdir, "vipdoc"))
+        has_custom_network = bool(raw_node_list) or (bool(raw_host) and raw_port > 0)
+        if has_local_vipdoc:
+            detail = "已配置本地 TDX 目录（vipdoc）"
+        elif has_custom_network:
+            detail = "未配置本地 TDX 目录，当前将使用 TDX 网络节点模式"
+        else:
+            detail = "未配置 tdxdir，当前将使用内置默认 TDX 网络节点；若节点不可达会导致连通性失败"
+    return {
+        "ok": len(missing_keys) == 0,
+        "missing_keys": missing_keys,
+        "detail": detail,
+    }
+
+def _resolve_onboarding_connectivity_timeout_sec(source: str, cfg) -> int:
+    # 新手引导环境检查统一使用 120 秒上限，保证前后端等待口径一致。
+    return 120
 
 def _build_onboarding_data_source_guide(source: str, missing_keys: List[str], provider_error_sop: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
     # 按数据源类型生成“自备数据源”引导，避免新手只看到抽象报错而不知道下一步动作。
@@ -3351,6 +3607,12 @@ class WebhookTestRequest(BaseModel):
 class ConfigUpdateRequest(BaseModel):
     config: dict
 
+class DataSourceConnectivityTestRequest(BaseModel):
+    source: Optional[str] = None
+    stock_code: Optional[str] = None
+    auto_detect: bool = True
+    config: Optional[dict] = None
+
 class TushareConnectivityTestRequest(BaseModel):
     api_url: Optional[str] = None
     token: Optional[str] = None
@@ -3479,6 +3741,7 @@ class HistorySyncRunRequest(BaseModel):
     lookback_days: int = 10
     max_codes: int = 10000
     batch_size: int = 500
+    concurrency: int = 1
     dry_run: bool = False
     on_duplicate: str = "ignore"
     write_mode: Optional[str] = None
@@ -3496,6 +3759,7 @@ class HistorySyncScheduleRequest(BaseModel):
     intraday_mode: Optional[bool] = None
     max_codes: int = 10000
     batch_size: int = 500
+    concurrency: int = 1
     tables: Optional[list[str]] = None
     dry_run: bool = False
     on_duplicate: str = "ignore"
@@ -7212,6 +7476,17 @@ async def api_get_config():
         logger.error(f"/api/config failed: {e}", exc_info=True)
         return {"status": "error", "msg": str(e), "config": {}}
 
+@app.post("/api/config/test_data_source_connectivity")
+async def api_test_data_source_connectivity(req: DataSourceConnectivityTestRequest):
+    try:
+        cfg = _build_runtime_test_config(req.config)
+        source = str(req.source or cfg.get("data_provider.source", "default") or "default").strip().lower() or "default"
+        stock_code = str(req.stock_code or "").strip().upper() or "000001.SZ"
+        return _run_data_source_connectivity_check(source, cfg, stock_code, auto_detect=bool(req.auto_detect))
+    except Exception as e:
+        logger.error(f"/api/config/test_data_source_connectivity failed: {e}", exc_info=True)
+        return {"status": "error", "ok": False, "msg": str(e)}
+
 @app.post("/api/config/save")
 async def api_save_config(req: ConfigUpdateRequest):
     global config, cabinet_task, current_cabinet, current_provider_source
@@ -7239,39 +7514,17 @@ async def api_save_config(req: ConfigUpdateRequest):
 @app.post("/api/config/test_tushare_connectivity")
 async def api_test_tushare_connectivity(req: TushareConnectivityTestRequest):
     try:
-        cfg = ConfigLoader.reload()
-        raw_url = req.api_url
-        if raw_url is None:
-            raw_url = cfg.get("data_provider.tushare_api_url", "http://tushare.xyz")
-        api_url = str(raw_url or "").strip().strip("`'\" ").strip()
-        req_token = str(req.token or "").strip()
-        token = req_token if req_token else str(cfg.get("data_provider.tushare_token", "") or "").strip()
         stock_code = str(req.stock_code or "").strip().upper() or "000001.SZ"
-        if not api_url:
-            return {"status": "error", "msg": "tushare_api_url 不能为空"}
-        if not token:
-            return {"status": "error", "msg": "tushare_token 未配置（请在 private/config 配置后重试）"}
-
-        provider = TushareProvider(token=token)
-        provider._tushare_http_url = api_url
-        provider.set_token(token)
-        ok, detail = provider.check_connectivity(stock_code)
-        if ok:
-            return {
-                "status": "success",
-                "ok": True,
-                "msg": "Tushare 连通性校验通过",
-                "api_url": api_url,
-                "stock_code": stock_code,
-                "detail": str(detail or "ok")
+        cfg = _build_runtime_test_config({
+            "data_provider": {
+                "tushare_api_url": req.api_url,
+                "tushare_token": req.token,
             }
-        return {
-            "status": "error",
-            "ok": False,
-            "msg": str(detail or provider.last_error or "连通性校验失败"),
-            "api_url": api_url,
-            "stock_code": stock_code
-        }
+        })
+        result = _run_tushare_connectivity_check(cfg, stock_code)
+        if str(result.get("target", "") or "").strip():
+            result["api_url"] = result.get("target")
+        return result
     except Exception as e:
         logger.error(f"/api/config/test_tushare_connectivity failed: {e}", exc_info=True)
         return {"status": "error", "ok": False, "msg": str(e)}
@@ -7357,77 +7610,14 @@ def _detect_tdxdir_candidates(limit: int = 8) -> List[str]:
 @app.post("/api/config/test_tdx_connectivity")
 async def api_test_tdx_connectivity(req: TdxConnectivityTestRequest):
     try:
-        cfg = ConfigLoader.reload()
         stock_code = str(req.stock_code or "").strip().upper() or "000001.SZ"
-        cfg_tdxdir = str(cfg.get("data_provider.tdxdir", "") or cfg.get("data_provider.tdx_dir", "") or "").strip()
-        req_tdxdir = str(req.tdxdir or "").strip()
-        tdxdir = _normalize_tdxdir_path(req_tdxdir or cfg_tdxdir)
-        candidates = _detect_tdxdir_candidates(limit=8) if bool(req.auto_detect) else []
-        autodetected = False
-
-        if (not _is_valid_tdxdir(tdxdir)) and candidates:
-            tdxdir = candidates[0]
-            autodetected = True
-
-        if not _is_valid_tdxdir(tdxdir):
-            provider = TdxProvider(tdxdir=tdxdir)
-            ok, detail = provider.check_connectivity(stock_code)
-            mode_info = provider.describe_mode() if hasattr(provider, "describe_mode") else {}
-            if ok:
-                return {
-                    "status": "success",
-                    "ok": True,
-                    "msg": "TDX(Mootdx) 连通性校验通过（当前使用网络镜像模式）",
-                    "stock_code": stock_code,
-                    "tdxdir_used": "",
-                    "autodetected": autodetected,
-                    "candidates": candidates,
-                    "detail": str(detail or "ok"),
-                    "provider_mode": mode_info.get("provider_mode", "network_mirror"),
-                    "cache_dir": mode_info.get("cache_dir", ""),
-                    "has_vipdoc": bool(mode_info.get("has_vipdoc", False)),
-                }
-            return {
-                "status": "error",
-                "ok": False,
-                "msg": str(detail or provider.last_error or "未找到可用通达信数据目录（需包含 vipdoc），且网络镜像模式不可用"),
-                "stock_code": stock_code,
-                "tdxdir_used": "",
-                "candidates": candidates,
-                "provider_mode": mode_info.get("provider_mode", "network_mirror"),
-                "cache_dir": mode_info.get("cache_dir", ""),
-                "has_vipdoc": bool(mode_info.get("has_vipdoc", False)),
+        cfg = _build_runtime_test_config({
+            "data_provider": {
+                "tdxdir": req.tdxdir,
+                "tdx_dir": req.tdxdir,
             }
-
-        provider = TdxProvider(tdxdir=tdxdir)
-        ok, detail = provider.check_connectivity(stock_code)
-        mode_info = provider.describe_mode() if hasattr(provider, "describe_mode") else {}
-        if ok:
-            return {
-                "status": "success",
-                "ok": True,
-                "msg": "TDX(Mootdx) 连通性校验通过",
-                "stock_code": stock_code,
-                "tdxdir_used": tdxdir,
-                "autodetected": autodetected,
-                "candidates": candidates,
-                "detail": str(detail or "ok"),
-                "provider_mode": mode_info.get("provider_mode", "local_vipdoc"),
-                "cache_dir": mode_info.get("cache_dir", ""),
-                "has_vipdoc": bool(mode_info.get("has_vipdoc", True)),
-            }
-        return {
-            "status": "error",
-            "ok": False,
-            "msg": str(detail or provider.last_error or "连通性校验失败"),
-            "stock_code": stock_code,
-            "tdxdir_used": tdxdir,
-            "autodetected": autodetected,
-            "candidates": candidates,
-            "provider_mode": mode_info.get("provider_mode", "local_vipdoc"),
-            "cache_dir": mode_info.get("cache_dir", ""),
-            "has_vipdoc": bool(mode_info.get("has_vipdoc", True)),
-        }
+        })
+        return _run_tdx_connectivity_check(cfg, stock_code, auto_detect=bool(req.auto_detect))
     except Exception as e:
         logger.error(f"/api/config/test_tdx_connectivity failed: {e}", exc_info=True)
         return {"status": "error", "ok": False, "msg": str(e)}
@@ -9522,15 +9712,15 @@ async def api_onboarding_health_check(stock_code: str = "000001.SZ"):
         code = str(stock_code or "").strip().upper() or "000001.SZ"
         checks: List[Dict[str, Any]] = []
 
-        required_keys = _required_config_keys_for_source(src)
-        missing_keys = [k for k in required_keys if not _is_onboarding_value_present(cfg.get(k, None))]
-        provider_config_ok = len(missing_keys) == 0
+        provider_config_state = _describe_onboarding_provider_config(src, cfg)
+        missing_keys = list(provider_config_state.get("missing_keys") or [])
+        provider_config_ok = bool(provider_config_state.get("ok"))
         checks.append({
             "id": "provider_config",
             "title": "数据源关键配置",
             "ok": provider_config_ok,
             "severity": "error",
-            "detail": "配置完整" if provider_config_ok else f"缺失字段: {', '.join(missing_keys)}",
+            "detail": str(provider_config_state.get("detail") or ("配置完整" if provider_config_ok else f"缺失字段: {', '.join(missing_keys)}")),
             "missing_keys": missing_keys
         })
 
@@ -9539,14 +9729,15 @@ async def api_onboarding_health_check(stock_code: str = "000001.SZ"):
         provider_msg = "已跳过连通性检测（需先补齐配置）"
         if provider_config_ok:
             provider = _build_provider_by_source(src, cfg=cfg)
+            connectivity_timeout_sec = _resolve_onboarding_connectivity_timeout_sec(src, cfg)
             try:
                 provider_ok, provider_msg = await asyncio.wait_for(
                     asyncio.to_thread(_check_provider_connectivity_for_code, provider, src, code),
-                    timeout=12.0
+                    timeout=float(connectivity_timeout_sec)
                 )
             except asyncio.TimeoutError:
                 provider_ok = False
-                provider_msg = "连通性检测超时（12s），请检查网络/数据源服务状态"
+                provider_msg = f"连通性检测超时（{connectivity_timeout_sec}s），请检查网络/数据源服务状态"
         if not provider_ok:
             # 连通性失败时返回错误知识库映射，便于前端直接展示固定SOP。
             provider_sop = _match_onboarding_error_sop(provider_msg, src)
@@ -10055,9 +10246,11 @@ async def api_webhook_audit_latest(limit: int = 200):
 
 def _history_sync_payload_from_request(req: HistorySyncRunRequest):
     cfg = ConfigLoader.reload()
+    # 手动触发时也统一把旧别名折叠成 dat_day，避免展示和落盘再次回到 dat_days。
+    normalized_tables = normalize_history_sync_tables(req.tables)
     return {
         "codes": req.codes,
-        "tables": req.tables,
+        "tables": normalized_tables,
         "start_time": req.start_time,
         "end_time": req.end_time,
         "time_mode": str(req.time_mode or cfg.get("history_sync.time_mode", "lookback") or "lookback"),
@@ -10068,6 +10261,8 @@ def _history_sync_payload_from_request(req: HistorySyncRunRequest):
         "lookback_days": max(1, int(req.lookback_days or 1)),
         "max_codes": max(1, int(req.max_codes or 1)),
         "batch_size": max(1, int(req.batch_size or 1)),
+        # 并发数统一由前台/配置中心透传，后续在同步服务内再做写入目标兼容降级。
+        "concurrency": max(1, int(req.concurrency or 1)),
         "dry_run": bool(req.dry_run),
         "on_duplicate": str(req.on_duplicate or "ignore"),
         "write_mode": str(req.write_mode or cfg.get("history_sync.write_mode", "api") or "api"),
@@ -10114,8 +10309,31 @@ def _history_sync_period_label(payload: dict):
         return "定时执行"
     return "手动执行"
 
-def _history_sync_data_source_label(payload: dict):
-    # 当前增量同步统一从 Tushare 拉取，目标端根据写入模式动态展示。
+def _history_sync_source_name(source: str) -> str:
+    # 统一格式化增量同步中的数据源名称，避免通知文案与配置中心显示不一致。
+    name_map = {
+        "default": "默认API",
+        "akshare": "AkShare",
+        "tushare": "Tushare",
+        "mysql": "MySQL",
+        "postgresql": "PostgreSQL",
+        "duckdb": "DuckDB",
+        "tdx": "TDX",
+    }
+    src = str(source or "default").strip().lower() or "default"
+    return name_map.get(src, src.upper() if src else "默认API")
+
+def _history_sync_fetch_source_label(payload: dict, report: dict):
+    # 拉取源以本次实际执行报告为准，payload 只作为兼容兜底。
+    report_data = report if isinstance(report, dict) else {}
+    payload_data = payload if isinstance(payload, dict) else {}
+    provider_source = str(
+        report_data.get("provider_source", "") or payload_data.get("provider_source", "") or "default"
+    ).strip().lower()
+    return _history_sync_source_name(provider_source)
+
+def _history_sync_write_target_label(payload: dict):
+    # 写入目标根据增量同步自身写入模式决定，避免与“主数据源”概念混淆。
     data = payload if isinstance(payload, dict) else {}
     write_mode = str(data.get("write_mode", "api") or "api").strip().lower()
     if write_mode == "direct_db":
@@ -10125,8 +10343,8 @@ def _history_sync_data_source_label(payload: dict):
             "duckdb": "DuckDB",
         }
         direct_db_source = str(data.get("direct_db_source", "mysql") or "mysql").strip().lower()
-        return f"Tushare -> {source_map.get(direct_db_source, direct_db_source or 'DirectDB')}"
-    return "Tushare -> API"
+        return source_map.get(direct_db_source, direct_db_source or "DirectDB")
+    return "API"
 
 def _build_history_sync_completion_notice(payload: dict, result: dict):
     # 统一构建增量同步收口通知，保证手动执行与定时任务展示一致。
@@ -10150,7 +10368,8 @@ def _build_history_sync_completion_notice(payload: dict, result: dict):
     lines = [
         title,
         f"状态: {status_map.get(status, status or '--')}",
-        f"数据源: {_history_sync_data_source_label(data)}",
+        f"拉取源: {_history_sync_fetch_source_label(data, report)}",
+        f"写入目标: {_history_sync_write_target_label(data)}",
         f"开始时间: {started_at or '--'}",
         f"结束时间: {finished_at or '--'}",
         f"总耗时: {duration_text}",
@@ -10168,7 +10387,16 @@ def _build_history_sync_completion_notice(payload: dict, result: dict):
 
 async def _run_history_sync_once(payload: dict):
     result = await asyncio.to_thread(history_sync_service.run_sync, payload)
-    logger.info(f"history sync finished: {result.get('status')}")
+    # 同步完成后补充输出失败原因，避免日志里只有 error 状态但看不到具体异常。
+    status = str(result.get("status", "") or "").strip().lower()
+    report = result.get("report", {}) if isinstance(result.get("report", {}), dict) else {}
+    error_text = str(result.get("msg", "") or report.get("error", "") or "").strip()
+    if status == "success":
+        logger.info("history sync finished: success")
+    elif error_text:
+        logger.error("history sync finished: %s, reason=%s", status or "unknown", error_text)
+    else:
+        logger.warning("history sync finished: %s", status or "unknown")
     # 同步收口后统一发送通知，覆盖手动执行与定时执行两条入口。
     if str(result.get("status", "") or "").strip().lower() in {"success", "stopped", "error"}:
         try:
@@ -10207,9 +10435,10 @@ async def _history_sync_scheduler_loop():
             # 使用小步 sleep，保证关闭调度或配置刷新时可快速响应。
             await asyncio.sleep(min(5.0, max(0.2, history_sync_scheduler_next_run_ts - now_ts)))
             continue
+        # 调度器运行时对历史配置做一次规范化，保证旧配置不改文件也按 dat_day 执行。
         payload = {
             "codes": cfg.get("history_sync.codes", None),
-            "tables": cfg.get("history_sync.tables", list(DEFAULT_SYNC_TABLES)),
+            "tables": normalize_history_sync_tables(cfg.get("history_sync.tables", list(DEFAULT_SYNC_TABLES))),
             "start_time": cfg.get("history_sync.start_time", None),
             "end_time": cfg.get("history_sync.end_time", None),
             "time_mode": str(cfg.get("history_sync.time_mode", "lookback") or "lookback"),
@@ -10393,7 +10622,10 @@ async def api_history_sync_scheduler_start(req: HistorySyncScheduleRequest):
     )
     cfg.set("history_sync.max_codes", max(1, int(req.max_codes or 1)))
     cfg.set("history_sync.batch_size", max(1, int(req.batch_size or 1)))
-    cfg.set("history_sync.tables", req.tables if req.tables else list(DEFAULT_SYNC_TABLES))
+    # 定时同步复用同一套并发配置，前台调整后立即持久化。
+    cfg.set("history_sync.concurrency", max(1, int(req.concurrency or 1)))
+    # 保存调度配置时直接写入规范名 dat_day，彻底消除默认配置里的歧义。
+    cfg.set("history_sync.tables", normalize_history_sync_tables(req.tables))
     cfg.set("history_sync.dry_run", bool(req.dry_run))
     cfg.set("history_sync.on_duplicate", str(req.on_duplicate or "ignore"))
     cfg.set("history_sync.write_mode", str(req.write_mode or "api"))

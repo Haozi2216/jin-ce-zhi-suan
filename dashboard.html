@@ -4289,11 +4289,28 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
 
         async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 20000) {
             const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), Math.max(1000, Number(timeoutMs || 20000)));
+            const resolvedTimeoutMs = Math.max(1000, Number(timeoutMs || 20000));
+            let timeoutTriggered = false;
+            // 统一把超时中止标记下来，便于后续把浏览器原始 AbortError 翻译成可读提示。
+            const timer = setTimeout(() => {
+                timeoutTriggered = true;
+                try {
+                    controller.abort("timeout");
+                } catch (_) {
+                    controller.abort();
+                }
+            }, resolvedTimeoutMs);
             try {
                 const res = await fetch(url, { ...options, signal: controller.signal });
                 const data = await res.json();
                 return { res, data };
+            } catch (e) {
+                // 某些浏览器会直接抛出 “signal is aborted without reason”，这里统一转换成稳定文案。
+                if (String(e?.name || "") === "AbortError") {
+                    const timeoutSeconds = Math.max(1, Math.round(resolvedTimeoutMs / 1000));
+                    throw new Error(timeoutTriggered ? `请求超时（${timeoutSeconds}s），请稍后重试` : "请求已取消，请稍后重试");
+                }
+                throw e;
             } finally {
                 clearTimeout(timer);
             }
@@ -6720,6 +6737,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     { path: 'history_sync.scheduler_start_time', label: '定时开启时间', type: 'text', placeholder: '例如：09:30', desc: '格式：HH:MM（24小时制），定时同步每日从该时间开始触发' },
                     { path: 'history_sync.time_mode', label: '时间模式', type: 'select', options: [{ value: 'lookback', label: 'lookback（最近N天）' }, { value: 'custom', label: 'custom（自定义区间）' }] },
                     { path: 'history_sync.lookback_days', label: '默认回看天数', type: 'number', min: 1, max: 3650, step: 1, slider: true },
+                    { path: 'history_sync.concurrency', label: '同步任务并发数', type: 'number', min: 1, max: 16, step: 1, slider: true, desc: '按股票任务维度并发，覆盖拉取源数据、缺失判定和写入；不是仅写入并发。DuckDB 直连写入时会自动回退为 1，避免文件锁冲突' },
                     { path: 'history_sync.custom_start_time', label: '自定义开始时间', type: 'text', placeholder: '例如：2026-03-01 09:30:00', desc: '格式：YYYY-MM-DD HH:MM:SS；time_mode=custom时生效' },
                     { path: 'history_sync.custom_end_time', label: '自定义结束时间', type: 'text', placeholder: '例如：2026-03-31 15:00:00', desc: '格式：YYYY-MM-DD HH:MM:SS；time_mode=custom时生效' },
                     { path: 'history_sync.session_only', label: '仅交易时段(09:30-15:00)', type: 'boolean' },
@@ -7081,6 +7099,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             setText('cfg-gong-fallback', getByPath(cfg, 'data_provider.enable_fallback', false) ? 'ON' : 'OFF');
             setMetricText('justice-dd-limit', fmtPct(drawdownPct), drawdownPct * 100);
             renderRiskLevelByConfig(cfg);
+            updateHistorySyncRiskHints(cfg);
         }
 
         async function syncBoardConfig() {
@@ -7567,6 +7586,115 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             });
         }
 
+        // 根据当前主数据源返回对应的测试按钮元信息，保证向导模式与专家模式展示一致。
+        function getSelectedDataSourceConnectivityMeta(cfg, sourceOverride = '') {
+            const source = String(sourceOverride || getByPath(cfg || {}, 'data_provider.source', 'default') || 'default').trim().toLowerCase() || 'default';
+            if (source === 'tushare') {
+                return {
+                    source,
+                    iconClass: 'fa-solid fa-plug-circle-check',
+                    buttonClass: 'bg-indigo-700 hover:bg-indigo-600 text-white px-3 py-1.5 rounded text-xs border border-indigo-500',
+                    label: '测试Tushare连通性',
+                    busyLabel: '连通性校验中...',
+                    hint: '测试 data_provider.tushare_api_url / tushare_token 配置域',
+                    pendingHint: '正在测试 Tushare 接口与令牌连通性...',
+                    successPrefix: 'Tushare连通成功',
+                    failurePrefix: 'Tushare连通失败'
+                };
+            }
+            if (source === 'tdx') {
+                return {
+                    source,
+                    iconClass: 'fa-solid fa-magnifying-glass',
+                    buttonClass: 'bg-cyan-700 hover:bg-cyan-600 text-white px-3 py-1.5 rounded text-xs border border-cyan-500',
+                    label: '探测TDX模式并测试',
+                    busyLabel: '探测并校验中...',
+                    hint: 'Windows 可自动探测 vipdoc；无本地目录时自动校验 mootdx 网络镜像模式',
+                    pendingHint: '正在探测 TDX 本地目录或网络镜像模式并校验连通性...',
+                    successPrefix: 'TDX连通成功',
+                    failurePrefix: 'TDX连通失败'
+                };
+            }
+            if (source === 'duckdb') {
+                return {
+                    source,
+                    iconClass: 'fa-solid fa-database',
+                    buttonClass: 'bg-amber-700 hover:bg-amber-600 text-white px-3 py-1.5 rounded text-xs border border-amber-500',
+                    label: '测试DuckDB连通性',
+                    busyLabel: 'DuckDB校验中...',
+                    hint: '测试 data_provider.duckdb_path 与表名配置',
+                    pendingHint: '正在测试 DuckDB 文件与表配置...',
+                    successPrefix: 'DuckDB连通成功',
+                    failurePrefix: 'DuckDB连通失败'
+                };
+            }
+            if (source === 'mysql') {
+                return {
+                    source,
+                    iconClass: 'fa-solid fa-database',
+                    buttonClass: 'bg-emerald-700 hover:bg-emerald-600 text-white px-3 py-1.5 rounded text-xs border border-emerald-500',
+                    label: '测试MySQL连通性',
+                    busyLabel: 'MySQL校验中...',
+                    hint: '测试 data_provider.mysql_* 与分钟/日线表配置',
+                    pendingHint: '正在测试 MySQL 连接与表可用性...',
+                    successPrefix: 'MySQL连通成功',
+                    failurePrefix: 'MySQL连通失败'
+                };
+            }
+            if (source === 'postgresql') {
+                return {
+                    source,
+                    iconClass: 'fa-solid fa-database',
+                    buttonClass: 'bg-sky-700 hover:bg-sky-600 text-white px-3 py-1.5 rounded text-xs border border-sky-500',
+                    label: '测试PostgreSQL连通性',
+                    busyLabel: 'PostgreSQL校验中...',
+                    hint: '测试 data_provider.postgres_*、schema 与表配置',
+                    pendingHint: '正在测试 PostgreSQL 连接与表可用性...',
+                    successPrefix: 'PostgreSQL连通成功',
+                    failurePrefix: 'PostgreSQL连通失败'
+                };
+            }
+            if (source === 'akshare') {
+                return {
+                    source,
+                    iconClass: 'fa-solid fa-satellite-dish',
+                    buttonClass: 'bg-green-700 hover:bg-green-600 text-white px-3 py-1.5 rounded text-xs border border-green-500',
+                    label: '测试AkShare连通性',
+                    busyLabel: 'AkShare校验中...',
+                    hint: '测试 AkShare 公共行情接口是否可读',
+                    pendingHint: '正在测试 AkShare 公共行情接口...',
+                    successPrefix: 'AkShare连通成功',
+                    failurePrefix: 'AkShare连通失败'
+                };
+            }
+            return {
+                source: 'default',
+                iconClass: 'fa-solid fa-cloud-arrow-down',
+                buttonClass: 'bg-blue-700 hover:bg-blue-600 text-white px-3 py-1.5 rounded text-xs border border-blue-500',
+                label: '测试默认API连通性',
+                busyLabel: '默认API校验中...',
+                hint: '测试 data_provider.default_api_url / default_api_key 配置域',
+                pendingHint: '正在测试默认 API 数据源连通性...',
+                successPrefix: '默认API连通成功',
+                failurePrefix: '默认API连通失败'
+            };
+        }
+
+        // 统一生成“数据源连通性检查”区域，避免向导模式与专家模式出现按钮集合漂移。
+        function buildDataSourceConnectivityOpsMarkup(cfg) {
+            const meta = getSelectedDataSourceConnectivityMeta(cfg);
+            return `
+                <div class="text-[11px] text-cyan-300 font-bold">数据源连通性检查</div>
+                <div class="flex flex-wrap items-center gap-2">
+                    <button id="config-data-source-test-btn" onclick="testSelectedDataSourceConnectivity()" class="${meta.buttonClass}">
+                        <i id="config-data-source-test-icon" class="${meta.iconClass}"></i>
+                        <span id="config-data-source-test-label">${meta.label}</span>
+                    </button>
+                    <span id="config-data-source-test-status" class="text-[10px] text-slate-400">${meta.hint}</span>
+                </div>
+            `;
+        }
+
         function renderSectionBlock(title, subtitle, fields, cfg, sectionMeta = null) {
             const block = document.createElement('div');
             block.className = 'border border-slate-700 rounded-lg overflow-hidden';
@@ -7584,20 +7712,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 ops.className = 'mt-2 border border-cyan-800/60 rounded p-3 bg-slate-950/50 space-y-2';
                 ops.innerHTML = `
                     <div class="text-[11px] text-cyan-300 font-bold">数据同步操作</div>
-                    <div class="flex flex-wrap items-center gap-2">
-                        <button id="config-tushare-test-btn" onclick="testTushareConnectivity()" class="bg-indigo-700 hover:bg-indigo-600 text-white px-3 py-1.5 rounded text-xs border border-indigo-500">
-                            <i id="config-tushare-test-icon" class="fa-solid fa-plug-circle-check"></i>
-                            <span id="config-tushare-test-label">测试Tushare连通性</span>
-                        </button>
-                        <span id="config-tushare-test-status" class="text-[10px] text-slate-400">填写 Tushare 接口地址和令牌后可测试</span>
-                    </div>
-                    <div class="flex flex-wrap items-center gap-2">
-                        <button id="config-tdx-test-btn" onclick="testTdxConnectivity()" class="bg-cyan-700 hover:bg-cyan-600 text-white px-3 py-1.5 rounded text-xs border border-cyan-500">
-                            <i id="config-tdx-test-icon" class="fa-solid fa-magnifying-glass"></i>
-                            <span id="config-tdx-test-label">探测TDX模式并测试</span>
-                        </button>
-                        <span id="config-tdx-test-status" class="text-[10px] text-slate-400">Windows 可自动探测 vipdoc；mac/无 vipdoc 时自动校验 mootdx 网络镜像模式</span>
-                    </div>
+                    ${buildDataSourceConnectivityOpsMarkup(cfg)}
                     <div class="flex flex-wrap items-center gap-2">
                         <button id="config-llm-strategy-test-btn" onclick="testStrategyManagerLlmConnectivity()" class="bg-violet-700 hover:bg-violet-600 text-white px-3 py-1.5 rounded text-xs border border-violet-500">
                             <i id="config-llm-strategy-test-icon" class="fa-solid fa-robot"></i>
@@ -7638,6 +7753,9 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                         </button>
                     </div>
                     <div class="text-[10px] text-slate-400">同步范围由 history_sync 配置项控制；定时同步每日从 history_sync.scheduler_start_time 开始执行。</div>
+                    <div id="history-sync-risk-hints" class="text-[10px] text-amber-200 bg-amber-950/30 border border-amber-800/40 rounded p-2 leading-5">
+                        正在读取风险提示...
+                    </div>
                 `;
                 body.appendChild(ops);
             } else if (String(title || '') === '通告推送') {
@@ -7718,30 +7836,14 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
         }
 
         // 在向导模式下，为关键步骤补充“连通性检查”操作区，复用已有测试函数。
-        function buildWizardConnectivityOps(stepId) {
+        function buildWizardConnectivityOps(stepId, cfg = null) {
             const sid = String(stepId || '').trim();
             if (!sid) return null;
             const ops = document.createElement('div');
             ops.className = 'border border-cyan-800/60 rounded p-3 bg-slate-950/50 space-y-2';
             if (sid === 'data-source') {
-                // 数据源向导步骤：提供数据源连通性入口（Tushare / TDX）。
-                ops.innerHTML = `
-                    <div class="text-[11px] text-cyan-300 font-bold">数据源连通性检查</div>
-                    <div class="flex flex-wrap items-center gap-2">
-                        <button id="config-tushare-test-btn" onclick="testTushareConnectivity()" class="bg-indigo-700 hover:bg-indigo-600 text-white px-3 py-1.5 rounded text-xs border border-indigo-500">
-                            <i id="config-tushare-test-icon" class="fa-solid fa-plug-circle-check"></i>
-                            <span id="config-tushare-test-label">测试Tushare连通性</span>
-                        </button>
-                        <span id="config-tushare-test-status" class="text-[10px] text-slate-400">填写 Tushare 接口地址和令牌后可测试</span>
-                    </div>
-                    <div class="flex flex-wrap items-center gap-2">
-                        <button id="config-tdx-test-btn" onclick="testTdxConnectivity()" class="bg-cyan-700 hover:bg-cyan-600 text-white px-3 py-1.5 rounded text-xs border border-cyan-500">
-                            <i id="config-tdx-test-icon" class="fa-solid fa-magnifying-glass"></i>
-                            <span id="config-tdx-test-label">探测TDX模式并测试</span>
-                        </button>
-                        <span id="config-tdx-test-status" class="text-[10px] text-slate-400">Windows 可自动探测 vipdoc；mac/无 vipdoc 时自动校验 mootdx 网络镜像模式</span>
-                    </div>
-                `;
+                // 数据源向导步骤只展示“当前所选数据源”的对应测试按钮，避免新手看见无关入口。
+                ops.innerHTML = buildDataSourceConnectivityOpsMarkup(cfg || configDraft || {});
                 return ops;
             }
             return null;
@@ -7834,7 +7936,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     body.appendChild(sectionWrap);
                 });
                 // 仅在向导关键步骤挂连通性检查区，避免干扰其他步骤。
-                const connectivityOps = buildWizardConnectivityOps(step.id);
+                const connectivityOps = buildWizardConnectivityOps(step.id, cfg);
                 if (connectivityOps) body.appendChild(connectivityOps);
                 block.appendChild(body);
                 container.appendChild(block);
@@ -10284,6 +10386,8 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
 
         // 新手检查结果缓存：用于“复制失败详情”按索引读取原始检查项。
         let onboardingHealthChecksCache = [];
+        // 缓存最近一次环境检查对应的数据源，供“修复数据源配置”按钮按实际来源定位字段。
+        let onboardingProviderSourceCache = '';
 
         // 将文本安全转换为 HTML，避免报错内容包含特殊字符时破坏页面结构。
         function escapeOnboardingHtml(raw) {
@@ -10428,11 +10532,57 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             }
         }
 
-        // 快速打开配置中心并定位默认数据源字段，降低新手找配置的成本。
+        // 按当前数据源生成快速修复入口，避免前端把所有失败都错误引导到 DuckDB。
+        function getOnboardingSourceQuickFixMeta(source) {
+            const src = String(source || onboardingProviderSourceCache || '').trim().toLowerCase();
+            if (src === 'tdx') {
+                return {
+                    source: 'tdx',
+                    locatePaths: 'data_provider.source|data_provider.tdxdir|data_provider.tdx_host|data_provider.tdx_port|data_provider.tdx_node_list',
+                    guideText: '1) 点击“修复数据源配置”确认 source=tdx；2) Windows 优先配置 tdxdir（vipdoc 上级目录）；3) 若走网络节点，检查 tdx_host/tdx_port 或 tdx_node_list；4) 保存后自动重试环境检查。'
+                };
+            }
+            if (src === 'tushare') {
+                return {
+                    source: 'tushare',
+                    locatePaths: 'data_provider.source|data_provider.tushare_token',
+                    guideText: '1) 点击“修复数据源配置”确认 source=tushare；2) 检查 tushare_token 是否已配置；3) 保存后自动重试环境检查。'
+                };
+            }
+            if (src === 'mysql') {
+                return {
+                    source: 'mysql',
+                    locatePaths: 'data_provider.source|data_provider.mysql_host|data_provider.mysql_port|data_provider.mysql_user|data_provider.mysql_password|data_provider.mysql_database|data_provider.mysql_table_day|data_provider.mysql_table_1min',
+                    guideText: '1) 点击“修复数据源配置”确认 source=mysql；2) 检查主机、端口、账号、库名与表名；3) 保存后自动重试环境检查。'
+                };
+            }
+            if (src === 'postgresql') {
+                return {
+                    source: 'postgresql',
+                    locatePaths: 'data_provider.source|data_provider.postgres_host|data_provider.postgres_port|data_provider.postgres_user|data_provider.postgres_password|data_provider.postgres_database|data_provider.postgres_schema|data_provider.postgres_table_day|data_provider.postgres_table_1min',
+                    guideText: '1) 点击“修复数据源配置”确认 source=postgresql；2) 检查主机、端口、账号、库名、schema 与表名；3) 保存后自动重试环境检查。'
+                };
+            }
+            if (src === 'default') {
+                return {
+                    source: 'default',
+                    locatePaths: 'data_provider.source|data_provider.default_api_url|data_provider.default_api_key',
+                    guideText: '1) 点击“修复数据源配置”确认 source=default；2) 检查 default_api_url 与 default_api_key；3) 保存后自动重试环境检查。'
+                };
+            }
+            return {
+                source: 'duckdb',
+                locatePaths: 'data_provider.source|data_provider.duckdb_path|data_provider.duckdb_table_day|data_provider.duckdb_table_1min',
+                guideText: '1) 点击“修复数据源配置”确认 source=duckdb 且 duckdb_path 正确；2) 核对 DuckDB 表名；3) 保存后自动重试环境检查。'
+            };
+        }
+
+        // 快速打开配置中心并定位当前数据源字段，降低新手找配置的成本。
         function openOnboardingDataSourceQuickFix() {
+            const quickFix = getOnboardingSourceQuickFixMeta();
             // 从“修复数据源配置”入口进入配置中心时，自动挂起重试队列。
             queueOnboardingAutoRetry('数据源配置已修改，自动重试环境检查');
-            onboardingLocateConfigPaths('data_provider.source|data_provider.duckdb_path|data_provider.duckdb_table_day|data_provider.duckdb_table_1min');
+            onboardingLocateConfigPaths(String(quickFix?.locatePaths || 'data_provider.source'));
             trackWorkflowAction('onboarding_open_data_source_quick_fix', {});
         }
 
@@ -10547,6 +10697,8 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             const ready = !!data?.ready;
             // 缓存检查结果，供“复制失败详情”按钮按索引读取。
             onboardingHealthChecksCache = checks.slice();
+            // 缓存当前实际检测的数据源，保证后续快速修复入口与建议文案按真实来源展示。
+            onboardingProviderSourceCache = String(data?.provider_source || '').trim().toLowerCase();
             summary.className = ready
                 ? 'text-xs text-emerald-300'
                 : 'text-xs text-amber-300';
@@ -10606,9 +10758,10 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             }).join('');
             // 在“建议区”顶部追加新手导向卡片，告诉用户先做什么、后做什么。
             if (!ready && hasDataSourceFailure) {
+                const quickFix = getOnboardingSourceQuickFixMeta(onboardingProviderSourceCache);
                 const quickFixCard = `<div class="rounded border border-amber-700/50 bg-amber-900/10 px-3 py-2 text-xs mb-2">
                     <div class="font-semibold text-amber-300">数据源失败快速修复（推荐顺序）</div>
-                    <div class="mt-1 text-slate-200">1) 点击“修复数据源配置”确认 source=duckdb 且 duckdb_path 正确；2) 保存后系统自动重试环境检查；3) 通过后直接“一键开始首单（默认策略05）”。</div>
+                    <div class="mt-1 text-slate-200">${escapeOnboardingHtml(String(quickFix?.guideText || '1) 点击“修复数据源配置”；2) 保存后自动重试环境检查；3) 通过后直接“一键开始首单（默认策略05）”。'))}</div>
                     <div class="mt-2 flex items-center gap-2 flex-wrap">
                         <button type="button" onclick="openOnboardingDataSourceQuickFix()" class="bg-purple-700 hover:bg-purple-600 text-white px-2 py-1 rounded text-[11px] border border-purple-500">修复数据源配置</button>
                         <button type="button" onclick="runOnboardingHealthCheck()" class="bg-cyan-700 hover:bg-cyan-600 text-white px-2 py-1 rounded text-[11px] border border-cyan-500">立即重试</button>
@@ -10664,13 +10817,26 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
         async function runOnboardingHealthCheck() {
             const btn = document.getElementById('onboarding-check-btn');
             const summary = document.getElementById('onboarding-run-summary');
+            let progressTimer = null;
+            let progressStartTs = 0;
+            const updateProgressText = (timeoutMs, prefix = '检查中...') => {
+                if (!summary) return;
+                const elapsedSec = Math.max(0, Math.floor((Date.now() - progressStartTs) / 1000));
+                const timeoutSec = Math.max(1, Math.round(Number(timeoutMs || 0) / 1000));
+                summary.innerText = `${String(prefix || '检查中...')}（已用 ${elapsedSec}s / 最长等待 ${timeoutSec}s）`;
+            };
             if (btn) btn.disabled = true;
             if (summary) summary.innerText = '检查中...';
             try {
                 const switched = await ensureOnboardingDefaultDuckdb();
-                if (switched && summary) summary.innerText = '已切换默认数据源为 duckdb，继续检查中...';
+                const progressPrefix = switched ? '已切换默认数据源为 duckdb，继续检查中...' : '检查中...';
                 const stock = normalizeCode(document.getElementById('stock-search-input')?.value || '600036.SH');
-                const { res, data } = await fetchJsonWithTimeout(`/api/onboarding/health_check?stock_code=${encodeURIComponent(stock)}`, {}, 15000);
+                const timeoutMs = await resolveOnboardingHealthCheckTimeoutMs();
+                // 环境检查执行期间每秒刷新一次耗时，避免用户只能看到静态“等待中”。
+                progressStartTs = Date.now();
+                updateProgressText(timeoutMs, progressPrefix);
+                progressTimer = setInterval(() => updateProgressText(timeoutMs, progressPrefix), 1000);
+                const { res, data } = await fetchJsonWithTimeout(`/api/onboarding/health_check?stock_code=${encodeURIComponent(stock)}`, {}, timeoutMs);
                 if (!res.ok || String(data?.status || '') !== 'success') {
                     throw new Error(data?.msg || `health_check failed (${res.status})`);
                 }
@@ -10678,12 +10844,19 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 logMessage('SYSTEM', data?.ready ? '新手环境检查通过，可直接回测' : '新手环境检查未通过，请按建议修复', data?.ready ? 'success' : 'warning');
                 trackWorkflowAction('run_onboarding_health_check', { ready: !!data?.ready, provider: data?.provider_source || '' });
             } catch (e) {
+                const msg = String(e?.message || e || '未知错误');
                 if (summary) summary.className = 'text-xs text-rose-300';
-                if (summary) summary.innerText = `检查失败: ${e}`;
-                logMessage('SYSTEM', `新手环境检查失败: ${e}`, 'danger');
+                if (summary) summary.innerText = `检查失败: ${msg}`;
+                logMessage('SYSTEM', `新手环境检查失败: ${msg}`, 'danger');
             } finally {
+                if (progressTimer) clearInterval(progressTimer);
                 if (btn) btn.disabled = false;
             }
+        }
+
+        // 新手引导前端统一等待 120 秒，避免慢数据源在浏览器侧被提前中断。
+        async function resolveOnboardingHealthCheckTimeoutMs() {
+            return 120000;
         }
 
         // 主线快捷动作：统一把“选策略/配参数/回测/进阶”串成低学习成本入口。
@@ -12634,36 +12807,35 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             }
         }
 
-        async function testTushareConnectivity() {
-            const btn = document.getElementById('config-tushare-test-btn');
-            const icon = document.getElementById('config-tushare-test-icon');
-            const label = document.getElementById('config-tushare-test-label');
-            const status = document.getElementById('config-tushare-test-status');
+        // 按当前选中的主数据源执行连通性测试，向导模式与专家模式统一复用这一条链路。
+        async function testSelectedDataSourceConnectivity(sourceOverride = '') {
+            const btn = document.getElementById('config-data-source-test-btn');
+            const icon = document.getElementById('config-data-source-test-icon');
+            const label = document.getElementById('config-data-source-test-label');
+            const status = document.getElementById('config-data-source-test-status');
             const setStatus = (text, level = 'info') => {
                 if (!status) return;
                 status.innerText = String(text || '');
                 status.className = `text-[10px] ${level === 'ok' ? 'text-emerald-300' : (level === 'error' ? 'text-rose-300' : 'text-slate-400')}`;
             };
+            const parsed = collectConfigFromForm();
+            const meta = getSelectedDataSourceConnectivityMeta(parsed, sourceOverride);
+            const originIconClass = String(meta.iconClass || 'fa-solid fa-plug-circle-check');
+            const originLabel = String(meta.label || '测试数据源连通性');
             try {
                 if (btn) btn.disabled = true;
                 if (icon) icon.className = 'fa-solid fa-spinner fa-spin';
-                if (label) label.innerText = '连通性校验中...';
-                setStatus('正在测试连接，请稍候...', 'info');
-                const parsed = collectConfigFromForm();
-                const apiUrl = String(getByPath(parsed, 'data_provider.tushare_api_url', '') || '').trim();
-                const token = String(getByPath(parsed, 'data_provider.tushare_token', '') || '').trim();
+                if (label) label.innerText = String(meta.busyLabel || '连通性校验中...');
+                setStatus(String(meta.pendingHint || '正在测试连接，请稍候...'), 'info');
                 const targets = Array.isArray(getByPath(parsed, 'targets', [])) ? getByPath(parsed, 'targets', []) : [];
                 const stockCode = String((targets[0] || '000001.SZ')).trim().toUpperCase();
-                if (!apiUrl) throw new Error('请先填写 Tushare 接口地址');
                 const payload = {
-                    api_url: apiUrl,
-                    stock_code: stockCode || '000001.SZ'
+                    source: String(meta.source || 'default'),
+                    stock_code: stockCode || '000001.SZ',
+                    auto_detect: true,
+                    config: parsed
                 };
-                // Secret fields may be masked in UI; let backend read merged config (private > public).
-                if (token && token !== '********') {
-                    payload.token = token;
-                }
-                const res = await fetch('/api/config/test_tushare_connectivity', {
+                const res = await fetch('/api/config/test_data_source_connectivity', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
@@ -12672,76 +12844,38 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 if (!res.ok || data.status !== 'success') {
                     throw new Error(data.msg || '连通性校验失败');
                 }
-                const okMsg = `连通成功：${String(data.stock_code || stockCode)} @ ${String(data.api_url || apiUrl)}`;
+                // TDX 自动探测到有效目录时，顺手回填到表单，方便用户直接保存。
+                if (String(meta.source || '') === 'tdx') {
+                    const usedPath = String(data?.tdxdir_used || '').trim();
+                    if (usedPath) {
+                        const input = document.querySelector('input[data-path="data_provider.tdxdir"]');
+                        if (input) input.value = usedPath;
+                    }
+                }
+                // 成功信息尽量带上目标地址/路径，方便用户确认正在测试哪一套配置。
+                const targetText = String(data?.target || '').trim();
+                const okMsg = `${String(meta.successPrefix || '连通成功')}：${String(data.stock_code || stockCode)}${targetText ? ` · ${targetText}` : ''}`;
                 setStatus(okMsg, 'ok');
                 logMessage('SYSTEM', okMsg, 'success');
             } catch (e) {
-                const errMsg = `连通失败：${String(e)}`;
+                const errMsg = `${String(meta.failurePrefix || '连通失败')}：${String(e?.message || e || '未知错误')}`;
                 setStatus(errMsg, 'error');
                 logMessage('SYSTEM', errMsg, 'danger');
             } finally {
                 if (btn) btn.disabled = false;
-                if (icon) icon.className = 'fa-solid fa-plug-circle-check';
-                if (label) label.innerText = '测试Tushare连通性';
+                if (icon) icon.className = originIconClass;
+                if (label) label.innerText = originLabel;
             }
         }
 
+        // 兼容旧入口：若外部仍直接调用 Tushare 测试，转发到统一数据源测试逻辑。
+        async function testTushareConnectivity() {
+            return testSelectedDataSourceConnectivity('tushare');
+        }
+
+        // 兼容旧入口：若外部仍直接调用 TDX 测试，转发到统一数据源测试逻辑。
         async function testTdxConnectivity() {
-            const btn = document.getElementById('config-tdx-test-btn');
-            const icon = document.getElementById('config-tdx-test-icon');
-            const label = document.getElementById('config-tdx-test-label');
-            const status = document.getElementById('config-tdx-test-status');
-            const setStatus = (text, level = 'info') => {
-                if (!status) return;
-                status.innerText = String(text || '');
-                status.className = `text-[10px] ${level === 'ok' ? 'text-emerald-300' : (level === 'error' ? 'text-rose-300' : 'text-slate-400')}`;
-            };
-            try {
-                if (btn) btn.disabled = true;
-                if (icon) icon.className = 'fa-solid fa-spinner fa-spin';
-                if (label) label.innerText = '探测并校验中...';
-                setStatus('正在探测 TDX 本地目录或网络镜像模式并校验连通性...', 'info');
-                const parsed = collectConfigFromForm();
-                const tdxdir = String(getByPath(parsed, 'data_provider.tdxdir', '') || '').trim();
-                const targets = Array.isArray(getByPath(parsed, 'targets', [])) ? getByPath(parsed, 'targets', []) : [];
-                const stockCode = String((targets[0] || '000001.SZ')).trim().toUpperCase();
-                const payload = {
-                    tdxdir: tdxdir,
-                    stock_code: stockCode || '000001.SZ',
-                    auto_detect: true
-                };
-                const res = await fetch('/api/config/test_tdx_connectivity', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-                const data = await res.json();
-                if (!res.ok || data.status !== 'success') {
-                    throw new Error(data.msg || 'TDX 连通性校验失败');
-                }
-                const usedPath = String(data.tdxdir_used || '').trim();
-                const providerMode = String(data.provider_mode || '').trim();
-                const hasVipdoc = Boolean(data.has_vipdoc);
-                if (usedPath) {
-                    const input = document.querySelector('input[data-path="data_provider.tdxdir"]');
-                    if (input) input.value = usedPath;
-                }
-                const suffix = data.autodetected ? '（已自动探测目录）' : '';
-                const modeText = providerMode === 'network_mirror'
-                    ? `网络镜像模式 · 缓存目录 ${String(data.cache_dir || '--')}`
-                    : `${hasVipdoc ? '本地vipdoc模式' : '本地模式'} @ ${usedPath || '--'}${suffix}`;
-                const okMsg = `连通成功：${String(data.stock_code || stockCode)} · ${modeText}`;
-                setStatus(okMsg, 'ok');
-                logMessage('SYSTEM', okMsg, 'success');
-            } catch (e) {
-                const errMsg = `TDX连通失败：${String(e)}`;
-                setStatus(errMsg, 'error');
-                logMessage('SYSTEM', errMsg, 'danger');
-            } finally {
-                if (btn) btn.disabled = false;
-                if (icon) icon.className = 'fa-solid fa-magnifying-glass';
-                if (label) label.innerText = '探测TDX模式并测试';
-            }
+            return testSelectedDataSourceConnectivity('tdx');
         }
 
         async function testLlmConnectivityByScope(scope, domIdPrefix, scenario) {
@@ -14059,6 +14193,72 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             } catch (_) {}
         }
 
+        const DEFAULT_HISTORY_SYNC_TABLES = ['dat_1mins', 'dat_5mins', 'dat_10mins', 'dat_15mins', 'dat_30mins', 'dat_60mins', 'dat_day'];
+
+        function normalizeHistorySyncTables(tables) {
+            // 前端默认展示统一使用 dat_day，同时把旧配置中的 dat_days 自动折叠成规范名。
+            const source = Array.isArray(tables) && tables.length ? tables : DEFAULT_HISTORY_SYNC_TABLES;
+            const out = [];
+            const seen = new Set();
+            source.forEach((item) => {
+                let table = String(item || '').trim().toLowerCase();
+                if (!table) return;
+                if (table === 'dat_days') table = 'dat_day';
+                if (seen.has(table)) return;
+                seen.add(table);
+                out.push(table);
+            });
+            return out.length ? out : [...DEFAULT_HISTORY_SYNC_TABLES];
+        }
+
+        function getHistorySyncRiskItems(cfg) {
+            const settings = cfg && typeof cfg === 'object' ? cfg : {};
+            const providerSource = String(getByPath(settings, 'data_provider.source', 'default') || 'default').trim().toLowerCase();
+            const writeMode = String(getByPath(settings, 'history_sync.write_mode', 'api') || 'api').trim().toLowerCase();
+            const directDbSource = String(getByPath(settings, 'history_sync.direct_db_source', 'mysql') || 'mysql').trim().toLowerCase();
+            const rawConcurrency = Number(getByPath(settings, 'history_sync.concurrency', 1) || 1);
+            const concurrency = Math.max(1, Math.floor(Number.isFinite(rawConcurrency) ? rawConcurrency : 1));
+            const effectiveConcurrency = writeMode === 'direct_db' && directDbSource === 'duckdb' ? 1 : Math.min(concurrency, 16);
+            const items = [];
+            // 第一条固定展示当前并发口径，明确这是“按股票任务”的并发，而不是单独写入并发。
+            items.push(`当前设置为按股票任务并发=${concurrency}，实际生效并发=${effectiveConcurrency}；该并发覆盖拉取、判重和写入，不是仅写入并发${effectiveConcurrency !== concurrency ? '（DuckDB 直连写入已自动降级）' : ''}`);
+            if (concurrency >= 5) {
+                items.push('高并发会放大源端限流与超时风险，建议先从 2-4 开始逐步压测');
+            }
+            if (providerSource === 'tushare' || providerSource === 'default' || providerSource === 'akshare') {
+                items.push(`当前拉取源为 ${providerSource}，按股票任务并发升高后，更容易触发外部接口限流、超时或临时失败`);
+            }
+            if (providerSource === 'tdx') {
+                items.push('当前拉取源为 tdx：如用于增量同步，强烈建议优先通过客户端把行情数据下载到本地后，再执行增量同步；否则直接在线拉取通常会非常慢');
+            }
+            if (writeMode === 'direct_db' && (directDbSource === 'mysql' || directDbSource === 'postgresql')) {
+                items.push(`当前写入目标为 ${directDbSource}，按股票任务并发升高后，会增加数据库连接、锁等待与本地 IO 压力`);
+            }
+            if (writeMode === 'direct_db' && directDbSource === 'duckdb') {
+                items.push('DuckDB 为单文件写入模型，前台虽然允许配置任务并发，但实际执行会自动降级为 1，不会按高并发同时写入');
+            }
+            items.push('并发执行后明细完成顺序可能与股票列表顺序不同，但汇总统计结果不受影响');
+            return { items, concurrency, effectiveConcurrency, providerSource, writeMode, directDbSource };
+        }
+
+        function escapeHistorySyncHintHtml(text) {
+            // 风险提示来自当前表单配置，统一做一次 HTML 转义，避免意外字符破坏面板结构。
+            return String(text || '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function updateHistorySyncRiskHints(cfg) {
+            const host = document.getElementById('history-sync-risk-hints');
+            if (!host) return;
+            const risk = getHistorySyncRiskItems(cfg);
+            // 风险提示直接渲染在增量同步操作区，用户切换参数时能实时看到变化。
+            host.innerHTML = risk.items.map((text) => `<div><i class="fa-solid fa-triangle-exclamation mr-1 text-amber-300"></i>${escapeHistorySyncHintHtml(text)}</div>`).join('');
+        }
+
         async function runHistorySync() {
             if (historySyncRunning) {
                 logMessage('SYSTEM', '增量同步任务已在运行中，请点击“停止同步”按钮中断', 'warning');
@@ -14068,7 +14268,9 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             historySyncStopRequested = false;
             renderHistorySyncButtons();
             try {
-                const cfg = configDraft || {};
+                // 直接从表单收集当前草稿，确保用户未点击保存时也能按当前选择执行。
+                const cfg = collectConfigFromForm();
+                const providerSource = String(getByPath(cfg, 'data_provider.source', 'default') || 'default');
                 const writeMode = String(getByPath(cfg, 'history_sync.write_mode', 'api') || 'api');
                 const directDbSource = String(getByPath(cfg, 'history_sync.direct_db_source', 'mysql') || 'mysql');
                 const timeMode = String(getByPath(cfg, 'history_sync.time_mode', 'lookback') || 'lookback');
@@ -14077,13 +14279,18 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                 const sessionOnly = Boolean(getByPath(cfg, 'history_sync.session_only', true));
                 const intradayMode = Boolean(getByPath(cfg, 'history_sync.intraday_mode', false));
                 const lookbackDays = Number(getByPath(cfg, 'history_sync.lookback_days', 10) || 10);
+                const concurrency = Number(getByPath(cfg, 'history_sync.concurrency', 1) || 1);
                 const maxCodes = Number(getByPath(cfg, 'history_sync.max_codes', 10000) || 10000);
                 const batchSize = Number(getByPath(cfg, 'history_sync.batch_size', 500) || 500);
                 const dryRun = Boolean(getByPath(cfg, 'history_sync.dry_run', false));
-                const tablesCfg = getByPath(cfg, 'history_sync.tables', ['dat_1mins', 'dat_5mins', 'dat_10mins', 'dat_15mins', 'dat_30mins', 'dat_60mins', 'dat_days']);
-                const tables = Array.isArray(tablesCfg) && tablesCfg.length ? tablesCfg : ['dat_1mins', 'dat_5mins', 'dat_10mins', 'dat_15mins', 'dat_30mins', 'dat_60mins', 'dat_days'];
+                const tablesCfg = getByPath(cfg, 'history_sync.tables', DEFAULT_HISTORY_SYNC_TABLES);
+                const tables = normalizeHistorySyncTables(tablesCfg);
+                const risk = getHistorySyncRiskItems(cfg);
+                // 执行前再次打到前台系统日志，避免用户漏看配置区中的风险提示。
+                logMessage('SYSTEM', `增量同步风险提示：${risk.items.join('；')}`, 'warning');
                 const payload = {
                     lookback_days: Math.max(1, Math.floor(lookbackDays)),
+                    concurrency: Math.max(1, Math.floor(concurrency)),
                     max_codes: Math.max(1, Math.floor(maxCodes)),
                     batch_size: Math.max(1, Math.floor(batchSize)),
                     tables,
@@ -14094,8 +14301,10 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     session_only: sessionOnly,
                     intraday_mode: intradayMode,
                     on_duplicate: 'ignore',
+                    provider_source: providerSource,
                     write_mode: writeMode,
                     direct_db_source: directDbSource,
+                    config: cfg,
                     async_run: false
                 };
                 const res = await fetch('/api/history_sync/run', {
@@ -14103,9 +14312,16 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
                 });
-                const data = await res.json();
+                // 先按文本读取再解析，保证服务端异常返回时也能尽量展示原始原因。
+                const rawText = await res.text();
+                let data = {};
+                try {
+                    data = rawText ? JSON.parse(rawText) : {};
+                } catch (_) {
+                    throw new Error(`服务端返回非JSON（HTTP ${res.status}）：${String(rawText || '').slice(0, 180)}`);
+                }
                 if (!res.ok || data.status === 'error') {
-                    throw new Error(data.msg || '触发失败');
+                    throw new Error(data.msg || data?.report?.error || `触发失败（HTTP ${res.status}）`);
                 }
                 const report = data.report || {};
                 const missing = Number(report.total_missing_rows || 0);
@@ -14119,7 +14335,8 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     logMessage('SYSTEM', `同步记录已生成：${data.record.run_id}`, 'info');
                 }
             } catch (e) {
-                logMessage('SYSTEM', `增量同步失败: ${e}`, 'danger');
+                // 优先展示 Error.message，避免日志里出现不稳定的对象字符串。
+                logMessage('SYSTEM', `增量同步失败: ${String(e?.message || e || '未知错误')}`, 'danger');
             } finally {
                 await refreshHistorySyncStatus();
             }
@@ -14145,6 +14362,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
             try {
                 if (nextOn) {
                     const cfg = configDraft || {};
+                    const providerSource = String(getByPath(cfg, 'data_provider.source', 'default') || 'default');
                     const writeMode = String(getByPath(cfg, 'history_sync.write_mode', 'api') || 'api');
                     const directDbSource = String(getByPath(cfg, 'history_sync.direct_db_source', 'mysql') || 'mysql');
                     const timeMode = String(getByPath(cfg, 'history_sync.time_mode', 'lookback') || 'lookback');
@@ -14155,12 +14373,16 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                     const sessionOnly = Boolean(getByPath(cfg, 'history_sync.session_only', true));
                     const intradayMode = Boolean(getByPath(cfg, 'history_sync.intraday_mode', false));
                     const lookbackDays = Number(getByPath(cfg, 'history_sync.lookback_days', 10) || 10);
+                    const concurrency = Number(getByPath(cfg, 'history_sync.concurrency', 1) || 1);
                     const maxCodes = Number(getByPath(cfg, 'history_sync.max_codes', 10000) || 10000);
                     const batchSize = Number(getByPath(cfg, 'history_sync.batch_size', 500) || 500);
                     const dryRun = Boolean(getByPath(cfg, 'history_sync.dry_run', false));
                     const intervalMinutes = Number(getByPath(cfg, 'history_sync.interval_minutes', 60) || 60);
-                    const tablesCfg = getByPath(cfg, 'history_sync.tables', ['dat_1mins', 'dat_5mins', 'dat_10mins', 'dat_15mins', 'dat_30mins', 'dat_60mins', 'dat_days']);
-                    const tables = Array.isArray(tablesCfg) && tablesCfg.length ? tablesCfg : ['dat_1mins', 'dat_5mins', 'dat_10mins', 'dat_15mins', 'dat_30mins', 'dat_60mins', 'dat_days'];
+                    const tablesCfg = getByPath(cfg, 'history_sync.tables', DEFAULT_HISTORY_SYNC_TABLES);
+                    const tables = normalizeHistorySyncTables(tablesCfg);
+                    const risk = getHistorySyncRiskItems(cfg);
+                    // 定时任务开启前也写一条提示，避免用户只关注开启成功文案而忽略风险。
+                    logMessage('SYSTEM', `定时增量同步风险提示：${risk.items.join('；')}`, 'warning');
                     const res = await fetch('/api/history_sync/scheduler/start', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -14168,6 +14390,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                             interval_minutes: Math.max(1, Math.floor(intervalMinutes)),
                             scheduler_start_time: schedulerStartTime,
                             lookback_days: Math.max(1, Math.floor(lookbackDays)),
+                            concurrency: Math.max(1, Math.floor(concurrency)),
                             max_codes: Math.max(1, Math.floor(maxCodes)),
                             batch_size: Math.max(1, Math.floor(batchSize)),
                             tables,
@@ -14178,6 +14401,7 @@ class GeneratedStrategyTemplate(BaseImplementedStrategy):
                             session_only: sessionOnly,
                             intraday_mode: intradayMode,
                             on_duplicate: 'ignore',
+                            provider_source: providerSource,
                             write_mode: writeMode,
                             direct_db_source: directDbSource
                         })
